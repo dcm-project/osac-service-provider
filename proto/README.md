@@ -8,9 +8,15 @@ the health check's connectivity probe.
 `osac-project/fulfillment-service`'s proto module
 (`buf.build/osac-project/public-api`) is declared but has no commits pushed
 to the Buf Schema Registry yet, so it cannot be depended on remotely. The two
-files below are vendored (copied) directly from
-[`osac-project/fulfillment-service/proto/public/osac/public/v1/`](https://github.com/osac-project/fulfillment-service/tree/main/proto/public/osac/public/v1)
-verbatim:
+files below are vendored (copied) verbatim, byte-for-byte, from
+`osac-project/fulfillment-service` at commit
+[`73ae26e`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1) —
+**pinned to that exact commit, not `main`**, since "verbatim" is a claim
+about one point in time and `main` will have moved by the time anyone reads
+this. This mirrors the same reproducibility concern DD-050 addresses for the
+`environment-agent` Go module dependency (pinned by commit SHA in `go.mod`
+for the same reason: no tagged release to pin to instead). If you update
+these files, update the pinned commit reference here too.
 
 - `osac/public/v1/capabilities_service.proto`
 - `osac/public/v1/authn_capabilities_type.proto`

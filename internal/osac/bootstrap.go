@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -36,43 +37,75 @@ import (
 const oidcDiscoveryTimeout = 10 * time.Second
 
 // oidcServerMetadata is the subset of RFC 8414 / OpenID Connect Discovery
-// 1.0 metadata this SP needs. Mirrors
-// osac-project/fulfillment-service's own internal/oauth.ServerMetadata and
-// osac-project/osac-ux's proxy/auth/oidc.go, both of which discover a token
-// endpoint from an issuer URL the same way, against the same class of
-// Keycloak issuers this SP authenticates against (see DD-060).
+// 1.0 metadata this SP needs.
 type oidcServerMetadata struct {
 	TokenEndpoint string `json:"token_endpoint"`
 }
 
+// oidcWellKnownEndpoints lists the well-known discovery documents to try, in
+// order (REQ-OSAC-011/DD-060). This mirrors
+// osac-project/fulfillment-service's own
+// internal/oauth.DiscoveryTool.Discover(), which backs that project's own
+// client-credentials TokenSource — the same grant type this SP performs,
+// against the same class of Keycloak issuer. It tries RFC 8414
+// ("oauth-authorization-server") first and falls back to OpenID Connect
+// Discovery 1.0 ("openid-configuration") only if that fails. (osac-ux's
+// proxy/auth/oidc.go queries only "openid-configuration" — but that backs a
+// human browser login flow, not client-credentials, so it isn't the right
+// thing to mirror here; an earlier version of this code did exactly that,
+// which DD-060 documents as a corrected hallucination.)
+var oidcWellKnownEndpoints = []string{
+	"oauth-authorization-server",
+	"openid-configuration",
+}
+
 // discoverTokenEndpoint resolves the OAuth2 token endpoint from an OIDC
-// issuer URL via GET {issuer}/.well-known/openid-configuration
-// (REQ-OSAC-011). An OIDC issuer URL is never itself a valid token
-// endpoint — treating it as one was DD-060's corrected hallucination.
+// issuer URL by trying each of oidcWellKnownEndpoints in order, returning
+// the first success (REQ-OSAC-011). An OIDC issuer URL is never itself a
+// valid token endpoint — treating it as one was DD-060's original corrected
+// hallucination.
 func discoverTokenEndpoint(ctx context.Context, httpClient *http.Client, issuerURL string) (string, error) {
-	discoveryURL := strings.TrimSuffix(issuerURL, "/") + "/.well-known/openid-configuration"
+	issuerURL = strings.TrimSuffix(issuerURL, "/")
+
+	var errs []error
+	for _, wellKnown := range oidcWellKnownEndpoints {
+		tokenEndpoint, err := fetchWellKnownTokenEndpoint(ctx, httpClient, issuerURL, wellKnown)
+		if err == nil {
+			return tokenEndpoint, nil
+		}
+		errs = append(errs, err)
+	}
+	return "", fmt.Errorf("discovering OIDC/OAuth token endpoint for issuer %s (tried %v): %w",
+		issuerURL, oidcWellKnownEndpoints, errors.Join(errs...))
+}
+
+// fetchWellKnownTokenEndpoint fetches a single well-known discovery document
+// (e.g. "oauth-authorization-server" or "openid-configuration") and extracts
+// its token_endpoint.
+func fetchWellKnownTokenEndpoint(ctx context.Context, httpClient *http.Client, issuerURL, wellKnown string) (string, error) {
+	discoveryURL := issuerURL + "/.well-known/" + wellKnown
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("building OIDC discovery request for %s: %w", discoveryURL, err)
+		return "", fmt.Errorf("building discovery request for %s: %w", discoveryURL, err)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetching OIDC discovery document from %s: %w", discoveryURL, err)
+		return "", fmt.Errorf("fetching discovery document from %s: %w", discoveryURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OIDC discovery document at %s returned status %d", discoveryURL, resp.StatusCode)
+		return "", fmt.Errorf("discovery document at %s returned status %d", discoveryURL, resp.StatusCode)
 	}
 
 	var meta oidcServerMetadata
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
-		return "", fmt.Errorf("decoding OIDC discovery document from %s: %w", discoveryURL, err)
+		return "", fmt.Errorf("decoding discovery document from %s: %w", discoveryURL, err)
 	}
 	if meta.TokenEndpoint == "" {
-		return "", fmt.Errorf("OIDC discovery document at %s has no token_endpoint", discoveryURL)
+		return "", fmt.Errorf("discovery document at %s has no token_endpoint", discoveryURL)
 	}
 	return meta.TokenEndpoint, nil
 }
