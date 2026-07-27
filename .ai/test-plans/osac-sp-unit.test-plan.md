@@ -34,9 +34,12 @@ struct fields, exact backoff durations), not existence-only checks
 
 ## 2. `internal/osac` (OSAC client bootstrap)
 
-Collaborators faked: an OIDC issuer (`httptest.Server` serving a canned
-`.well-known/openid-configuration` discovery document plus a token endpoint
-at the URL that document advertises — the fake must NOT accept token
+Collaborators faked: an OIDC issuer (`httptest.Server` serving canned
+`.well-known/oauth-authorization-server` (RFC 8414, tried first per
+REQ-OSAC-011) and `.well-known/openid-configuration` (OpenID Connect
+Discovery, fallback) documents, independently configurable so tests can
+exercise either the primary path or the fallback, plus a token endpoint at
+the URL whichever document advertises — the fake must NOT accept token
 requests at the issuer URL itself, so tests fail loudly if the code
 regresses to treating the issuer as the token endpoint), OSAC `Capabilities`
 service (in-memory `bufconn`-free stub satisfying the generated client
@@ -46,14 +49,15 @@ cases).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-010 | Fetches OIDC token on `Start`, via the discovered token endpoint | REQ-OSAC-010, REQ-OSAC-011, AC-OSAC-010 | Fake discovery document at `{issuer}/.well-known/openid-configuration` advertises `token_endpoint: "{issuer}/protocol/openid-connect/token"`; that exact URL returns `{access_token: "tok-abc", expires_in: 300}`; call `Start`; assert the bootstrap's cached token value equals exactly `"tok-abc"`. |
+| TC-U-010 | Fetches OIDC token on `Start`, via the discovered token endpoint | REQ-OSAC-010, REQ-OSAC-011, AC-OSAC-010 | Fake discovery document at `{issuer}/.well-known/oauth-authorization-server` advertises `token_endpoint: "{issuer}/protocol/openid-connect/token"`; that exact URL returns `{access_token: "tok-abc", expires_in: 300}`; call `Start`; assert the bootstrap's cached token value equals exactly `"tok-abc"`. |
 | TC-U-011 | Refreshes token before expiry | REQ-OSAC-020, AC-OSAC-020 | Fake token endpoint returns token A (expires in 1s), then token B on second call; advance a fake clock past the refresh margin; assert the bearer credential attached to a subsequent gRPC call equals token B's exact value, not token A's. |
 | TC-U-012 | Builds insecure transport credentials when TLS disabled | REQ-OSAC-050, AC-OSAC-050 | `osac.tlsEnabled=false`; call the internal dial-options builder; assert the returned `grpc.DialOption` set is equal to (or wraps) `grpc.WithTransportCredentials(insecure.NewCredentials())` — assert on the credential's `Info().SecurityProtocol` value, not just "no error". |
 | TC-U-013 | Builds TLS transport credentials when TLS enabled | REQ-OSAC-040, AC-OSAC-040 | `osac.tlsEnabled=true`, `tlsCertFile` points to a test CA PEM fixture; assert the returned credentials' `Info().SecurityProtocol == "tls"` and the loaded cert pool contains exactly the test CA's subject. |
 | TC-U-014 | Token fetch failure does not panic or block `Start` | REQ-OSAC-060, AC-OSAC-060 | Discovery succeeds, but the discovered token endpoint returns `500` on every call; call `Start` with a bounded test timeout; assert `Start` returns (does not hang) and returns no fatal error — background retry goroutine is started. |
 | TC-U-015 | Token fetch retries with exponential backoff | REQ-OSAC-060 | Fake token endpoint fails 3 times then succeeds; using an injected fake clock/backoff, assert the recorded retry delays are non-decreasing and match the configured backoff multiplier exactly (e.g., 1s, 2s, 4s). |
-| TC-U-023 | Discovers token endpoint from issuer before fetching a token | REQ-OSAC-011, AC-OSAC-011 | Fake discovery document's `token_endpoint` differs from the issuer URL (e.g. issuer `https://kc.example.com/realms/osac`, `token_endpoint` `https://kc.example.com/realms/osac/protocol/openid-connect/token`); call `Start`; assert the fake HTTP server recorded the token POST at the discovered URL and recorded zero token POSTs at the bare issuer URL. |
-| TC-U-024 | Discovery failure does not panic or block `Start`, retried with backoff | REQ-OSAC-011, REQ-OSAC-060, AC-OSAC-012 | Fake discovery endpoint (`.well-known/openid-configuration`) returns `500` on every call; call `Start` with a bounded test timeout; assert `Start` returns without hanging, `TokenStatus().Valid == false` throughout, and discovery is retried using the same exponential backoff sequence as TC-U-015. |
+| TC-U-023 | Discovers token endpoint via RFC 8414 (`oauth-authorization-server`) before fetching a token | REQ-OSAC-011, AC-OSAC-011 | Fake `oauth-authorization-server` discovery document's `token_endpoint` differs from the issuer URL (e.g. issuer `https://kc.example.com/realms/osac`, `token_endpoint` `https://kc.example.com/realms/osac/protocol/openid-connect/token`); call `Start`; assert the fake HTTP server recorded the token POST at the discovered URL, recorded zero token POSTs at the bare issuer URL, and recorded zero requests to `.well-known/openid-configuration` (RFC 8414 succeeded, so no fallback was needed). |
+| TC-U-024 | Discovery failure does not panic or block `Start`, retried with backoff | REQ-OSAC-011, REQ-OSAC-060, AC-OSAC-012 | Both fake discovery endpoints (`.well-known/oauth-authorization-server` and `.well-known/openid-configuration`) return `500` on every call; call `Start` with a bounded test timeout; assert `Start` returns without hanging, `TokenStatus().Valid == false` throughout, and discovery is retried using the same exponential backoff sequence as TC-U-015. |
+| TC-U-025 | Falls back to OpenID Connect discovery (`openid-configuration`) when RFC 8414 discovery fails | REQ-OSAC-011, AC-OSAC-013 | Fake `.well-known/oauth-authorization-server` returns `404` (as on a Keycloak realm that doesn't expose it); fake `.well-known/openid-configuration` returns a valid document; call `Start`; assert the fake HTTP server recorded exactly one request to each well-known path (RFC 8414 tried first and failed, OIDC fallback tried second and succeeded) and the token POST landed at the fallback-discovered `token_endpoint`. |
 | TC-U-016 | Token validity query — valid | REQ-OSAC-070, AC-OSAC-070 | Seed the bootstrap with a cached token expiring in 10 minutes; call `TokenStatus()`; assert `valid == true` and `expiresAt` equals the exact seeded expiry time. |
 | TC-U-017 | Token validity query — never obtained | REQ-OSAC-070, AC-OSAC-071 | Construct the bootstrap with no token ever fetched; call `TokenStatus()`; assert `valid == false`. |
 | TC-U-018 | Token validity query — expired | REQ-OSAC-070 | Seed a cached token with `expiresAt` in the past; call `TokenStatus()`; assert `valid == false`. |
@@ -129,7 +133,7 @@ a real registration server (end-to-end wiring is TC-I scope).
 | Spec Section | REQ Count | AC Count | TC Count (this file) | Notes |
 |---|---|---|---|---|
 | 4.1 HTTP Server | 9 | 9 | 4 (TC-U-070..073) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
-| 4.2 OSAC Client Bootstrap | 10 | 15 | 15 (TC-U-010..024) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
+| 4.2 OSAC Client Bootstrap | 10 | 14 | 16 (TC-U-010..025) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
 | 4.3 Health Service | 8 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
 | 4.4 Environment Agent Registration | 12 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |

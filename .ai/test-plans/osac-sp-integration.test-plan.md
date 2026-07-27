@@ -39,11 +39,16 @@ registration server, real signal-triggered shutdown timing) — not just
 
 ## 2. Health endpoints against real (fake) OSAC + Keycloak
 
-Test harness: an `httptest.Server` serving a real `.well-known/openid-configuration`
-discovery document plus a canned OAuth2 token-endpoint response at the URL
-that document advertises (REQ-OSAC-011/DD-060 — token requests sent directly
-to the issuer URL, bypassing discovery, MUST NOT succeed against this fake),
-and a real gRPC server bound via `bufconn` implementing
+Test harness: an `httptest.Server` serving a real
+`.well-known/oauth-authorization-server` discovery document (RFC 8414 — the
+primary discovery path per REQ-OSAC-011/DD-060) plus a canned OAuth2
+token-endpoint response at the URL that document advertises (token requests
+sent directly to the issuer URL, bypassing discovery, MUST NOT succeed
+against this fake). The RFC 8414 -> OpenID Connect Discovery fallback
+ordering itself is unit-test scope (TC-U-023/024/025); this harness only
+needs to serve one working discovery document to exercise the end-to-end
+health/token-caching behavior below, and a real gRPC server bound via
+`bufconn` implementing
 `osac.public.v1.Capabilities` (generated client dials through a
 `bufconn`-backed `grpc.ClientConn`). Unless noted, cases assert against
 `/api/v1alpha1/clusters/health`; TC-I-016 additionally checks
@@ -58,7 +63,7 @@ and a real gRPC server bound via `bufconn` implementing
 | TC-I-014 | Health does not re-fetch token once cached, even under repeated polling | REQ-HLT-050, AC-HLT-040 | Fake Keycloak counts hits to its token endpoint (not its discovery endpoint); issue 10 consecutive `GET /api/v1alpha1/clusters/health` calls within the token's validity window; assert the token-endpoint hit counter equals exactly `1` (the initial fetch only). |
 | TC-I-015 | Health probe respects configured timeout | REQ-OSAC-080, AC-OSAC-081 | Configure `SP_OSAC_PROBE_TIMEOUT=200ms`; `bufconn` `Capabilities/Get` handler sleeps 1s before responding; `GET /api/v1alpha1/clusters/health`; assert the HTTP response returns within ~200-400ms (not ~1s+) and reports `status == "unhealthy"`. |
 | TC-I-016 | Both health paths agree end-to-end | REQ-HLT-015, AC-HLT-011 | With the SP in a fixed healthy or unhealthy state (fakes configured either way), call `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health`; assert both return the same `status` and HTTP code. |
-| TC-I-017 | Token fetch uses the discovered endpoint, not the configured issuer URL | REQ-OSAC-011, AC-OSAC-011 | Fake Keycloak's discovery document advertises a token endpoint at a *different path* than the issuer URL itself; assert the recorded requests show the token POST landing on the discovered path and zero POSTs landing on the bare issuer URL. |
+| TC-I-017 | Token fetch uses the discovered endpoint, not the configured issuer URL | REQ-OSAC-011, AC-OSAC-011 | Fake Keycloak's `oauth-authorization-server` discovery document advertises a token endpoint at a *different path* than the issuer URL itself; assert the recorded requests show the token POST landing on the discovered path, zero POSTs landing on the bare issuer URL, and zero requests to `.well-known/openid-configuration` (RFC 8414 succeeded, so the fallback was never exercised). |
 
 ---
 
@@ -98,7 +103,7 @@ for what the OpenAPI contract specifies, not a live instance.
 | Spec Section | REQ Count | AC Count | TC Count (this file) | Notes |
 |---|---|---|---|---|
 | 4.1 HTTP Server | 9 | 9 | 6 (TC-I-001..006) | Lifecycle/signal-handling ACs not practical to unit test are covered here. |
-| 4.2 OSAC Client Bootstrap | 10 | 15 | 2 dedicated (TC-I-015, TC-I-017) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here. |
+| 4.2 OSAC Client Bootstrap | 10 | 14 | 2 dedicated (TC-I-015, TC-I-017) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). |
 | 4.3 Health Service | 8 | 10 | 8 (TC-I-010..017) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement. |
 | 4.4 Environment Agent Registration | 12 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake agent HTTP server implementing environment-agent's current (unimplemented server-side) contract. |
 | Full-stack | - | - | 1 (TC-I-030) | Cross-cutting cold-start smoke test. |

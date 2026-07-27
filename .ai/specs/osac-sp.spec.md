@@ -246,7 +246,7 @@ breaking beyond token refresh and connection backoff.
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-OSAC-010 | The SP MUST obtain an OIDC access token via OAuth2 client-credentials grant against the token endpoint resolved per REQ-OSAC-011, using `oidcClientId`/`oidcClientSecret` | MUST | DD-060 |
-| REQ-OSAC-011 | The SP MUST resolve the token endpoint from `oidcIssuerUrl` via OIDC discovery (`GET {oidcIssuerUrl}/.well-known/openid-configuration`, extracting `token_endpoint`) rather than treating `oidcIssuerUrl` itself as the token endpoint | MUST | DD-060 |
+| REQ-OSAC-011 | The SP MUST resolve the token endpoint from `oidcIssuerUrl` by trying `GET {oidcIssuerUrl}/.well-known/oauth-authorization-server` (RFC 8414) first and, only if that fails, falling back to `GET {oidcIssuerUrl}/.well-known/openid-configuration` (OpenID Connect Discovery 1.0), extracting `token_endpoint` from whichever succeeds, rather than treating `oidcIssuerUrl` itself as the token endpoint or querying only one of the two documents | MUST | DD-060 |
 | REQ-OSAC-020 | The SP MUST refresh the OIDC token before expiry and supply it as a gRPC bearer credential (`PerRPCCredentials`) on every call to the fulfillment service | MUST | |
 | REQ-OSAC-030 | The SP MUST establish a gRPC `ClientConn` to `fulfillmentAddress` | MUST | |
 | REQ-OSAC-040 | When `tlsEnabled=true`, the gRPC connection MUST use TLS, loading a CA certificate from `tlsCertFile` if set | MUST | |
@@ -280,17 +280,26 @@ breaking beyond token refresh and connection backoff.
 ##### AC-OSAC-011: Token endpoint discovered from issuer, not assumed
 
 - **Validates:** REQ-OSAC-011
-- **Given** `oidcIssuerUrl=https://keycloak.example.com/realms/osac` and a discovery document at `{oidcIssuerUrl}/.well-known/openid-configuration` whose `token_endpoint` is `https://keycloak.example.com/realms/osac/protocol/openid-connect/token`
+- **Given** `oidcIssuerUrl=https://keycloak.example.com/realms/osac` and a discovery document at `{oidcIssuerUrl}/.well-known/oauth-authorization-server` whose `token_endpoint` is `https://keycloak.example.com/realms/osac/protocol/openid-connect/token`
 - **When** the bootstrap component fetches a token
 - **Then** the token request MUST be sent to the discovered `token_endpoint`, not to `oidcIssuerUrl` directly
+- **And** `{oidcIssuerUrl}/.well-known/openid-configuration` MUST NOT be queried, since the first (RFC 8414) attempt already succeeded
 
 ##### AC-OSAC-012: Discovery failure is retried, non-fatal
 
 - **Validates:** REQ-OSAC-011, REQ-OSAC-060
-- **Given** the issuer's discovery document endpoint is unreachable or returns a non-2xx status
+- **Given** both `{oidcIssuerUrl}/.well-known/oauth-authorization-server` and `{oidcIssuerUrl}/.well-known/openid-configuration` are unreachable or return a non-2xx status
 - **When** the SP starts
 - **Then** the SP MUST continue starting the HTTP server
 - **And** discovery MUST be retried with exponential backoff in the background, using the same backoff sequence as token fetch retries (AC-OSAC-060)
+
+##### AC-OSAC-013: Falls back to OpenID Connect discovery when RFC 8414 discovery fails
+
+- **Validates:** REQ-OSAC-011
+- **Given** `{oidcIssuerUrl}/.well-known/oauth-authorization-server` returns a non-2xx status (e.g. `404`, matching a Keycloak realm that doesn't expose that document) but `{oidcIssuerUrl}/.well-known/openid-configuration` returns a valid discovery document
+- **When** the bootstrap component fetches a token
+- **Then** the SP MUST fall back to querying `{oidcIssuerUrl}/.well-known/openid-configuration` and use its `token_endpoint`
+- **And** the token request MUST succeed using that fallback-discovered endpoint
 
 ##### AC-OSAC-020: Token refresh before expiry
 
@@ -851,10 +860,15 @@ REQ-REG-040.
 
 ### DD-060: Resolve the OIDC token endpoint via discovery, not by treating the issuer URL as the token endpoint
 
-**Decision:** Before requesting an access token, the SP MUST perform OIDC
-discovery — `GET {oidcIssuerUrl}/.well-known/openid-configuration` — and use
-the returned `token_endpoint` for the client-credentials grant. `oidcIssuerUrl`
-MUST NOT be passed directly as the OAuth2 `TokenURL`.
+**Decision:** Before requesting an access token, the SP MUST perform
+discovery — trying `GET {oidcIssuerUrl}/.well-known/oauth-authorization-server`
+(RFC 8414) first, then falling back to
+`GET {oidcIssuerUrl}/.well-known/openid-configuration` (OpenID Connect
+Discovery 1.0) only if the first request fails — and use the `token_endpoint`
+from whichever document was successfully retrieved for the client-credentials
+grant. `oidcIssuerUrl` MUST NOT be passed directly as the OAuth2 `TokenURL`,
+and discovery MUST NOT be narrowed to only one of the two well-known
+documents.
 
 **Rationale:** An OIDC *issuer* URL (e.g.
 `https://keycloak.example.com/realms/osac`) and its *token endpoint* (e.g.
@@ -862,26 +876,42 @@ MUST NOT be passed directly as the OAuth2 `TokenURL`.
 different URLs in every real deployment; treating them as interchangeable
 was a hallucination in the original implementation, caught by the same
 "verify against an authoritative source" review that caught DD-010/SC-001.
-This is confirmed by consistent, repeated precedent across both ecosystems
-this SP straddles:
-- `osac-project/fulfillment-service` ships its own `internal/oauth` package
-  (`DiscoveryTool`, `ServerMetadata.TokenEndpoint`) specifically to resolve a
-  token endpoint from an issuer URL via `.well-known/openid-configuration`
-  before performing any OAuth flow, including client-credentials
-  (`oauth_credentials_flow.go`).
-- `osac-project/osac-ux`'s own OIDC client code
-  (`proxy/auth/oidc.go`) performs the identical
-  `strings.TrimSuffix(issuerURL, "/") + "/.well-known/openid-configuration"`
-  discovery.
-- `dcm-project/control-plane` already depends on
-  `github.com/coreos/go-oidc/v3` for OIDC concerns elsewhere in the DCM
-  ecosystem — the standard Go library for exactly this discovery step.
+
+The *first* corrected implementation (this decision's original text) only
+queried `.well-known/openid-configuration` — itself a second, more subtle
+hallucination, caught by the same review pass while independently verifying
+the vendored `authn_capabilities_type.proto` (DD-020): that proto's own
+doc comment on `trusted_token_issuers` documents discovery via
+`.well-known/oauth-authorization-server` and cites RFC 8414, not OpenID
+Connect Discovery. Tracing this to the ecosystem's actual client code
+confirms which pattern applies to *this* SP's flow specifically:
+- `osac-project/fulfillment-service`'s own `internal/oauth.TokenSource` —
+  the thing that authenticates `fulfillment-service`'s **own**
+  client-credentials grants (`CredentialsFlow`) against the same class of
+  Keycloak issuer this SP authenticates against — calls
+  `DiscoveryTool.Discover()`, which tries `oauth-authorization-server`
+  first and falls back to `openid-configuration` second
+  (`internal/oauth/oauth_discovery_tool.go`). This is the correct thing to
+  mirror: same grant type, same issuer, same authoritative project.
+- `osac-project/osac-ux`'s `proxy/auth/oidc.go` queries only
+  `openid-configuration`, with no RFC 8414 attempt — but it backs a
+  *human* browser authorization-code login flow, not client-credentials.
+  Citing it as precedent for this SP's machine-to-machine flow (as the
+  original version of this decision did) was itself a category error:
+  superficially similar code, wrong flow to mirror.
+- `dcm-project/control-plane` depends on `github.com/coreos/go-oidc/v3`
+  for OIDC concerns elsewhere in the DCM ecosystem; that library's own
+  provider discovery also tries `oauth-authorization-server` before falling
+  back to `openid-configuration`, consistent with `fulfillment-service`'s
+  behavior.
 
 **Consequence:** the OIDC bootstrap can no longer build a static
 `clientcredentials.Config` at construction time (`New()`); discovery must
 happen lazily, inside the same retryable/non-blocking loop as token fetch
-(REQ-OSAC-060), since the issuer's discovery document may be transiently
-unreachable at startup just like the token endpoint itself.
+(REQ-OSAC-060), since either discovery document may be transiently
+unreachable at startup just like the token endpoint itself. Discovery logic
+must attempt both well-known paths, in order, before treating discovery as
+failed for that attempt.
 
 **Related requirements:** REQ-OSAC-010, REQ-OSAC-011, REQ-OSAC-060
 
