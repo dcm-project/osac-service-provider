@@ -44,3 +44,4 @@ bin/
 .cursor/*
 !.cursor/rules/
 !.cursor/skills/
+.cursor/rules/hindsight-memory.mdc
