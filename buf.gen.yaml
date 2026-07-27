@@ -1,0 +1,25 @@
+version: v2
+
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/dcm-project/osac-service-provider/internal/osacpb
+  disable:
+    # Keep google/api/*.proto (pulled in transitively for the HTTP annotation
+    # option on Capabilities.Get) pointed at its real, published Go package
+    # (google.golang.org/genproto/googleapis/api/annotations) instead of
+    # rewriting it under our own prefix, which would produce an import to a
+    # package we never generate.
+    - module: buf.build/googleapis/googleapis
+
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.5
+    out: internal/osacpb
+    opt:
+      - paths=source_relative
+
+  - remote: buf.build/grpc/go:v1.5.1
+    out: internal/osacpb
+    opt:
+      - paths=source_relative

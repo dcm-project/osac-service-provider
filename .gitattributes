@@ -1,3 +1,4 @@
 # Mark generated files so GitHub collapses them in PRs
 *.gen.go linguist-generated=true
+*.pb.go linguist-generated=true
 .ai/checkpoints/** linguist-generated=true
