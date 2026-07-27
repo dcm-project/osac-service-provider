@@ -18,16 +18,22 @@ against the enhancement first.
 
 ## DCM Ecosystem
 
-Unlike its sibling service providers (which register with the
-`service-provider-manager`/`control-plane` API), this SP registers with the
-**environment agent** (`dcm-project/environment-agent`) per its own
-enhancement doc — see `DD-050` in `.ai/specs/osac-sp.spec.md` for the full
-rationale, including the accepted risk that environment-agent is pre-alpha
-(no tagged releases; pinned by commit SHA in `go.mod`).
+Like its sibling service providers, this SP registers with **`control-plane`'s
+SP API** (`dcm-project/control-plane`, `pkg/sp/client/provider`) — this is a
+**Phase 1** decision, not the original one: the enhancement's initial design
+targeted the standalone **environment agent** (`dcm-project/environment-agent`)
+instead, but the team pivoted to `control-plane` for the first release on
+delivery-risk/maturity grounds (environment-agent's registration handler is
+still unimplemented). See `DD-050` in `.ai/specs/osac-sp.spec.md` for the full
+rationale and
+[enhancements#95](https://github.com/dcm-project/enhancements/issues/95) for
+the tracked enhancement-doc update (two-phase delivery: `control-plane` now,
+`environment-agent` later once mature). `control-plane` also has no tagged
+releases yet, hence the same commit-SHA pin in `go.mod`.
 
 | Component | Interaction | Config |
 |---|---|---|
-| [environment-agent](https://github.com/dcm-project/environment-agent) | Registers two independent entries on startup — one `cluster` service type, one `vm` service type — using its Go client library (`pkg/client`). Periodically re-registers to renew the lease. | `SP_AGENT_REGISTRATION_URL` |
+| [control-plane](https://github.com/dcm-project/control-plane) | Registers two independent entries on startup — one `cluster` service type, one `vm` service type — using its generated Go client library (`pkg/sp/client/provider`). Periodically re-registers to refresh capability metadata (no lease/TTL to renew, unlike environment-agent's model). | `DCM_REGISTRATION_URL` |
 | [osac-project/fulfillment-service](https://github.com/osac-project/fulfillment-service) | gRPC API for cluster/VM CRUD. OAuth2/OIDC client-credentials auth against OSAC's Keycloak. | `SP_OSAC_FULFILLMENT_ADDRESS`, `SP_OSAC_OIDC_*` |
 
 **Milestone 1 scope** (this repo's current state): scaffold, HTTP server,
@@ -70,8 +76,8 @@ Milestone 1 defines only:
 | `GET` | `/api/v1alpha1/clusters/health` | Health check for the `cluster` provider registration. Reflects real OSAC gRPC connectivity and OIDC token validity — `status` in the body (not the HTTP code) indicates health. |
 | `GET` | `/api/v1alpha1/vms/health` | Health check for the `vm` provider registration. Reports identical status to the endpoint above — this SP has one global health condition, not one per service type. |
 
-There are two health endpoints (not one) because the environment agent
-health-checks each independently-registered provider at
+There are two health endpoints (not one) because `control-plane`'s
+`healthcheck.Monitor` health-checks each independently-registered provider at
 `{provider.endpoint}/health` (see DD-010 in `.ai/specs/osac-sp.spec.md`).
 
 All error responses use RFC 7807 Problem Details (`application/problem+json`).
@@ -109,17 +115,17 @@ Generated files (do not edit manually):
 1. `internal/config` loads and validates env vars (fails fast on missing required values).
 2. `internal/osac.Bootstrap` starts an async OIDC token fetch/refresh loop and creates a lazy gRPC `ClientConn` to OSAC's fulfillment service.
 3. `internal/apiserver.Server` starts the HTTP server (middleware: Recovery → Request Logging → Request Timeout) serving `internal/health.Handler`, which implements `StrictServerInterface` and queries the bootstrap's cached token/probe state.
-4. Once the HTTP server confirms it is accepting connections (self-probed via its own `WithOnReady` hook), `internal/registration.Registrar` starts two independent, indefinitely-retrying registration loops (cluster, vm) against the environment agent.
+4. Once the HTTP server confirms it is accepting connections (self-probed via its own `WithOnReady` hook), `internal/registration.Registrar` starts two independent, indefinitely-retrying registration loops (cluster, vm) against `control-plane`.
 
 ### Internal packages
 
 | Package | Purpose |
 |---|---|
 | `internal/apiserver/` | HTTP server setup, middleware chain (recovery, logging, timeout), readiness probing |
-| `internal/config/` | Environment variable parsing via `caarlos0/env`. Prefixes: `SP_SERVER_*`, `SP_OSAC_*`, `SP_AGENT_*`, `SP_*` (provider identity) |
+| `internal/config/` | Environment variable parsing via `caarlos0/env`. Prefixes: `SP_SERVER_*`, `SP_OSAC_*`, `DCM_*`, `SP_*` (provider identity) |
 | `internal/osac/` | `Bootstrap` — OIDC client-credentials token source + gRPC `ClientConn` to the fulfillment service; exposes `TokenStatus()` and `Probe()` for the health check |
 | `internal/health/` | Health check handler implementing `StrictServerInterface` |
-| `internal/registration/` | `Registrar` — async self-registration with the environment agent (two independent service types: cluster, vm); exponential backoff on retryable failures, immediate stop on non-retryable 4xx, periodic lease renewal on success |
+| `internal/registration/` | `Registrar` — async self-registration with `control-plane` (two independent service types: cluster, vm); exponential backoff on retryable failures, immediate stop on non-retryable 4xx (including 409), periodic re-registration to refresh capability metadata on success |
 | `internal/httperror/` | RFC 7807 `application/problem+json` response writing |
 | `internal/util/` | Generic helpers (e.g., `Ptr[T]`) |
 | `internal/osacpb/` | **Generated** — OSAC `Capabilities` gRPC client (DD-020) |
@@ -128,17 +134,17 @@ Generated files (do not edit manually):
 ### Key patterns
 
 - **Strict server interface**: oapi-codegen generates a `StrictServerInterface` with typed request/response objects. Handlers implement this interface — no manual HTTP parsing.
-- **RFC 7807 errors**: all error responses use Problem Details format (types are URI references, e.g. `https://dcm.example.com/errors/internal`).
+- **RFC 7807 errors**: all error responses use Problem Details format. `type` is declared as `format: uri-reference` per RFC 7807, but — matching the established convention in `k8s-container-service-provider` and `acm-cluster-service-provider` — its enum values are bare short codes (e.g. `INTERNAL`, `INVALID_ARGUMENT`), not real URIs.
 - **Fail-fast config**: `internal/config.Load()` returns an error immediately if any required env var is missing/empty, before any subsystem starts.
 - **Non-blocking bootstrap**: neither the OIDC token loop nor gRPC dial ever block HTTP server startup or crash the process on failure — both retry indefinitely with backoff.
 - **Independent registration loops**: cluster and vm registration succeed/fail/retry completely independently of each other.
-- **Idempotent registration**: successful registrations are periodically renewed (re-POSTed) rather than sent once; the environment agent's contract treats this as idempotent on `name`.
+- **Idempotent registration**: successful registrations are periodically renewed (re-POSTed) rather than sent once; `control-plane`'s contract treats this as idempotent on `name`, with no lease/TTL to expire.
 
 ## Testing
 
 - **Framework**: Ginkgo v2 (BDD) + Gomega assertions
 - **Test naming**: files use `_unit_test.go` / `_integration_test.go` suffixes. Test cases carry `TC-U-XXX` / `TC-I-XXX` identifiers.
-- **Mocks**: hand-written fakes (e.g., a fake `oauth2.TokenSource`, a fake `publicv1.CapabilitiesClient`, a fake `http.RoundTripper` for the environment agent client) — no mocking framework.
+- **Mocks**: hand-written fakes (e.g., a fake `oauth2.TokenSource`, a fake `publicv1.CapabilitiesClient`, a fake `http.RoundTripper` for the `control-plane` client) — no mocking framework.
 - **Spec first**: new requirements (REQ-*) and acceptance criteria (AC-*) MUST be added to `.ai/specs/osac-sp.spec.md` before any implementation or test planning begins.
 - **Test plan first**: new test cases (TC-*) MUST be registered in `.ai/test-plans/` with mappings to REQ-*/AC-* before being implemented in code.
 

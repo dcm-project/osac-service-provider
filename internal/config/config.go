@@ -32,11 +32,14 @@ type OSACConfig struct {
 	ProbeTimeout       time.Duration `env:"PROBE_TIMEOUT" envDefault:"5s"`
 }
 
-// AgentConfig holds settings for reaching the environment agent's
-// registration endpoint.
+// DCMConfig holds settings for reaching control-plane's SP registration
+// endpoint.
 //
-// Implements REQ-REG-110.
-type AgentConfig struct {
+// Implements REQ-REG-110. envPrefix is unprefixed by "SP_" (unlike the
+// other nested configs) to match the DCM_REGISTRATION_URL env var name
+// already used by sibling SPs (k8s-container-service-provider,
+// acm-cluster-service-provider) for the same backend — see DD-050.
+type DCMConfig struct {
 	RegistrationURL string `env:"REGISTRATION_URL,notEmpty"`
 }
 
@@ -54,7 +57,7 @@ type ProviderConfig struct {
 type Config struct {
 	Server   ServerConfig   `envPrefix:"SP_SERVER_"`
 	OSAC     OSACConfig     `envPrefix:"SP_OSAC_"`
-	Agent    AgentConfig    `envPrefix:"SP_AGENT_"`
+	DCM      DCMConfig      `envPrefix:"DCM_"`
 	Provider ProviderConfig `envPrefix:"SP_"`
 }
 

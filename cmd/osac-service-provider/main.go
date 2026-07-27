@@ -24,14 +24,32 @@ import (
 var version = "0.0.1-dev"
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := run(logger); err != nil {
-		logger.Error("fatal error", "error", err)
-		os.Exit(1)
-	}
+	// os.Exit runs after mainRun returns, so mainRun's own deferred
+	// stop() (below) always executes first — os.Exit here directly would
+	// skip it (gocritic: exitAfterDefer).
+	os.Exit(mainRun())
 }
 
-func run(logger *slog.Logger) error {
+func mainRun() int {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// Translating SIGTERM/SIGINT into context cancellation is a stdlib
+	// concern (signal.NotifyContext), kept here rather than inside run so
+	// integration tests can drive run's shutdown path directly via ctx
+	// cancellation, without delivering real OS signals to the test binary
+	// process (see cmd/osac-service-provider/main_integration_test.go,
+	// TC-I-003/004).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	if err := run(ctx, logger); err != nil {
+		logger.Error("fatal error", "error", err)
+		return 1
+	}
+	return 0
+}
+
+func run(ctx context.Context, logger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
@@ -42,9 +60,6 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("listening on %s: %w", cfg.Server.Address, err)
 	}
 	defer func() { _ = ln.Close() }()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	osacBootstrap, err := osac.New(&cfg.OSAC, logger)
 	if err != nil {

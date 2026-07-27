@@ -1,10 +1,11 @@
-// Package registration handles self-registration with the DCM environment
-// agent.
+// Package registration handles self-registration with DCM's control-plane.
 //
-// Implements Topic 4.4 (Environment Agent Registration) of the Milestone 1
-// spec. Per DD-050, this registers against
-// github.com/dcm-project/environment-agent's REST API and generated client
-// — not control-plane's SP API or the archived service-provider-manager.
+// Implements Topic 4.4 (SP Registration) of the Milestone 1 spec. Per
+// DD-050 (Phase 1 of a two-phase delivery — see
+// https://github.com/dcm-project/enhancements/issues/95), this registers
+// against github.com/dcm-project/control-plane's SP API and generated
+// client — not environment-agent (deferred to Phase 2) or the archived
+// service-provider-manager.
 package registration
 
 import (
@@ -15,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
-	agentclient "github.com/dcm-project/environment-agent/pkg/client"
+	cpv1alpha1 "github.com/dcm-project/control-plane/api/sp/v1alpha1/provider"
+	cpclient "github.com/dcm-project/control-plane/pkg/sp/client/provider"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 )
@@ -63,52 +64,55 @@ func WithMaxBackoff(d time.Duration) Option {
 	return func(r *Registrar) { r.maxBackoff = d }
 }
 
-// WithLeaseRenewalInterval sets the cadence for periodic re-registration
-// (REQ-REG-100) and for retrying a vm registration after a 409 (REQ-REG-080).
-func WithLeaseRenewalInterval(d time.Duration) Option {
-	return func(r *Registrar) { r.leaseRenewalInterval = d }
+// WithReRegistrationInterval sets the cadence for periodic re-registration
+// (REQ-REG-100), which keeps advertised capability metadata fresh.
+// control-plane's Provider record has no lease/TTL to renew (DD-050), so
+// this interval is purely a metadata-freshness concern, not slot retention.
+func WithReRegistrationInterval(d time.Duration) Option {
+	return func(r *Registrar) { r.reRegistrationInterval = d }
 }
 
-// WithHTTPClient overrides the HTTP client used by the generated environment
-// agent client. Intended for tests (inject a fake http.RoundTripper).
+// WithHTTPClient overrides the HTTP client used by the generated
+// control-plane client. Intended for tests (inject a fake
+// http.RoundTripper).
 func WithHTTPClient(c *http.Client) Option {
 	return func(r *Registrar) { r.httpClient = c }
 }
 
 // Registrar performs the SP's two independent registrations (cluster, vm)
-// with the environment agent.
+// with control-plane's SP API.
 type Registrar struct {
 	cfg    *config.Config
 	logger *slog.Logger
-	client *agentclient.ClientWithResponses
+	client *cpclient.ClientWithResponses
 
-	initialBackoff       time.Duration
-	maxBackoff           time.Duration
-	leaseRenewalInterval time.Duration
-	httpClient           *http.Client
+	initialBackoff         time.Duration
+	maxBackoff             time.Duration
+	reRegistrationInterval time.Duration
+	httpClient             *http.Client
 
 	startOnce sync.Once
 	done      chan struct{}
 }
 
-// NewRegistrar creates a Registrar targeting cfg.Agent.RegistrationURL.
+// NewRegistrar creates a Registrar targeting cfg.DCM.RegistrationURL.
 func NewRegistrar(cfg *config.Config, logger *slog.Logger, opts ...Option) (*Registrar, error) {
 	r := &Registrar{
-		cfg:                  cfg,
-		logger:               logger,
-		initialBackoff:       1 * time.Second,
-		maxBackoff:           60 * time.Second,
-		leaseRenewalInterval: 60 * time.Second,
-		httpClient:           &http.Client{Timeout: httpTimeout},
-		done:                 make(chan struct{}),
+		cfg:                    cfg,
+		logger:                 logger,
+		initialBackoff:         1 * time.Second,
+		maxBackoff:             60 * time.Second,
+		reRegistrationInterval: 60 * time.Second,
+		httpClient:             &http.Client{Timeout: httpTimeout},
+		done:                   make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(r)
 	}
 
-	client, err := agentclient.NewClientWithResponses(cfg.Agent.RegistrationURL, agentclient.WithHTTPClient(r.httpClient))
+	client, err := cpclient.NewClientWithResponses(cfg.DCM.RegistrationURL, cpclient.WithHTTPClient(r.httpClient))
 	if err != nil {
-		return nil, fmt.Errorf("creating environment agent client: %w", err)
+		return nil, fmt.Errorf("creating control-plane client: %w", err)
 	}
 	r.client = client
 
@@ -124,11 +128,11 @@ func (r *Registrar) Start(ctx context.Context) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			r.runLoop(ctx, r.cfg.Provider.ClusterName, r.registerCluster, false)
+			r.runLoop(ctx, r.cfg.Provider.ClusterName, r.registerCluster)
 		}()
 		go func() {
 			defer wg.Done()
-			r.runLoop(ctx, r.cfg.Provider.VMName, r.registerVM, true)
+			r.runLoop(ctx, r.cfg.Provider.VMName, r.registerVM)
 		}()
 		go func() {
 			wg.Wait()
@@ -168,22 +172,24 @@ func (r *Registrar) registerVM(ctx context.Context) (int, error) {
 // status code (err is non-nil only for transport-level failures, not
 // non-2xx responses).
 //
-// Implements REQ-REG-115: the environment agent's registration endpoint
-// requires no authentication in its current contract, so no Authorization
-// header is set here.
+// Implements REQ-REG-115: control-plane's SP registration endpoint requires
+// no authentication in its current contract (verified: no JWT/OAuth2/OIDC
+// middleware anywhere in its router chain), so no Authorization header is
+// set here.
 func (r *Registrar) registerOnce(ctx context.Context, name, serviceType, endpoint string, metadata map[string]interface{}) (int, error) {
-	provider := agentv1alpha1.Provider{
+	provider := cpv1alpha1.Provider{
 		Name:          name,
 		ServiceType:   serviceType,
 		Endpoint:      endpoint,
 		SchemaVersion: schemaVersion,
 	}
 	if len(metadata) > 0 {
-		provider.Metadata = &agentv1alpha1.ProviderMetadata{AdditionalProperties: metadata}
+		provider.Metadata = &cpv1alpha1.ProviderMetadata{AdditionalProperties: metadata}
 	}
 
-	// The agent's registration endpoint is idempotent on name alone, so no
-	// query params (e.g. `id`) are needed for the create-or-update semantic.
+	// control-plane's registration endpoint is idempotent on name alone
+	// (RegisterOrUpdateProvider), so no `id` query param is needed for the
+	// create-or-update semantic.
 	resp, err := r.client.CreateProviderWithResponse(ctx, nil, provider)
 	if err != nil {
 		return 0, fmt.Errorf("sending registration request for %q: %w", name, err)
@@ -192,13 +198,14 @@ func (r *Registrar) registerOnce(ctx context.Context, name, serviceType, endpoin
 }
 
 // runLoop drives one service type's registration lifecycle: register, then
-// periodically re-register to renew the lease (REQ-REG-100). Retryable
-// failures use exponential backoff (REQ-REG-070); non-retryable 4xx
-// responses stop the loop (REQ-REG-090); when treat409AsLeaseCadence is set
-// (vm only, REQ-REG-080), a 409 is treated like a successful cycle — logged
-// at WARN and retried on the lease-renewal cadence rather than growing
-// backoff.
-func (r *Registrar) runLoop(ctx context.Context, name string, register func(context.Context) (int, error), treat409AsLeaseCadence bool) {
+// periodically re-register to refresh capability metadata (REQ-REG-100).
+// Retryable failures use exponential backoff (REQ-REG-070); non-retryable
+// 4xx responses, including 409 Conflict, stop the loop immediately
+// (REQ-REG-090) — control-plane has no per-service-type exclusivity to
+// contend over, so unlike the superseded environment-agent design, a 409
+// here always signals a genuine, non-transient name/ID conflict rather than
+// a race to retry into (DD-050).
+func (r *Registrar) runLoop(ctx context.Context, name string, register func(context.Context) (int, error)) {
 	backoff := r.initialBackoff
 
 	for {
@@ -208,14 +215,7 @@ func (r *Registrar) runLoop(ctx context.Context, name string, register func(cont
 		case err == nil && (statusCode == http.StatusOK || statusCode == http.StatusCreated):
 			r.logger.Info("registration successful", "name", name, "status", statusCode)
 			backoff = r.initialBackoff
-			if !sleepOrDone(ctx, r.leaseRenewalInterval) {
-				return
-			}
-			continue
-
-		case err == nil && statusCode == http.StatusConflict && treat409AsLeaseCadence:
-			r.logger.Warn("registration conflict: service type already served by another provider, will retry on lease-renewal cadence", "name", name)
-			if !sleepOrDone(ctx, r.leaseRenewalInterval) {
+			if !sleepOrDone(ctx, r.reRegistrationInterval) {
 				return
 			}
 			continue

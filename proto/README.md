@@ -14,7 +14,7 @@ files below are vendored (copied) verbatim, byte-for-byte, from
 **pinned to that exact commit, not `main`**, since "verbatim" is a claim
 about one point in time and `main` will have moved by the time anyone reads
 this. This mirrors the same reproducibility concern DD-050 addresses for the
-`environment-agent` Go module dependency (pinned by commit SHA in `go.mod`
+`control-plane` Go module dependency (pinned by commit SHA in `go.mod`
 for the same reason: no tagged release to pin to instead). If you update
 these files, update the pinned commit reference here too.
 

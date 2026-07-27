@@ -13,7 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
+	cpv1alpha1 "github.com/dcm-project/control-plane/api/sp/v1alpha1/provider"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/registration"
@@ -22,33 +22,33 @@ import (
 var discardLogger = slog.New(slog.DiscardHandler)
 
 // capturedRequest is one decoded POST /providers request seen by
-// fakeAgentTransport.
+// fakeProviderTransport.
 type capturedRequest struct {
-	provider agentv1alpha1.Provider
+	provider cpv1alpha1.Provider
 	headers  http.Header
 }
 
-// responderFunc decides the fake environment agent's response for a given
+// responderFunc decides the fake control-plane's response for a given
 // decoded registration request.
-type responderFunc func(p agentv1alpha1.Provider) (statusCode int, body any, contentType string)
+type responderFunc func(p cpv1alpha1.Provider) (statusCode int, body any, contentType string)
 
-// fakeAgentTransport is a fake http.RoundTripper implementing the
-// environment agent's POST /providers contract, per the unit test plan's
-// "fake the environment-agent pkg/client HTTP round-tripper" collaborator.
-type fakeAgentTransport struct {
+// fakeProviderTransport is a fake http.RoundTripper implementing
+// control-plane's POST /providers contract, per the unit test plan's "fake
+// control-plane's pkg/sp/client/provider HTTP round-tripper" collaborator.
+type fakeProviderTransport struct {
 	mu        sync.Mutex
 	requests  []capturedRequest
 	responder responderFunc
 }
 
-func (f *fakeAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (f *fakeProviderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, err
 	}
 	_ = req.Body.Close()
 
-	var p agentv1alpha1.Provider
+	var p cpv1alpha1.Provider
 	_ = json.Unmarshal(bodyBytes, &p)
 
 	f.mu.Lock()
@@ -69,7 +69,7 @@ func (f *fakeAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}, nil
 }
 
-func (f *fakeAgentTransport) Requests() []capturedRequest {
+func (f *fakeProviderTransport) Requests() []capturedRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]capturedRequest, len(f.requests))
@@ -77,7 +77,7 @@ func (f *fakeAgentTransport) Requests() []capturedRequest {
 	return out
 }
 
-func (f *fakeAgentTransport) requestsFor(serviceType string) []capturedRequest {
+func (f *fakeProviderTransport) requestsFor(serviceType string) []capturedRequest {
 	var out []capturedRequest
 	for _, r := range f.Requests() {
 		if r.provider.ServiceType == serviceType {
@@ -87,13 +87,13 @@ func (f *fakeAgentTransport) requestsFor(serviceType string) []capturedRequest {
 	return out
 }
 
-func alwaysCreated(p agentv1alpha1.Provider) (int, any, string) {
+func alwaysCreated(p cpv1alpha1.Provider) (int, any, string) {
 	return http.StatusCreated, p, "application/json"
 }
 
 func testConfig() *config.Config {
 	return &config.Config{
-		Agent: config.AgentConfig{RegistrationURL: "http://agent.example.com/api/v1alpha1"},
+		DCM: config.DCMConfig{RegistrationURL: "http://control-plane.example.com/api/v1alpha1"},
 		Provider: config.ProviderConfig{
 			Endpoint:    "https://osac-sp.example.com",
 			ClusterName: "osac-sp-cluster",
@@ -107,7 +107,7 @@ func newTestRegistrar(transport http.RoundTripper, opts ...registration.Option) 
 		registration.WithHTTPClient(&http.Client{Transport: transport}),
 		registration.WithInitialBackoff(2 * time.Millisecond),
 		registration.WithMaxBackoff(10 * time.Millisecond),
-		registration.WithLeaseRenewalInterval(20 * time.Millisecond),
+		registration.WithReRegistrationInterval(20 * time.Millisecond),
 	}, opts...)
 	r, err := registration.NewRegistrar(testConfig(), discardLogger, allOpts...)
 	Expect(err).NotTo(HaveOccurred())
@@ -117,7 +117,7 @@ func newTestRegistrar(transport http.RoundTripper, opts ...registration.Option) 
 var _ = Describe("Registrar", func() {
 	// TC-U-050: cluster registration nests OSAC-specific fields under metadata
 	It("nests supported platforms/provisioning types/k8s versions under metadata for cluster registration (TC-U-050)", func() {
-		transport := &fakeAgentTransport{responder: alwaysCreated}
+		transport := &fakeProviderTransport{responder: alwaysCreated}
 		r := newTestRegistrar(transport)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -151,7 +151,7 @@ var _ = Describe("Registrar", func() {
 
 	// TC-U-051: vm registration payload
 	It("registers the vm service type against the /vms endpoint suffix with no OSAC-specific metadata (TC-U-051)", func() {
-		transport := &fakeAgentTransport{responder: alwaysCreated}
+		transport := &fakeProviderTransport{responder: alwaysCreated}
 		r := newTestRegistrar(transport)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -167,8 +167,8 @@ var _ = Describe("Registrar", func() {
 	})
 
 	// TC-U-059: no Authorization header on registration requests
-	It("sends no Authorization header (TC-U-059)", func() {
-		transport := &fakeAgentTransport{responder: alwaysCreated}
+	It("sends no Authorization header to control-plane (TC-U-059)", func() {
+		transport := &fakeProviderTransport{responder: alwaysCreated}
 		r := newTestRegistrar(transport)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -182,11 +182,33 @@ var _ = Describe("Registrar", func() {
 		}
 	})
 
+	// TC-U-052: a single Start() issues both registrations independently:
+	// exactly 2 initial requests total, with distinct name values.
+	It("issues exactly 2 independent initial registration requests, for cluster and vm (TC-U-052)", func() {
+		transport := &fakeProviderTransport{responder: alwaysCreated}
+		// Long re-registration interval so no 3rd (renewal) request can
+		// land during this test's brief assertion window.
+		r := newTestRegistrar(transport, registration.WithReRegistrationInterval(5*time.Second))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		r.Start(ctx)
+
+		Eventually(func() int { return len(transport.Requests()) }, "200ms", "5ms").Should(Equal(2))
+		Consistently(func() int { return len(transport.Requests()) }, "50ms", "5ms").Should(Equal(2))
+
+		names := []string{transport.Requests()[0].provider.Name, transport.Requests()[1].provider.Name}
+		Expect(names).To(ConsistOf("osac-sp-cluster", "osac-sp-vm"))
+	})
+
 	// TC-U-058: successful registration is periodically renewed (idempotent
-	// re-registration), not sent once and forgotten.
-	It("periodically re-registers to renew the lease after a successful registration (TC-U-058)", func() {
-		transport := &fakeAgentTransport{responder: alwaysCreated}
-		r := newTestRegistrar(transport, registration.WithLeaseRenewalInterval(10*time.Millisecond))
+	// re-registration on name), not sent once and forgotten — this keeps
+	// capability metadata fresh. control-plane's Provider row has no
+	// lease/TTL to expire (DD-050), so this is a freshness concern only,
+	// not slot retention.
+	It("periodically re-registers to refresh capability metadata after a successful registration (TC-U-058)", func() {
+		transport := &fakeProviderTransport{responder: alwaysCreated}
+		r := newTestRegistrar(transport, registration.WithReRegistrationInterval(10*time.Millisecond))
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -195,17 +217,18 @@ var _ = Describe("Registrar", func() {
 		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "500ms", "5ms").Should(BeNumerically(">=", 3))
 	})
 
-	// TC-U-054/TC-U-053: retryable failures (5xx) use exponential backoff and
-	// eventually succeed once the agent recovers.
-	It("retries a retryable failure and eventually succeeds (TC-U-053/054)", func() {
+	// TC-U-054/TC-U-053... (053 covers the 4xx/409-non-retryable case
+	// below): retryable failures (5xx) use exponential backoff and
+	// eventually succeed once control-plane recovers.
+	It("retries a retryable failure and eventually succeeds (TC-U-054)", func() {
 		var mu sync.Mutex
 		failuresLeft := 3
-		transport := &fakeAgentTransport{responder: func(p agentv1alpha1.Provider) (int, any, string) {
+		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
 			mu.Lock()
 			defer mu.Unlock()
 			if failuresLeft > 0 {
 				failuresLeft--
-				return http.StatusServiceUnavailable, agentv1alpha1.Error{Title: "unavailable"}, "application/problem+json"
+				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, "application/problem+json"
 			}
 			return http.StatusCreated, p, "application/json"
 		}}
@@ -220,8 +243,8 @@ var _ = Describe("Registrar", func() {
 
 	// TC-U-056/057: a non-retryable 4xx stops retrying for that registration.
 	It("stops retrying after a non-retryable 4xx response (TC-U-056/057)", func() {
-		transport := &fakeAgentTransport{responder: func(_ agentv1alpha1.Provider) (int, any, string) {
-			return http.StatusUnprocessableEntity, agentv1alpha1.Error{Title: "invalid"}, "application/problem+json"
+		transport := &fakeProviderTransport{responder: func(_ cpv1alpha1.Provider) (int, any, string) {
+			return http.StatusUnprocessableEntity, cpv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, "application/problem+json"
 		}}
 		r := newTestRegistrar(transport)
 
@@ -241,26 +264,29 @@ var _ = Describe("Registrar", func() {
 		Consistently(func() int { return len(transport.requestsFor("vm")) }, "50ms", "5ms").Should(Equal(vmCount))
 	})
 
-	// TC-U-055: a 409 on vm registration is treated as non-fatal and keeps
-	// being retried (unlike other 4xx statuses), rather than stopping the
-	// loop.
-	It("keeps retrying a vm 409 conflict instead of giving up (TC-U-055)", func() {
-		transport := &fakeAgentTransport{responder: func(p agentv1alpha1.Provider) (int, any, string) {
+	// TC-U-053: a 409 Conflict is non-retryable, exactly like any other 4xx
+	// — control-plane has no per-service-type exclusivity to contend over
+	// (unlike the superseded environment-agent design, where a vm 409 meant
+	// transient slot contention worth retrying into). Supersedes the
+	// pre-pivot "409 is retryable" test design — see DD-050.
+	It("treats a vm 409 conflict as non-retryable, same as other 4xx (TC-U-053)", func() {
+		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
 			if p.ServiceType == "vm" {
-				return http.StatusConflict, agentv1alpha1.Error{Title: "already registered"}, "application/problem+json"
+				return http.StatusConflict, cpv1alpha1.Error{Title: "already registered", Type: "ALREADY_EXISTS"}, "application/problem+json"
 			}
 			return http.StatusCreated, p, "application/json"
 		}}
-		r := newTestRegistrar(transport, registration.WithLeaseRenewalInterval(10*time.Millisecond))
+		r := newTestRegistrar(transport, registration.WithReRegistrationInterval(10*time.Millisecond))
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		r.Start(ctx)
 
-		Eventually(func() int { return len(transport.requestsFor("vm")) }, "300ms", "5ms").Should(BeNumerically(">=", 3))
+		// vm gives up after exactly one 409 — no retry.
+		Eventually(func() int { return len(transport.requestsFor("vm")) }, "200ms", "5ms").Should(Equal(1))
+		Consistently(func() int { return len(transport.requestsFor("vm")) }, "50ms", "5ms").Should(Equal(1))
 
-		// The registrar as a whole must not have given up: Done() should not
-		// have closed (cluster keeps succeeding, vm keeps retrying).
-		Consistently(r.Done(), "20ms").ShouldNot(BeClosed())
+		// cluster is unaffected: it keeps succeeding/renewing independently.
+		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "300ms", "5ms").Should(BeNumerically(">=", 2))
 	})
 })

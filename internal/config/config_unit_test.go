@@ -21,7 +21,7 @@ var allEnvVars = []string{
 	"SP_OSAC_TLS_ENABLED",
 	"SP_OSAC_TLS_CERT_FILE",
 	"SP_OSAC_PROBE_TIMEOUT",
-	"SP_AGENT_REGISTRATION_URL",
+	"DCM_REGISTRATION_URL",
 	"SP_ENDPOINT",
 	"SP_PROVIDER_CLUSTER_NAME",
 	"SP_PROVIDER_VM_NAME",
@@ -39,7 +39,7 @@ func setRequiredEnv() {
 	_ = os.Setenv("SP_OSAC_OIDC_ISSUER_URL", "https://keycloak.example.com/token")
 	_ = os.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 	_ = os.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "s3cr3t")
-	_ = os.Setenv("SP_AGENT_REGISTRATION_URL", "https://agent.example.com/api/v1alpha1")
+	_ = os.Setenv("DCM_REGISTRATION_URL", "https://control-plane.example.com/api/v1alpha1")
 	_ = os.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 }
 
@@ -75,7 +75,7 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.OSAC.TLSCertFile).To(Equal("/etc/osac/ca.pem"))
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(9 * time.Second))
 
-		Expect(cfg.Agent.RegistrationURL).To(Equal("https://agent.example.com/api/v1alpha1"))
+		Expect(cfg.DCM.RegistrationURL).To(Equal("https://control-plane.example.com/api/v1alpha1"))
 
 		Expect(cfg.Provider.Endpoint).To(Equal("https://osac-sp.example.com"))
 		Expect(cfg.Provider.ClusterName).To(Equal("osac-sp-cluster-custom"))
@@ -114,7 +114,7 @@ var _ = Describe("Configuration", func() {
 		Entry("SP_OSAC_OIDC_ISSUER_URL", "SP_OSAC_OIDC_ISSUER_URL"),
 		Entry("SP_OSAC_OIDC_CLIENT_ID", "SP_OSAC_OIDC_CLIENT_ID"),
 		Entry("SP_OSAC_OIDC_CLIENT_SECRET", "SP_OSAC_OIDC_CLIENT_SECRET"),
-		Entry("SP_AGENT_REGISTRATION_URL", "SP_AGENT_REGISTRATION_URL"),
+		Entry("DCM_REGISTRATION_URL", "DCM_REGISTRATION_URL"),
 		Entry("SP_ENDPOINT", "SP_ENDPOINT"),
 	)
 

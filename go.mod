@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/dcm-project/environment-agent v0.0.0-20260727083418-46359e637e71
+	github.com/dcm-project/control-plane v0.0.0-20260629133201-6c16c0654018
 	github.com/getkin/kin-openapi v0.145.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0
