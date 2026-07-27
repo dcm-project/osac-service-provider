@@ -14,14 +14,18 @@ package main
 // (not main_test) specifically so these tests can call the unexported run
 // function directly.
 //
-// TC-I-020..027 (registration-specific backoff/re-registration timing) and
-// TC-I-001..005 (server lifecycle) are NOT here: the former needs fast,
-// per-test-configurable backoff/re-registration intervals that run()'s fixed
-// production defaults (1s/60s) don't expose via env vars, so they use
-// internal/registration's own Options directly (see
+// TC-I-020..021/023..027 (registration-specific backoff/re-registration
+// timing) and TC-I-001..006 (server lifecycle) are NOT here: the former
+// needs fast, per-test-configurable backoff/re-registration intervals that
+// run()'s fixed production defaults (1s/60s) don't expose via env vars, so
+// they use internal/registration's own Options directly (see
 // internal/registration/registration_integration_test.go); the latter only
 // needs apiserver+health, not the full stack (see
-// internal/apiserver/server_integration_test.go).
+// internal/apiserver/server_integration_test.go). TC-I-022 IS here (below,
+// in the health Describe block): it specifically asserts the real health
+// endpoint stays responsive while a registration call is pending, which
+// needs the real apiserver+health+registrar wiring together — the one
+// TC-I-02x case that doesn't fit the internal/registration-only harness.
 
 import (
 	"context"
@@ -334,8 +338,9 @@ func startSP(startGRPC bool) *spHarness {
 // opposed to a test mutating harness state afterward and racing run()'s
 // own background goroutines — see keycloakDown below).
 type spStartOptions struct {
-	startGRPC    bool
-	keycloakDown bool
+	startGRPC             bool
+	keycloakDown          bool
+	controlPlaneResponder func(cpv1alpha1.Provider) (int, any, string)
 }
 
 // startSPWithOptions is startSP's implementation. keycloakDown closes the
@@ -350,6 +355,14 @@ func startSPWithOptions(opts spStartOptions) *spHarness {
 		keycloak:     newFakeKeycloak(),
 		capImpl:      &fakeCapabilitiesImpl{},
 		controlPlane: newFakeProviderServer(),
+	}
+	if opts.controlPlaneResponder != nil {
+		// Set before run() launches (not after startSPWithOptions
+		// returns): otherwise the default alwaysCreated201 responder
+		// could already have answered the very first registration
+		// attempt before the test gets a chance to swap it out, same
+		// race rationale as keycloakDown below.
+		h.controlPlane.SetResponder(opts.controlPlaneResponder)
 	}
 
 	// Capture the issuer URL string before potentially closing the
@@ -558,6 +571,34 @@ var _ = Describe("Health end-to-end (integration)", func() {
 		Eventually(h.keycloak.TokenCalls, "2s", "10ms").Should(Equal(1))
 		Expect(h.keycloak.DiscoveryCalls()).To(BeNumerically(">=", 1))
 		Expect(h.keycloak.OpenIDConfigCalls()).To(Equal(0))
+	})
+
+	// TC-I-022: registration does not block server readiness — the health
+	// endpoint, served on a completely independent listener/goroutine from
+	// registration.Registrar's runLoop, must respond normally even while a
+	// registration request to the fake control-plane is still pending.
+	It("keeps the health endpoint responsive while registration is still pending (TC-I-022)", func() {
+		release := make(chan struct{})
+		h := startSPWithOptions(spStartOptions{
+			startGRPC: true,
+			controlPlaneResponder: func(p cpv1alpha1.Provider) (int, any, string) {
+				<-release // held open until explicitly released below
+				return http.StatusCreated, p, "application/json"
+			},
+		})
+		defer func() {
+			close(release) // unblock the fake's handler goroutine before Close()
+			h.stop()
+		}()
+
+		// The registration attempt is recorded (in flight) but its HTTP
+		// response is still withheld — proving the health check below is
+		// answered by a genuinely independent code path, not one waiting
+		// on registration to finish first.
+		Eventually(func() []fakeProviderRequest { return h.controlPlane.Requests() }, "1s", "10ms").ShouldNot(BeEmpty())
+
+		status, _ := h.getHealth("/api/v1alpha1/clusters/health")
+		Expect(status).To(Equal(http.StatusOK))
 	})
 })
 
