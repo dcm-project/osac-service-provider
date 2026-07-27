@@ -172,10 +172,15 @@ func (r *Registrar) registerVM(ctx context.Context) (int, error) {
 // status code (err is non-nil only for transport-level failures, not
 // non-2xx responses).
 //
-// Implements REQ-REG-115: control-plane's SP registration endpoint requires
-// no authentication in its current contract (verified: no JWT/OAuth2/OIDC
-// middleware anywhere in its router chain), so no Authorization header is
-// set here.
+// Implements REQ-REG-115: no Authorization header is set here.
+// control-plane's provider/resource_manager OpenAPI specs declare
+// `security: bearerAuth` as of control-plane#24, but that check is
+// currently a no-op (control-plane defaults to AUTH_DISABLED=true) and
+// control-plane's own outbound call to the SP sets no bearer token either
+// — so sending none remains correct today. This is a tracked
+// production-auth gap with no active fix path yet, not a permanent
+// guarantee — see DD-050's "Authentication Gap" note in the Milestone 1
+// spec.
 func (r *Registrar) registerOnce(ctx context.Context, name, serviceType, endpoint string, metadata map[string]interface{}) (int, error) {
 	provider := cpv1alpha1.Provider{
 		Name:          name,
