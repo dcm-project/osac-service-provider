@@ -13,14 +13,27 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/osac"
 )
 
-// fakeOSACStatus is a hand-rolled fake satisfying health.OSACStatus.
+// fakeOSACStatus is a hand-rolled fake satisfying health.OSACStatus. It
+// counts calls to TokenStatus and Probe so tests can assert the handler
+// reads cached state exactly once per check (TC-U-035/036) rather than
+// triggering extra work (e.g. a forced token refresh).
 type fakeOSACStatus struct {
 	tokenStatus osac.TokenStatus
 	probeResult osac.ProbeResult
+
+	tokenStatusCalls int
+	probeCalls       int
 }
 
-func (f *fakeOSACStatus) TokenStatus() osac.TokenStatus            { return f.tokenStatus }
-func (f *fakeOSACStatus) Probe(_ context.Context) osac.ProbeResult { return f.probeResult }
+func (f *fakeOSACStatus) TokenStatus() osac.TokenStatus {
+	f.tokenStatusCalls++
+	return f.tokenStatus
+}
+
+func (f *fakeOSACStatus) Probe(_ context.Context) osac.ProbeResult {
+	f.probeCalls++
+	return f.probeResult
+}
 
 var _ = Describe("Health handler", func() {
 	var startTime time.Time
@@ -108,8 +121,8 @@ var _ = Describe("Health handler", func() {
 		Expect(*resp.Detail).To(Equal("OIDC token invalid; OSAC fulfillment service unreachable"))
 	})
 
-	// TC-U-034/035/036: fixed response fields
-	It("always sets type, path, version, and uptime (TC-U-034/035/036)", func() {
+	// TC-U-034: fixed response fields
+	It("always sets type, path, version, and uptime (TC-U-034)", func() {
 		resp := getHealth(&fakeOSACStatus{
 			tokenStatus: osac.TokenStatus{Valid: true},
 			probeResult: osac.ProbeResult{Connected: true},
@@ -118,6 +131,32 @@ var _ = Describe("Health handler", func() {
 		Expect(*resp.Path).To(Equal("health"))
 		Expect(*resp.Version).To(Equal("1.2.3"))
 		Expect(*resp.Uptime).To(BeNumerically(">=", 90))
+	})
+
+	// TC-U-035: the health check reads the OIDC token status from
+	// osac.Bootstrap's cache (TokenStatus(), a synchronous getter) exactly
+	// once per call, per REQ-HLT-050 — it never forces a fresh token fetch
+	// as a side effect of a health check (that would let an unbounded
+	// stream of health polls hammer the OIDC provider).
+	It("reads cached token status without forcing an extra fetch (TC-U-035)", func() {
+		fake := &fakeOSACStatus{
+			tokenStatus: osac.TokenStatus{Valid: true},
+			probeResult: osac.ProbeResult{Connected: true},
+		}
+		getHealth(fake)
+		Expect(fake.tokenStatusCalls).To(Equal(1))
+	})
+
+	// TC-U-036: Probe is invoked exactly once per health call — not zero
+	// (health must actually check connectivity, not assume it) and not
+	// more than once (no duplicate/backup probes per REQ-HLT-060).
+	It("invokes Probe exactly once per health call (TC-U-036)", func() {
+		fake := &fakeOSACStatus{
+			tokenStatus: osac.TokenStatus{Valid: true},
+			probeResult: osac.ProbeResult{Connected: true},
+		}
+		getHealth(fake)
+		Expect(fake.probeCalls).To(Equal(1))
 	})
 
 	// TC-U-039: both StrictServerInterface entry points (clusters/vms)

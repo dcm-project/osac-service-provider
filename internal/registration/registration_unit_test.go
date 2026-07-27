@@ -217,10 +217,9 @@ var _ = Describe("Registrar", func() {
 		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "500ms", "5ms").Should(BeNumerically(">=", 3))
 	})
 
-	// TC-U-054/TC-U-053... (053 covers the 4xx/409-non-retryable case
-	// below): retryable failures (5xx) use exponential backoff and
+	// TC-U-055: retryable failures (5xx) use exponential backoff and
 	// eventually succeed once control-plane recovers.
-	It("retries a retryable failure and eventually succeeds (TC-U-054)", func() {
+	It("retries a retryable failure and eventually succeeds (TC-U-055)", func() {
 		var mu sync.Mutex
 		failuresLeft := 3
 		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
@@ -241,8 +240,8 @@ var _ = Describe("Registrar", func() {
 		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "500ms", "5ms").Should(BeNumerically(">=", 4))
 	})
 
-	// TC-U-056/057: a non-retryable 4xx stops retrying for that registration.
-	It("stops retrying after a non-retryable 4xx response (TC-U-056/057)", func() {
+	// TC-U-054: a non-retryable 4xx stops retrying for that registration.
+	It("stops retrying after a non-retryable 4xx response (TC-U-054)", func() {
 		transport := &fakeProviderTransport{responder: func(_ cpv1alpha1.Provider) (int, any, string) {
 			return http.StatusUnprocessableEntity, cpv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, "application/problem+json"
 		}}
@@ -262,6 +261,60 @@ var _ = Describe("Registrar", func() {
 		// No further attempts after Done() closes.
 		Consistently(func() int { return len(transport.requestsFor("cluster")) }, "50ms", "5ms").Should(Equal(clusterCount))
 		Consistently(func() int { return len(transport.requestsFor("vm")) }, "50ms", "5ms").Should(Equal(vmCount))
+	})
+
+	// TC-U-056: registration runs in a goroutine, not synchronously in
+	// Start() — Start() must return before a blocked round-tripper is
+	// released.
+	It("does not block on construction: Start() returns before registration completes (TC-U-056)", func() {
+		release := make(chan struct{})
+		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+			<-release // blocks until explicitly released below — proves Start() didn't wait for this
+			return http.StatusCreated, p, "application/json"
+		}}
+		r := newTestRegistrar(transport)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		startReturned := make(chan struct{})
+		go func() {
+			r.Start(ctx)
+			close(startReturned)
+		}()
+
+		// Start() must return promptly even though the round-tripper it
+		// launched is still blocked on <-release: if Start() ran
+		// registration synchronously instead of in a goroutine, this
+		// would time out.
+		Eventually(startReturned, "200ms", "5ms").Should(BeClosed())
+
+		close(release)
+		Eventually(func() []capturedRequest { return transport.Requests() }, "200ms", "5ms").ShouldNot(BeEmpty())
+	})
+
+	// TC-U-057: cluster's ongoing failure/retries do not affect vm reaching
+	// registered — the reverse direction of TC-U-053's independence check
+	// (there, vm fails and cluster is unaffected; here, cluster fails and
+	// vm is unaffected).
+	It("registers vm successfully regardless of cluster's ongoing retries (TC-U-057)", func() {
+		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+			if p.ServiceType == "cluster" {
+				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, "application/problem+json"
+			}
+			return http.StatusCreated, p, "application/json"
+		}}
+		r := newTestRegistrar(transport)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		r.Start(ctx)
+
+		Eventually(func() int { return len(transport.requestsFor("vm")) }, "200ms", "5ms").Should(BeNumerically(">=", 1))
+		Expect(transport.requestsFor("vm")[0].provider.ServiceType).To(Equal("vm"))
+
+		// cluster keeps retrying in the background, unaffected by vm's success.
+		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "300ms", "5ms").Should(BeNumerically(">=", 2))
 	})
 
 	// TC-U-053: a 409 Conflict is non-retryable, exactly like any other 4xx
