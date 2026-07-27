@@ -7,8 +7,15 @@ info:
     fulfillment service gRPC API.
 
     **Milestone 1 scope:** this spec currently defines only the health
-    endpoint. Cluster and VM CRUD paths are added in later milestones per
+    endpoints. Cluster and VM CRUD paths are added in later milestones per
     issue #1's suggested delivery milestones.
+
+    There are two health endpoints, not one, because this SP registers two
+    independent providers with the environment agent — `cluster` at
+    `{endpoint}/api/v1alpha1/clusters` and `vm` at
+    `{endpoint}/api/v1alpha1/vms` — and the agent health-checks each
+    registered provider at `{endpoint}/health` (see DD-010 in the Milestone 1
+    spec). Both endpoints report the same underlying OIDC/OSAC health.
   version: 1.0.0
   contact:
     name: DCM Project
@@ -26,13 +33,45 @@ tags:
     description: Health check operations
 
 paths:
-  /api/v1alpha1/health:
+  /api/v1alpha1/clusters/health:
     get:
-      summary: Health Check
+      summary: Cluster Provider Health Check
       description: |
-        Returns the health status of the service provider, reflecting real
-        OSAC gRPC connectivity and OIDC token validity.
-      operationId: getHealth
+        Returns the health status of the service provider's `cluster`
+        registration, reflecting real OSAC gRPC connectivity and OIDC token
+        validity. Reports the same status as `/api/v1alpha1/vms/health` —
+        this SP's health is a single, global condition (see DD-010 in the
+        Milestone 1 spec).
+      operationId: getClustersHealth
+      tags:
+        - Health
+      responses:
+        '200':
+          description: |
+            Health check completed. The `status` field, not the HTTP status
+            code, indicates whether the SP is healthy — an unhealthy SP still
+            returns 200 (see SC-002 in the spec).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '500':
+          description: Internal server error (e.g. an unexpected panic).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1alpha1/vms/health:
+    get:
+      summary: VM Provider Health Check
+      description: |
+        Returns the health status of the service provider's `vm`
+        registration, reflecting real OSAC gRPC connectivity and OIDC token
+        validity. Reports the same status as
+        `/api/v1alpha1/clusters/health` — this SP's health is a single,
+        global condition (see DD-010 in the Milestone 1 spec).
+      operationId: getVMsHealth
       tags:
         - Health
       responses:

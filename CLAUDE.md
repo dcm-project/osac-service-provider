@@ -67,7 +67,12 @@ Milestone 1 defines only:
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/v1alpha1/health` | Health check. Reflects real OSAC gRPC connectivity and OIDC token validity — `status` in the body (not the HTTP code) indicates health. |
+| `GET` | `/api/v1alpha1/clusters/health` | Health check for the `cluster` provider registration. Reflects real OSAC gRPC connectivity and OIDC token validity — `status` in the body (not the HTTP code) indicates health. |
+| `GET` | `/api/v1alpha1/vms/health` | Health check for the `vm` provider registration. Reports identical status to the endpoint above — this SP has one global health condition, not one per service type. |
+
+There are two health endpoints (not one) because the environment agent
+health-checks each independently-registered provider at
+`{provider.endpoint}/health` (see DD-010 in `.ai/specs/osac-sp.spec.md`).
 
 All error responses use RFC 7807 Problem Details (`application/problem+json`).
 

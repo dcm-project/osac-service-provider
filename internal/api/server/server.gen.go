@@ -16,18 +16,27 @@ import (
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// GetHealth Health Check
-	// (GET /api/v1alpha1/health)
-	GetHealth(w http.ResponseWriter, r *http.Request)
+	// GetClustersHealth Cluster Provider Health Check
+	// (GET /api/v1alpha1/clusters/health)
+	GetClustersHealth(w http.ResponseWriter, r *http.Request)
+	// GetVMsHealth VM Provider Health Check
+	// (GET /api/v1alpha1/vms/health)
+	GetVMsHealth(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
 
-// GetHealth Health Check
-// (GET /api/v1alpha1/health)
-func (_ Unimplemented) GetHealth(w http.ResponseWriter, r *http.Request) {
+// GetClustersHealth Cluster Provider Health Check
+// (GET /api/v1alpha1/clusters/health)
+func (_ Unimplemented) GetClustersHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetVMsHealth VM Provider Health Check
+// (GET /api/v1alpha1/vms/health)
+func (_ Unimplemented) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -40,11 +49,25 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// GetHealth operation middleware
-func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
+// GetClustersHealth operation middleware
+func (siw *ServerInterfaceWrapper) GetClustersHealth(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetHealth(w, r)
+		siw.Handler.GetClustersHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVMsHealth operation middleware
+func (siw *ServerInterfaceWrapper) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVMsHealth(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -168,22 +191,25 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/api/v1alpha1/health", wrapper.GetHealth)
+		r.Get(options.BaseURL+"/api/v1alpha1/clusters/health", wrapper.GetClustersHealth)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1alpha1/vms/health", wrapper.GetVMsHealth)
 	})
 
 	return r
 }
 
-type GetHealthRequestObject struct {
+type GetClustersHealthRequestObject struct {
 }
 
-type GetHealthResponseObject interface {
-	VisitGetHealthResponse(w http.ResponseWriter) error
+type GetClustersHealthResponseObject interface {
+	VisitGetClustersHealthResponse(w http.ResponseWriter) error
 }
 
-type GetHealth200JSONResponse Health
+type GetClustersHealth200JSONResponse Health
 
-func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
+func (response GetClustersHealth200JSONResponse) VisitGetClustersHealthResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -195,9 +221,44 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	return err
 }
 
-type GetHealth500ApplicationProblemPlusJSONResponse Error
+type GetClustersHealth500ApplicationProblemPlusJSONResponse Error
 
-func (response GetHealth500ApplicationProblemPlusJSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
+func (response GetClustersHealth500ApplicationProblemPlusJSONResponse) VisitGetClustersHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVMsHealthRequestObject struct {
+}
+
+type GetVMsHealthResponseObject interface {
+	VisitGetVMsHealthResponse(w http.ResponseWriter) error
+}
+
+type GetVMsHealth200JSONResponse Health
+
+func (response GetVMsHealth200JSONResponse) VisitGetVMsHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVMsHealth500ApplicationProblemPlusJSONResponse Error
+
+func (response GetVMsHealth500ApplicationProblemPlusJSONResponse) VisitGetVMsHealthResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -211,9 +272,12 @@ func (response GetHealth500ApplicationProblemPlusJSONResponse) VisitGetHealthRes
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// GetHealth Health Check
-	// (GET /api/v1alpha1/health)
-	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// GetClustersHealth Cluster Provider Health Check
+	// (GET /api/v1alpha1/clusters/health)
+	GetClustersHealth(ctx context.Context, request GetClustersHealthRequestObject) (GetClustersHealthResponseObject, error)
+	// GetVMsHealth VM Provider Health Check
+	// (GET /api/v1alpha1/vms/health)
+	GetVMsHealth(ctx context.Context, request GetVMsHealthRequestObject) (GetVMsHealthResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -255,23 +319,47 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
-// GetHealth operation middleware
-func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
-	var request GetHealthRequestObject
+// GetClustersHealth operation middleware
+func (sh *strictHandler) GetClustersHealth(w http.ResponseWriter, r *http.Request) {
+	var request GetClustersHealthRequestObject
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetHealth(ctx, request.(GetHealthRequestObject))
+		return sh.ssi.GetClustersHealth(ctx, request.(GetClustersHealthRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetHealth")
+		handler = middleware(handler, "GetClustersHealth")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
-		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+	} else if validResponse, ok := response.(GetClustersHealthResponseObject); ok {
+		if err := validResponse.VisitGetClustersHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetVMsHealth operation middleware
+func (sh *strictHandler) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
+	var request GetVMsHealthRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetVMsHealth(ctx, request.(GetVMsHealthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetVMsHealth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetVMsHealthResponseObject); ok {
+		if err := validResponse.VisitGetVMsHealthResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

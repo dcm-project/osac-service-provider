@@ -22,9 +22,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// healthPath is the resource-relative health path this SP advertises
-// (DD-010).
-const healthPath = "/api/v1alpha1/health"
+// healthPath is used only for this server's own internal startup
+// readiness self-probe (waitForReady) — either of the two health paths
+// exposed externally works equally well for that purpose, since both
+// report the same underlying condition (DD-010, REQ-HLT-015).
+const healthPath = "/api/v1alpha1/clusters/health"
 
 // readinessProbeTimeout is how long to wait for the server to confirm it is
 // serving HTTP requests before giving up and skipping the onReady callback.

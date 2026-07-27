@@ -31,9 +31,9 @@ var _ = Describe("Health handler", func() {
 
 	getHealth := func(fake *fakeOSACStatus) v1alpha1.Health {
 		h := health.NewHandler(fake, startTime, "1.2.3")
-		resp, err := h.GetHealth(context.Background(), oapigen.GetHealthRequestObject{})
+		resp, err := h.GetClustersHealth(context.Background(), oapigen.GetClustersHealthRequestObject{})
 		Expect(err).NotTo(HaveOccurred())
-		jsonResp, ok := resp.(oapigen.GetHealth200JSONResponse)
+		jsonResp, ok := resp.(oapigen.GetClustersHealth200JSONResponse)
 		Expect(ok).To(BeTrue(), "expected a 200 JSON response")
 		return v1alpha1.Health(jsonResp)
 	}
@@ -88,5 +88,28 @@ var _ = Describe("Health handler", func() {
 		Expect(*resp.Path).To(Equal("health"))
 		Expect(*resp.Version).To(Equal("1.2.3"))
 		Expect(*resp.Uptime).To(BeNumerically(">=", 90))
+	})
+
+	// TC-U-039: both StrictServerInterface entry points (clusters/vms)
+	// report identical status, per REQ-HLT-015/DD-010.
+	It("reports identical status from GetClustersHealth and GetVMsHealth (TC-U-039)", func() {
+		fake := &fakeOSACStatus{
+			tokenStatus: osac.TokenStatus{Valid: false},
+			probeResult: osac.ProbeResult{Connected: true},
+		}
+		h := health.NewHandler(fake, startTime, "1.2.3")
+
+		clustersResp, err := h.GetClustersHealth(context.Background(), oapigen.GetClustersHealthRequestObject{})
+		Expect(err).NotTo(HaveOccurred())
+		clustersJSON, ok := clustersResp.(oapigen.GetClustersHealth200JSONResponse)
+		Expect(ok).To(BeTrue())
+
+		vmsResp, err := h.GetVMsHealth(context.Background(), oapigen.GetVMsHealthRequestObject{})
+		Expect(err).NotTo(HaveOccurred())
+		vmsJSON, ok := vmsResp.(oapigen.GetVMsHealth200JSONResponse)
+		Expect(ok).To(BeTrue())
+
+		Expect(clustersJSON.Status).To(Equal(vmsJSON.Status))
+		Expect(clustersJSON.Detail).To(Equal(vmsJSON.Detail))
 	})
 })

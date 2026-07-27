@@ -2,8 +2,11 @@ package osac
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"time"
 
@@ -63,6 +66,90 @@ func (f *fakeCapabilitiesClient) Get(_ context.Context, _ *publicv1.Capabilities
 		return nil, f.err
 	}
 	return &publicv1.CapabilitiesGetResponse{}, nil
+}
+
+// fakeOIDCIssuer is a real httptest.Server implementing a minimal OIDC
+// discovery document plus its own advertised token endpoint, per DD-060 /
+// TC-U-023/024. Requests landing on the bare issuer path itself (rather
+// than the discovered token endpoint) are recorded separately, so a
+// regression to treating the issuer URL as the token endpoint fails a test
+// loudly instead of silently "working" against a too-permissive fake.
+const (
+	fakeIssuerPath    = "/realms/osac"
+	fakeTokenPath     = fakeIssuerPath + "/protocol/openid-connect/token"
+	fakeDiscoveryPath = fakeIssuerPath + "/.well-known/openid-configuration"
+)
+
+type fakeOIDCIssuer struct {
+	server *httptest.Server
+
+	mu              sync.Mutex
+	tokenCalls      int
+	issuerRootCalls int
+	discoveryStatus int
+	tokenStatus     int
+}
+
+func newFakeOIDCIssuer() *fakeOIDCIssuer {
+	f := &fakeOIDCIssuer{discoveryStatus: http.StatusOK, tokenStatus: http.StatusOK}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fakeDiscoveryPath, func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		status := f.discoveryStatus
+		f.mu.Unlock()
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"token_endpoint": f.server.URL + fakeTokenPath})
+	})
+	mux.HandleFunc(fakeTokenPath, func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		f.tokenCalls++
+		status := f.tokenStatus
+		f.mu.Unlock()
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "tok-discovered",
+			"token_type":   "Bearer",
+			"expires_in":   300,
+		})
+	})
+	mux.HandleFunc(fakeIssuerPath, func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		f.issuerRootCalls++
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	f.server = httptest.NewServer(mux)
+	return f
+}
+
+func (f *fakeOIDCIssuer) issuerURL() string { return f.server.URL + fakeIssuerPath }
+
+func (f *fakeOIDCIssuer) TokenCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tokenCalls
+}
+
+func (f *fakeOIDCIssuer) IssuerRootCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.issuerRootCalls
+}
+
+func (f *fakeOIDCIssuer) SetDiscoveryStatus(status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.discoveryStatus = status
 }
 
 func testCfg() *config.OSACConfig {
@@ -184,6 +271,62 @@ var _ = Describe("Bootstrap", func() {
 			}
 
 			Expect(ts.Calls()).To(Equal(0))
+		})
+	})
+
+	Describe("New (real OIDC discovery + client-credentials, DD-060)", func() {
+		var issuer *fakeOIDCIssuer
+
+		BeforeEach(func() {
+			issuer = newFakeOIDCIssuer()
+		})
+
+		AfterEach(func() {
+			issuer.server.Close()
+		})
+
+		// TC-U-023: token requests go to the endpoint discovered from the
+		// issuer's .well-known/openid-configuration document, never to the
+		// bare issuer URL itself.
+		It("discovers the token endpoint from the issuer before fetching a token (TC-U-023)", func() {
+			cfg := testCfg()
+			cfg.OIDCIssuerURL = issuer.issuerURL()
+
+			b, err := New(cfg, discardLogger, WithInitialBackoff(5*time.Millisecond), WithMaxBackoff(20*time.Millisecond))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = b.Close() }()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			b.Start(ctx)
+
+			Eventually(func() bool { return b.TokenStatus().Valid }, "1s", "5ms").Should(BeTrue())
+			Expect(issuer.TokenCalls()).To(BeNumerically(">=", 1))
+			Expect(issuer.IssuerRootCalls()).To(Equal(0))
+		})
+
+		// TC-U-024: a discovery failure does not panic or block Start, and
+		// is retried with the same exponential backoff as token-fetch
+		// failures, recovering once discovery succeeds.
+		It("retries OIDC discovery with backoff after a failure, without blocking, and recovers (TC-U-024)", func() {
+			issuer.SetDiscoveryStatus(http.StatusInternalServerError)
+
+			cfg := testCfg()
+			cfg.OIDCIssuerURL = issuer.issuerURL()
+
+			b, err := New(cfg, discardLogger, WithInitialBackoff(5*time.Millisecond), WithMaxBackoff(20*time.Millisecond))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = b.Close() }()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			b.Start(ctx)
+
+			Consistently(func() bool { return b.TokenStatus().Valid }, "40ms", "5ms").Should(BeFalse())
+			Expect(issuer.TokenCalls()).To(Equal(0))
+
+			issuer.SetDiscoveryStatus(http.StatusOK)
+			Eventually(func() bool { return b.TokenStatus().Valid }, "1s", "5ms").Should(BeTrue())
 		})
 	})
 })

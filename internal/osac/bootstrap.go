@@ -12,9 +12,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +30,96 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
+
+// oidcDiscoveryTimeout bounds a single OIDC discovery document fetch
+// (REQ-OSAC-011).
+const oidcDiscoveryTimeout = 10 * time.Second
+
+// oidcServerMetadata is the subset of RFC 8414 / OpenID Connect Discovery
+// 1.0 metadata this SP needs. Mirrors
+// osac-project/fulfillment-service's own internal/oauth.ServerMetadata and
+// osac-project/osac-ux's proxy/auth/oidc.go, both of which discover a token
+// endpoint from an issuer URL the same way, against the same class of
+// Keycloak issuers this SP authenticates against (see DD-060).
+type oidcServerMetadata struct {
+	TokenEndpoint string `json:"token_endpoint"`
+}
+
+// discoverTokenEndpoint resolves the OAuth2 token endpoint from an OIDC
+// issuer URL via GET {issuer}/.well-known/openid-configuration
+// (REQ-OSAC-011). An OIDC issuer URL is never itself a valid token
+// endpoint — treating it as one was DD-060's corrected hallucination.
+func discoverTokenEndpoint(ctx context.Context, httpClient *http.Client, issuerURL string) (string, error) {
+	discoveryURL := strings.TrimSuffix(issuerURL, "/") + "/.well-known/openid-configuration"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("building OIDC discovery request for %s: %w", discoveryURL, err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching OIDC discovery document from %s: %w", discoveryURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("OIDC discovery document at %s returned status %d", discoveryURL, resp.StatusCode)
+	}
+
+	var meta oidcServerMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return "", fmt.Errorf("decoding OIDC discovery document from %s: %w", discoveryURL, err)
+	}
+	if meta.TokenEndpoint == "" {
+		return "", fmt.Errorf("OIDC discovery document at %s has no token_endpoint", discoveryURL)
+	}
+	return meta.TokenEndpoint, nil
+}
+
+// discoveringTokenSource lazily discovers the OIDC issuer's token endpoint
+// (REQ-OSAC-011) on first use, then delegates to a clientcredentials.Config
+// -backed token source for that and all subsequent grants. Discovery
+// failures are surfaced as Token() errors so the existing exponential
+// -backoff retry loop (REQ-OSAC-060) covers discovery failures the same way
+// it covers token-fetch failures, without blocking Bootstrap construction.
+type discoveringTokenSource struct {
+	issuerURL    string
+	clientID     string
+	clientSecret string
+	httpClient   *http.Client
+
+	mu    sync.Mutex
+	inner oauth2.TokenSource
+}
+
+func (d *discoveringTokenSource) Token() (*oauth2.Token, error) {
+	d.mu.Lock()
+	inner := d.inner
+	d.mu.Unlock()
+
+	if inner == nil {
+		discoveryCtx, cancel := context.WithTimeout(context.Background(), oidcDiscoveryTimeout)
+		tokenURL, err := discoverTokenEndpoint(discoveryCtx, d.httpClient, d.issuerURL)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("discovering OIDC token endpoint for issuer %s: %w", d.issuerURL, err)
+		}
+
+		ccCfg := &clientcredentials.Config{
+			ClientID:     d.clientID,
+			ClientSecret: d.clientSecret,
+			TokenURL:     tokenURL,
+		}
+		inner = ccCfg.TokenSource(context.Background())
+
+		d.mu.Lock()
+		d.inner = inner
+		d.mu.Unlock()
+	}
+
+	return inner.Token()
+}
 
 // refreshMargin is how far before expiry a cached token is considered due
 // for refresh (REQ-OSAC-020).
@@ -87,17 +180,19 @@ type Bootstrap struct {
 	capClient publicv1.CapabilitiesClient
 }
 
-// New creates a Bootstrap with a real OIDC token source (OAuth2
-// client-credentials grant, REQ-OSAC-010) and a real gRPC ClientConn to
-// cfg.FulfillmentAddress (REQ-OSAC-030/040/050).
+// New creates a Bootstrap with a real OIDC token source (issuer discovery
+// per REQ-OSAC-011, then an OAuth2 client-credentials grant per
+// REQ-OSAC-010) and a real gRPC ClientConn to cfg.FulfillmentAddress
+// (REQ-OSAC-030/040/050).
 func New(cfg *config.OSACConfig, logger *slog.Logger, opts ...Option) (*Bootstrap, error) {
-	ccCfg := &clientcredentials.Config{
-		ClientID:     cfg.OIDCClientID,
-		ClientSecret: cfg.OIDCClientSecret,
-		TokenURL:     cfg.OIDCIssuerURL,
+	ts := &discoveringTokenSource{
+		issuerURL:    cfg.OIDCIssuerURL,
+		clientID:     cfg.OIDCClientID,
+		clientSecret: cfg.OIDCClientSecret,
+		httpClient:   &http.Client{Timeout: oidcDiscoveryTimeout},
 	}
 
-	b := newBootstrap(cfg, logger, ccCfg.TokenSource(context.Background()), nil, opts...)
+	b := newBootstrap(cfg, logger, ts, nil, opts...)
 
 	dialOpts, err := dialOptions(cfg, &bearerCreds{b: b})
 	if err != nil {

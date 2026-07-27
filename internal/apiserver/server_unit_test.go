@@ -20,14 +20,18 @@ import (
 )
 
 // fakeServerInterface satisfies oapigen.ServerInterface with a swappable
-// GetHealth implementation, per the unit test plan's convention of
-// registering handlers directly rather than going through the strict
-// adapter/business logic.
+// health implementation shared by both routes (DD-010/REQ-HLT-015), per the
+// unit test plan's convention of registering handlers directly rather than
+// going through the strict adapter/business logic.
 type fakeServerInterface struct {
 	getHealth func(w http.ResponseWriter, r *http.Request)
 }
 
-func (f *fakeServerInterface) GetHealth(w http.ResponseWriter, r *http.Request) {
+func (f *fakeServerInterface) GetClustersHealth(w http.ResponseWriter, r *http.Request) {
+	f.getHealth(w, r)
+}
+
+func (f *fakeServerInterface) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
 	f.getHealth(w, r)
 }
 
@@ -82,7 +86,7 @@ var _ = Describe("Server middleware", func() {
 		baseURL, stop := startServer(testServerConfig(0), discardLogger, handler)
 		defer stop()
 
-		resp, err := http.Get(baseURL + "/api/v1alpha1/health") //nolint:noctx // test helper
+		resp, err := http.Get(baseURL + "/api/v1alpha1/clusters/health") //nolint:noctx // test helper
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 
@@ -96,7 +100,7 @@ var _ = Describe("Server middleware", func() {
 		// TC-U-073 (adapted): recovery is outermost / robust — the server
 		// keeps serving normally after recovering from a panic.
 		handler.getHealth = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
-		resp2, err := http.Get(baseURL + "/api/v1alpha1/health") //nolint:noctx // test helper
+		resp2, err := http.Get(baseURL + "/api/v1alpha1/clusters/health") //nolint:noctx // test helper
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp2.Body.Close() }()
 		Expect(resp2.StatusCode).To(Equal(http.StatusOK))
@@ -113,7 +117,7 @@ var _ = Describe("Server middleware", func() {
 		baseURL, stop := startServer(testServerConfig(0), logger, handler)
 		defer stop()
 
-		resp, err := http.Get(baseURL + "/api/v1alpha1/health") //nolint:noctx // test helper
+		resp, err := http.Get(baseURL + "/api/v1alpha1/clusters/health") //nolint:noctx // test helper
 		Expect(err).NotTo(HaveOccurred())
 		_ = resp.Body.Close()
 		Expect(resp.StatusCode).To(Equal(http.StatusTeapot))
@@ -137,7 +141,7 @@ var _ = Describe("Server middleware", func() {
 		}, "500ms", "5ms").Should(Succeed())
 
 		Expect(record["method"]).To(Equal("GET"))
-		Expect(record["path"]).To(Equal("/api/v1alpha1/health"))
+		Expect(record["path"]).To(Equal("/api/v1alpha1/clusters/health"))
 		Expect(record["status"]).To(BeNumerically("==", http.StatusTeapot))
 		Expect(record["duration"]).NotTo(BeEmpty())
 	})
@@ -155,7 +159,7 @@ var _ = Describe("Server middleware", func() {
 		baseURL, stop := startServer(testServerConfig(10*time.Millisecond), discardLogger, handler)
 		defer stop()
 
-		resp, err := http.Get(baseURL + "/api/v1alpha1/health") //nolint:noctx // test helper
+		resp, err := http.Get(baseURL + "/api/v1alpha1/clusters/health") //nolint:noctx // test helper
 		if err == nil {
 			_ = resp.Body.Close()
 		}

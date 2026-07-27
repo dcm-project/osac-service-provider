@@ -89,23 +89,40 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// GetHealth Health Check
+	// GetClustersHealth Cluster Provider Health Check
 	//
-	// Returns the health status of the service provider, reflecting real
-	// OSAC gRPC connectivity and OIDC token validity.
+	// Returns the health status of the service provider's `cluster`
+	// registration, reflecting real OSAC gRPC connectivity and OIDC token
+	// validity. Reports the same status as `/api/v1alpha1/vms/health` —
+	// this SP's health is a single, global condition (see DD-010 in the
+	// Milestone 1 spec).
 	//
-	// Corresponds with GET /api/v1alpha1/health (the `GetHealth` operationId).
-	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with GET /api/v1alpha1/clusters/health (the `GetClustersHealth` operationId).
+	GetClustersHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVMsHealth VM Provider Health Check
+	//
+	// Returns the health status of the service provider's `vm`
+	// registration, reflecting real OSAC gRPC connectivity and OIDC token
+	// validity. Reports the same status as
+	// `/api/v1alpha1/clusters/health` — this SP's health is a single,
+	// global condition (see DD-010 in the Milestone 1 spec).
+	//
+	// Corresponds with GET /api/v1alpha1/vms/health (the `GetVMsHealth` operationId).
+	GetVMsHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// GetHealth Health Check
+// GetClustersHealth Cluster Provider Health Check
 //
-// Returns the health status of the service provider, reflecting real
-// OSAC gRPC connectivity and OIDC token validity.
+// Returns the health status of the service provider's `cluster`
+// registration, reflecting real OSAC gRPC connectivity and OIDC token
+// validity. Reports the same status as `/api/v1alpha1/vms/health` —
+// this SP's health is a single, global condition (see DD-010 in the
+// Milestone 1 spec).
 //
-// Corresponds with GET /api/v1alpha1/health (the `GetHealth` operationId).
-func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetHealthRequest(c.Server)
+// Corresponds with GET /api/v1alpha1/clusters/health (the `GetClustersHealth` operationId).
+func (c *Client) GetClustersHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetClustersHealthRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +133,29 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-// NewGetHealthRequest constructs an http.Request for the GetHealth method
-func NewGetHealthRequest(server string) (*http.Request, error) {
+// GetVMsHealth VM Provider Health Check
+//
+// Returns the health status of the service provider's `vm`
+// registration, reflecting real OSAC gRPC connectivity and OIDC token
+// validity. Reports the same status as
+// `/api/v1alpha1/clusters/health` — this SP's health is a single,
+// global condition (see DD-010 in the Milestone 1 spec).
+//
+// Corresponds with GET /api/v1alpha1/vms/health (the `GetVMsHealth` operationId).
+func (c *Client) GetVMsHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVMsHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NewGetClustersHealthRequest constructs an http.Request for the GetClustersHealth method
+func NewGetClustersHealthRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -125,7 +163,34 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/api/v1alpha1/health")
+	operationPath := fmt.Sprintf("/api/v1alpha1/clusters/health")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetVMsHealthRequest constructs an http.Request for the GetVMsHealth method
+func NewGetVMsHealthRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1alpha1/vms/health")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -187,18 +252,34 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// GetHealthWithResponse Health Check
+	// GetClustersHealthWithResponse Cluster Provider Health Check
 	//
-	// Returns the health status of the service provider, reflecting real
-	// OSAC gRPC connectivity and OIDC token validity.
+	// Returns the health status of the service provider's `cluster`
+	// registration, reflecting real OSAC gRPC connectivity and OIDC token
+	// validity. Reports the same status as `/api/v1alpha1/vms/health` —
+	// this SP's health is a single, global condition (see DD-010 in the
+	// Milestone 1 spec).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with GET /api/v1alpha1/health (the `GetHealth` operationId).
-	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+	// Corresponds with GET /api/v1alpha1/clusters/health (the `GetClustersHealth` operationId).
+	GetClustersHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClustersHealthResponse, error)
+
+	// GetVMsHealthWithResponse VM Provider Health Check
+	//
+	// Returns the health status of the service provider's `vm`
+	// registration, reflecting real OSAC gRPC connectivity and OIDC token
+	// validity. Reports the same status as
+	// `/api/v1alpha1/clusters/health` — this SP's health is a single,
+	// global condition (see DD-010 in the Milestone 1 spec).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1alpha1/vms/health (the `GetVMsHealth` operationId).
+	GetVMsHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVMsHealthResponse, error)
 }
 
-type GetHealthResponse struct {
+type GetClustersHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
@@ -208,22 +289,22 @@ type GetHealthResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetHealthResponse) GetJSON200() *Health {
+func (r GetClustersHealthResponse) GetJSON200() *Health {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
-func (r GetHealthResponse) GetApplicationproblemJSON500() *Error {
+func (r GetClustersHealthResponse) GetApplicationproblemJSON500() *Error {
 	return r.ApplicationproblemJSON500
 }
 
 // GetBody returns the raw response body bytes
-func (r GetHealthResponse) GetBody() []byte {
+func (r GetClustersHealthResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r GetHealthResponse) Status() string {
+func (r GetClustersHealthResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -231,7 +312,7 @@ func (r GetHealthResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetHealthResponse) StatusCode() int {
+func (r GetClustersHealthResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -239,38 +320,141 @@ func (r GetHealthResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetHealthResponse) ContentType() string {
+func (r GetClustersHealthResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-// GetHealthWithResponse Health Check
+type GetVMsHealthResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Health
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetVMsHealthResponse) GetJSON200() *Health {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetVMsHealthResponse) GetApplicationproblemJSON500() *Error {
+	return r.ApplicationproblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetVMsHealthResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVMsHealthResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVMsHealthResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetVMsHealthResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetClustersHealthWithResponse Cluster Provider Health Check
 //
-// Returns the health status of the service provider, reflecting real
-// OSAC gRPC connectivity and OIDC token validity.
+// Returns the health status of the service provider's `cluster`
+// registration, reflecting real OSAC gRPC connectivity and OIDC token
+// validity. Reports the same status as `/api/v1alpha1/vms/health` —
+// this SP's health is a single, global condition (see DD-010 in the
+// Milestone 1 spec).
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with GET /api/v1alpha1/health (the `GetHealth` operationId).
-func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error) {
-	rsp, err := c.GetHealth(ctx, reqEditors...)
+// Corresponds with GET /api/v1alpha1/clusters/health (the `GetClustersHealth` operationId).
+func (c *ClientWithResponses) GetClustersHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClustersHealthResponse, error) {
+	rsp, err := c.GetClustersHealth(ctx, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetHealthResponse(rsp)
+	return ParseGetClustersHealthResponse(rsp)
 }
 
-// ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
-func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
+// GetVMsHealthWithResponse VM Provider Health Check
+//
+// Returns the health status of the service provider's `vm`
+// registration, reflecting real OSAC gRPC connectivity and OIDC token
+// validity. Reports the same status as
+// `/api/v1alpha1/clusters/health` — this SP's health is a single,
+// global condition (see DD-010 in the Milestone 1 spec).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1alpha1/vms/health (the `GetVMsHealth` operationId).
+func (c *ClientWithResponses) GetVMsHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVMsHealthResponse, error) {
+	rsp, err := c.GetVMsHealth(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVMsHealthResponse(rsp)
+}
+
+// ParseGetClustersHealthResponse parses an HTTP response from a GetClustersHealthWithResponse call
+func ParseGetClustersHealthResponse(rsp *http.Response) (*GetClustersHealthResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetHealthResponse{
+	response := &GetClustersHealthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Health
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetVMsHealthResponse parses an HTTP response from a GetVMsHealthWithResponse call
+func ParseGetVMsHealthResponse(rsp *http.Response) (*GetVMsHealthResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVMsHealthResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

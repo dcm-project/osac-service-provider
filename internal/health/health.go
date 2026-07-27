@@ -1,5 +1,8 @@
-// Package health implements the GET /api/v1alpha1/health endpoint, reporting
-// real OSAC connectivity and OIDC token health.
+// Package health implements the GET /api/v1alpha1/clusters/health and
+// GET /api/v1alpha1/vms/health endpoints, reporting real OSAC connectivity
+// and OIDC token health. Per DD-010, there are two endpoints (one per
+// independently-registered provider) rather than one, but both report the
+// same underlying, global health condition.
 //
 // Implements Topic 4.3 (Health Service) of the Milestone 1 spec.
 package health
@@ -37,10 +40,30 @@ func NewHandler(osacStatus OSACStatus, startTime time.Time, version string) *Han
 	return &Handler{osacStatus: osacStatus, startTime: startTime, version: version}
 }
 
-// GetHealth implements oapigen.StrictServerInterface.
+// GetClustersHealth implements oapigen.StrictServerInterface for the
+// `cluster` provider's health endpoint.
 //
 // Implements REQ-HLT-010 through REQ-HLT-070.
-func (h *Handler) GetHealth(ctx context.Context, _ oapigen.GetHealthRequestObject) (oapigen.GetHealthResponseObject, error) {
+func (h *Handler) GetClustersHealth(ctx context.Context, _ oapigen.GetClustersHealthRequestObject) (oapigen.GetClustersHealthResponseObject, error) {
+	resp := h.checkHealth(ctx)
+	return oapigen.GetClustersHealth200JSONResponse(resp), nil
+}
+
+// GetVMsHealth implements oapigen.StrictServerInterface for the `vm`
+// provider's health endpoint. Per REQ-HLT-015, this reports identical
+// status to GetClustersHealth — the same underlying health condition,
+// computed by the shared checkHealth.
+//
+// Implements REQ-HLT-010 through REQ-HLT-070.
+func (h *Handler) GetVMsHealth(ctx context.Context, _ oapigen.GetVMsHealthRequestObject) (oapigen.GetVMsHealthResponseObject, error) {
+	resp := h.checkHealth(ctx)
+	return oapigen.GetVMsHealth200JSONResponse(resp), nil
+}
+
+// checkHealth computes the SP's single, global health condition (OIDC token
+// validity + OSAC gRPC connectivity), shared by both exposed endpoints
+// (REQ-HLT-015).
+func (h *Handler) checkHealth(ctx context.Context) v1alpha1.Health {
 	tokenStatus := h.osacStatus.TokenStatus()
 	probe := h.osacStatus.Probe(ctx)
 
@@ -51,7 +74,7 @@ func (h *Handler) GetHealth(ctx context.Context, _ oapigen.GetHealthRequestObjec
 		detail = util.Ptr(unhealthyDetail(tokenStatus.Valid, probe.Connected))
 	}
 
-	resp := v1alpha1.Health{
+	return v1alpha1.Health{
 		Type:    util.Ptr(resourceType),
 		Status:  status,
 		Path:    util.Ptr("health"),
@@ -59,8 +82,6 @@ func (h *Handler) GetHealth(ctx context.Context, _ oapigen.GetHealthRequestObjec
 		Uptime:  util.Ptr(int(time.Since(h.startTime).Seconds())),
 		Detail:  detail,
 	}
-
-	return oapigen.GetHealth200JSONResponse(resp), nil
 }
 
 // unhealthyDetail builds a message distinguishing token vs. connectivity
