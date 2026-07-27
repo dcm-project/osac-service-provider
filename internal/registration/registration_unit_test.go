@@ -142,7 +142,11 @@ var _ = Describe("Registrar", func() {
 
 		versions, ok := req.provider.Metadata.Get("kubernetes_supported_versions")
 		Expect(ok).To(BeTrue())
-		Expect(versions).To(ContainElement("4.18"))
+		// Real Kubernetes version numbers (e.g. "1.31"), not OpenShift
+		// release versions (e.g. "4.18") — see the comment on
+		// kubernetesSupportedVersions in registration.go.
+		Expect(versions).To(ContainElement("1.31"))
+		Expect(versions).NotTo(ContainElement("4.18"))
 	})
 
 	// TC-U-051: vm registration payload

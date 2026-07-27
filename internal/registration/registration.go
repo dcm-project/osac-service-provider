@@ -35,7 +35,18 @@ const (
 // kubernetesSupportedVersions is a hardcoded placeholder list for Milestone
 // 1, per SC-001 — the full DCM-to-OSAC version compatibility matrix is
 // Milestone 6 scope.
-var kubernetesSupportedVersions = []string{"4.16", "4.17", "4.18"}
+//
+// These MUST be Kubernetes version numbers, not OpenShift release versions:
+// per the osac-sp enhancement's "Version Translation" section (and the
+// acm-cluster-sp enhancement's identical field, which spells this out
+// explicitly: "advertise the Kubernetes versions it supports, not the
+// platform-specific versions (e.g., OpenShift versions)"), DCM users select
+// a Kubernetes version and the SP translates it internally to an OSAC
+// `release_image`. The range below (Kubernetes 1.29-1.33) corresponds to
+// OpenShift 4.16-4.20 — the newest of which OSAC's own fulfillment-service
+// already has catalog item templates for as of implementation time (e.g.
+// "osac.templates.ocp_4_20_small_nico" in its docs/CATALOG_ITEMS.md).
+var kubernetesSupportedVersions = []string{"1.29", "1.30", "1.31", "1.32", "1.33"}
 
 // Option configures a Registrar.
 type Option func(*Registrar)
