@@ -266,29 +266,51 @@ func newBootstrap(cfg *config.OSACConfig, logger *slog.Logger, ts oauth2.TokenSo
 // connection: TLS (REQ-OSAC-040) or insecure (REQ-OSAC-050) transport
 // credentials, plus a per-RPC bearer credential supplier.
 func dialOptions(cfg *config.OSACConfig, perRPC credentials.PerRPCCredentials) ([]grpc.DialOption, error) {
-	var transportCreds credentials.TransportCredentials
-	if cfg.TLSEnabled {
-		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-		if cfg.TLSCertFile != "" {
-			pool := x509.NewCertPool()
-			pem, err := os.ReadFile(cfg.TLSCertFile)
-			if err != nil {
-				return nil, fmt.Errorf("reading TLS CA file %s: %w", cfg.TLSCertFile, err)
-			}
-			if !pool.AppendCertsFromPEM(pem) {
-				return nil, fmt.Errorf("no certificates found in %s", cfg.TLSCertFile)
-			}
-			tlsCfg.RootCAs = pool
-		}
-		transportCreds = credentials.NewTLS(tlsCfg)
-	} else {
-		transportCreds = insecure.NewCredentials()
+	transportCreds, err := transportCredentials(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	return []grpc.DialOption{
 		grpc.WithTransportCredentials(transportCreds),
 		grpc.WithPerRPCCredentials(perRPC),
 	}, nil
+}
+
+// transportCredentials selects TLS (REQ-OSAC-040) or insecure (REQ-OSAC-050)
+// gRPC transport credentials based on cfg.TLSEnabled. Split out from
+// dialOptions so unit tests can inspect the resulting
+// credentials.TransportCredentials directly (e.g. Info().SecurityProtocol)
+// without needing to introspect an opaque []grpc.DialOption (TC-U-012,
+// TC-U-013).
+func transportCredentials(cfg *config.OSACConfig) (credentials.TransportCredentials, error) {
+	if !cfg.TLSEnabled {
+		return insecure.NewCredentials(), nil
+	}
+
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.TLSCertFile != "" {
+		pool, err := loadCACertPool(cfg.TLSCertFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg.RootCAs = pool
+	}
+	return credentials.NewTLS(tlsCfg), nil
+}
+
+// loadCACertPool reads a PEM-encoded CA bundle from certFile into a fresh
+// x509.CertPool.
+func loadCACertPool(certFile string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	pem, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading TLS CA file %s: %w", certFile, err)
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no certificates found in %s", certFile)
+	}
+	return pool, nil
 }
 
 // bearerCreds supplies the cached OIDC bearer token as gRPC per-RPC

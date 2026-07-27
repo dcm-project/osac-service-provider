@@ -2,11 +2,19 @@ package osac
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"time"
 
@@ -14,10 +22,43 @@ import (
 	. "github.com/onsi/gomega"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
+
+// generateTestCACert creates a minimal self-signed CA certificate for
+// TC-U-013, returning its PEM encoding and the path to a temp file
+// containing it. The temp file is removed via DeferCleanup.
+func generateTestCACert() (pemBytes []byte, certFile string) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	Expect(err).NotTo(HaveOccurred())
+
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "osac-sp-test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	Expect(err).NotTo(HaveOccurred())
+
+	pemBytes = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+
+	f, err := os.CreateTemp("", "osac-sp-test-ca-*.pem")
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.Write(pemBytes)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(f.Close()).To(Succeed())
+	DeferCleanup(func() { _ = os.Remove(f.Name()) })
+
+	return pemBytes, f.Name()
+}
 
 // tokenResult is one queued response for fakeTokenSource.
 type tokenResult struct {
@@ -59,9 +100,22 @@ func (f *fakeTokenSource) Calls() int {
 // gRPC dialing in unit scope" convention.
 type fakeCapabilitiesClient struct {
 	err error
+	// delay, if non-zero, makes Get block for delay (or until ctx is done,
+	// whichever comes first) before responding — used to simulate a slow
+	// backend for TC-U-021.
+	delay time.Duration
 }
 
-func (f *fakeCapabilitiesClient) Get(_ context.Context, _ *publicv1.CapabilitiesGetRequest, _ ...grpc.CallOption) (*publicv1.CapabilitiesGetResponse, error) {
+func (f *fakeCapabilitiesClient) Get(ctx context.Context, _ *publicv1.CapabilitiesGetRequest, _ ...grpc.CallOption) (*publicv1.CapabilitiesGetResponse, error) {
+	if f.delay > 0 {
+		timer := time.NewTimer(f.delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -247,9 +301,38 @@ var _ = Describe("Bootstrap", func() {
 			Eventually(func() bool { return b.TokenStatus().Valid }, "1s", "5ms").Should(BeTrue())
 		})
 
-		// TC-U-013/014: fetch failure is retried with backoff and does not
+		// TC-U-011: a token nearing expiry is refreshed before it actually
+		// expires, and the refreshed value (not the stale one) is what gets
+		// attached to subsequent gRPC calls via bearerCreds.
+		It("refreshes the token before expiry, and subsequent calls use the refreshed value (TC-U-011)", func() {
+			ts := &fakeTokenSource{queue: []tokenResult{
+				{token: &oauth2.Token{AccessToken: "tok-A", Expiry: time.Now().Add(500 * time.Millisecond)}},
+				{token: &oauth2.Token{AccessToken: "tok-B", Expiry: time.Now().Add(1 * time.Hour)}},
+			}}
+			b := newBootstrap(testCfg(), discardLogger, ts, &fakeCapabilitiesClient{})
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			b.Start(ctx)
+
+			// refreshMargin (30s) far exceeds token A's 500ms validity, so
+			// the loop must treat it as already due for renewal and
+			// refetch near-instantly. A regression that used the raw
+			// time-until-expiry (no margin subtraction) would not refetch
+			// until ~500ms — this window is deliberately shorter than that,
+			// so such a regression would fail this assertion rather than
+			// pass it by coincidence.
+			creds := &bearerCreds{b: b}
+			Eventually(func() (map[string]string, error) {
+				return creds.GetRequestMetadata(context.Background())
+			}, "300ms", "5ms").Should(HaveKeyWithValue("authorization", "Bearer tok-B"))
+
+			Expect(ts.Calls()).To(Equal(2))
+		})
+
+		// TC-U-014/015: fetch failure is retried with backoff and does not
 		// block/crash; eventually succeeds once the source recovers.
-		It("retries with backoff after a fetch failure and recovers (TC-U-013/014)", func() {
+		It("retries with backoff after a fetch failure and recovers (TC-U-014/015)", func() {
 			ts := &fakeTokenSource{queue: []tokenResult{
 				{err: errors.New("keycloak unavailable")},
 				{err: errors.New("keycloak unavailable")},
@@ -262,7 +345,11 @@ var _ = Describe("Bootstrap", func() {
 			b.Start(ctx)
 
 			Eventually(func() bool { return b.TokenStatus().Valid }, "1s", "5ms").Should(BeTrue())
-			Expect(ts.Calls()).To(BeNumerically(">=", 3))
+			// Exact count, not ">=": once the 3rd call succeeds with a
+			// 1-hour-validity token, the refresh loop won't call Token()
+			// again for a long time, so the count stabilizes at exactly 3
+			// well within this test's runtime.
+			Expect(ts.Calls()).To(Equal(3))
 		})
 
 		// TC-U-015: Start returns immediately (non-blocking) even when the
@@ -292,12 +379,30 @@ var _ = Describe("Bootstrap", func() {
 			Expect(result.Err).NotTo(HaveOccurred())
 		})
 
-		// TC-U-020: not connected
-		It("reports not connected when the Capabilities client errors (TC-U-020)", func() {
-			b := newBootstrap(testCfg(), discardLogger, &fakeTokenSource{}, &fakeCapabilitiesClient{err: errors.New("unavailable")})
+		// TC-U-020: not connected, error wraps a gRPC Unavailable status.
+		It("reports not connected with a gRPC Unavailable error when the Capabilities client is unreachable (TC-U-020)", func() {
+			grpcErr := status.Error(codes.Unavailable, "osac.example.com:443: connection refused")
+			b := newBootstrap(testCfg(), discardLogger, &fakeTokenSource{}, &fakeCapabilitiesClient{err: grpcErr})
 			result := b.Probe(context.Background())
 			Expect(result.Connected).To(BeFalse())
-			Expect(result.Err).To(HaveOccurred())
+			Expect(status.Code(result.Err)).To(Equal(codes.Unavailable))
+		})
+
+		// TC-U-021: Probe respects the configured timeout — a backend
+		// slower than probeTimeout results in connected==false and a
+		// context.DeadlineExceeded error, not an indefinite block.
+		It("reports not connected with a deadline-exceeded error when the Capabilities client is slower than probeTimeout (TC-U-021)", func() {
+			cfg := testCfg()
+			cfg.ProbeTimeout = 20 * time.Millisecond
+			b := newBootstrap(cfg, discardLogger, &fakeTokenSource{}, &fakeCapabilitiesClient{delay: time.Hour})
+
+			start := time.Now()
+			result := b.Probe(context.Background())
+			elapsed := time.Since(start)
+
+			Expect(result.Connected).To(BeFalse())
+			Expect(result.Err).To(MatchError(context.DeadlineExceeded))
+			Expect(elapsed).To(BeNumerically("<", 500*time.Millisecond))
 		})
 
 		// TC-U-022: Probe never triggers a token fetch.
@@ -310,6 +415,68 @@ var _ = Describe("Bootstrap", func() {
 			}
 
 			Expect(ts.Calls()).To(Equal(0))
+		})
+	})
+
+	Describe("transportCredentials (gRPC transport credentials, DD-020)", func() {
+		// TC-U-012: TLS disabled -> insecure transport credentials.
+		It("builds insecure transport credentials when TLS is disabled (TC-U-012)", func() {
+			cfg := testCfg()
+			cfg.TLSEnabled = false
+
+			creds, err := transportCredentials(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(creds.Info().SecurityProtocol).To(Equal("insecure"))
+		})
+
+		// TC-U-013: TLS enabled -> real TLS transport credentials, with the
+		// configured CA loaded into the cert pool (checked exactly, not
+		// just "no error").
+		It("builds TLS transport credentials with exactly the configured CA when TLS is enabled (TC-U-013)", func() {
+			caPEM, caFile := generateTestCACert()
+
+			cfg := testCfg()
+			cfg.TLSEnabled = true
+			cfg.TLSCertFile = caFile
+
+			creds, err := transportCredentials(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(creds.Info().SecurityProtocol).To(Equal("tls"))
+
+			pool, err := loadCACertPool(caFile)
+			Expect(err).NotTo(HaveOccurred())
+			expectedPool := x509.NewCertPool()
+			Expect(expectedPool.AppendCertsFromPEM(caPEM)).To(BeTrue())
+			Expect(pool.Equal(expectedPool)).To(BeTrue())
+		})
+
+		// TC-U-013 (error path): a configured CA file that cannot be read
+		// fails fast with a descriptive error, rather than silently dialing
+		// without a custom CA.
+		It("fails when the configured TLS CA file cannot be read", func() {
+			cfg := testCfg()
+			cfg.TLSEnabled = true
+			cfg.TLSCertFile = "/nonexistent/osac-sp-test-ca.pem"
+
+			_, err := transportCredentials(cfg)
+			Expect(err).To(MatchError(ContainSubstring("reading TLS CA file")))
+		})
+
+		// TC-U-013 (error path): a configured CA file with no valid PEM
+		// certificates fails fast rather than silently dialing with an
+		// effectively-empty trust pool.
+		It("fails when the configured TLS CA file has no valid certificates", func() {
+			f, err := os.CreateTemp("", "osac-sp-test-empty-ca-*.pem")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(f.Close()).To(Succeed())
+			DeferCleanup(func() { _ = os.Remove(f.Name()) })
+
+			cfg := testCfg()
+			cfg.TLSEnabled = true
+			cfg.TLSCertFile = f.Name()
+
+			_, err = transportCredentials(cfg)
+			Expect(err).To(MatchError(ContainSubstring("no certificates found in")))
 		})
 	})
 
@@ -341,9 +508,12 @@ var _ = Describe("Bootstrap", func() {
 			b.Start(ctx)
 
 			Eventually(func() bool { return b.TokenStatus().Valid }, "1s", "5ms").Should(BeTrue())
-			Expect(issuer.TokenCalls()).To(BeNumerically(">=", 1))
+			// Exact counts, not ">=": the fake token's 300s expiry vastly
+			// exceeds this test's runtime, so exactly one discovery+fetch
+			// cycle can have happened by the time we assert.
+			Expect(issuer.TokenCalls()).To(Equal(1))
 			Expect(issuer.IssuerRootCalls()).To(Equal(0))
-			Expect(issuer.OAuthASCalls()).To(BeNumerically(">=", 1))
+			Expect(issuer.OAuthASCalls()).To(Equal(1))
 			Expect(issuer.DiscoveryCalls()).To(Equal(0))
 		})
 
@@ -393,9 +563,12 @@ var _ = Describe("Bootstrap", func() {
 			b.Start(ctx)
 
 			Eventually(func() bool { return b.TokenStatus().Valid }, "1s", "5ms").Should(BeTrue())
-			Expect(issuer.OAuthASCalls()).To(BeNumerically(">=", 1))
-			Expect(issuer.DiscoveryCalls()).To(BeNumerically(">=", 1))
-			Expect(issuer.TokenCalls()).To(BeNumerically(">=", 1))
+			// Exact counts, not ">=": the fake token's 300s expiry vastly
+			// exceeds this test's runtime, so exactly one discovery+fetch
+			// cycle can have happened by the time we assert.
+			Expect(issuer.OAuthASCalls()).To(Equal(1))
+			Expect(issuer.DiscoveryCalls()).To(Equal(1))
+			Expect(issuer.TokenCalls()).To(Equal(1))
 		})
 	})
 })

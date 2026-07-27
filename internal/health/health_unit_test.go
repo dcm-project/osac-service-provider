@@ -58,6 +58,21 @@ var _ = Describe("Health handler", func() {
 		Expect(*resp.Detail).To(Equal("OIDC token invalid"))
 	})
 
+	// TC-U-037: the unhealthy detail specifically names the token cause
+	// (case-insensitively containing "token") and does not misattribute the
+	// failure to connectivity, per REQ-HLT-070. Same scenario as TC-U-031
+	// (which asserts the overall exact detail string); this case asserts
+	// the AC-HLT-060-specific "names the right cause, not the wrong one"
+	// property independently of the exact wording.
+	It("names the token cause, not connectivity, in the unhealthy detail (TC-U-037)", func() {
+		resp := getHealth(&fakeOSACStatus{
+			tokenStatus: osac.TokenStatus{Valid: false},
+			probeResult: osac.ProbeResult{Connected: true},
+		})
+		Expect(*resp.Detail).To(MatchRegexp("(?i)token"))
+		Expect(*resp.Detail).NotTo(MatchRegexp("(?i)osac|connect"))
+	})
+
 	// TC-U-032: unhealthy when disconnected, token valid
 	It("reports unhealthy with a connectivity-only detail when OSAC is unreachable (TC-U-032)", func() {
 		resp := getHealth(&fakeOSACStatus{
@@ -66,6 +81,21 @@ var _ = Describe("Health handler", func() {
 		})
 		Expect(resp.Status).To(Equal(v1alpha1.Unhealthy))
 		Expect(*resp.Detail).To(Equal("OSAC fulfillment service unreachable"))
+	})
+
+	// TC-U-038: the unhealthy detail specifically names the connectivity
+	// cause (case-insensitively containing "osac"/"connect") and does not
+	// misattribute the failure to the token, per REQ-HLT-070. Same scenario
+	// as TC-U-032 (which asserts the overall exact detail string); this
+	// case asserts the AC-HLT-070-specific "names the right cause, not the
+	// wrong one" property independently of the exact wording.
+	It("names the connectivity cause, not the token, in the unhealthy detail (TC-U-038)", func() {
+		resp := getHealth(&fakeOSACStatus{
+			tokenStatus: osac.TokenStatus{Valid: true},
+			probeResult: osac.ProbeResult{Connected: false},
+		})
+		Expect(*resp.Detail).To(MatchRegexp("(?i)osac|connect"))
+		Expect(*resp.Detail).NotTo(MatchRegexp("(?i)token"))
 	})
 
 	// TC-U-033: unhealthy when both token invalid and disconnected

@@ -168,6 +168,45 @@ var _ = Describe("Server middleware", func() {
 		errVal, _ := observedErr.Load().(error)
 		Expect(errVal).To(MatchError(context.DeadlineExceeded))
 	})
+
+	// TC-U-073: recovery sits outermost in the real middleware chain. Unlike
+	// TC-U-070 (which uses testServerConfig(0), a timeout of 0 disables
+	// requestTimeoutMiddleware entirely — see its `if timeout <= 0 { return
+	// next }` passthrough), this case configures a real nonzero timeout so
+	// all three middlewares (recovery, logging, timeout) are genuinely
+	// active, and confirms a panic from the terminal handler still
+	// propagates all the way up through both of them to be caught by
+	// recovery — not silently absorbed by logging's post-ServeHTTP Info()
+	// call, which would happen if logging were positioned outside recovery.
+	It("catches a handler panic through the full active middleware stack, proving recovery sits outermost (TC-U-073)", func() {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+		handler := &fakeServerInterface{getHealth: func(_ http.ResponseWriter, _ *http.Request) {
+			panic("boom from deep in the stack")
+		}}
+		baseURL, stop := startServer(testServerConfig(time.Second), logger, handler)
+		defer stop()
+
+		resp, err := http.Get(baseURL + "/api/v1alpha1/clusters/health") //nolint:noctx // test helper
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
+
+		var body v1alpha1.Error
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		Expect(body.Type).To(Equal(v1alpha1.INTERNAL))
+
+		// If recovery were not outermost, the panic could instead be
+		// observed by requestLoggingMiddleware's post-ServeHTTP Info()
+		// call. Assert no "http request" log line was ever written for
+		// this (panicking) request.
+		Consistently(func() bool {
+			return bytes.Contains(buf.Bytes(), []byte(`"msg":"http request"`))
+		}, "20ms", "5ms").Should(BeFalse())
+	})
 })
 
 var errNotFound = &notFoundError{}
