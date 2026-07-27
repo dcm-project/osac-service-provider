@@ -157,15 +157,21 @@ components:
         type:
           type: string
           format: uri-reference
-          description: URI reference identifying the error type
+          description: >-
+            Short error code identifying the error type. Despite the
+            uri-reference format (RFC 7807 nominally expects a URI), this
+            repo matches the DCM service provider ecosystem's established
+            convention (see k8s-container-service-provider and
+            acm-cluster-service-provider) of bare short codes rather than
+            real URIs.
           enum:
-            - https://dcm.example.com/errors/invalid-argument
-            - https://dcm.example.com/errors/not-found
-            - https://dcm.example.com/errors/already-exists
-            - https://dcm.example.com/errors/permission-denied
-            - https://dcm.example.com/errors/unauthenticated
-            - https://dcm.example.com/errors/internal
-            - https://dcm.example.com/errors/unavailable
+            - INVALID_ARGUMENT
+            - NOT_FOUND
+            - ALREADY_EXISTS
+            - PERMISSION_DENIED
+            - UNAUTHENTICATED
+            - INTERNAL
+            - UNAVAILABLE
           x-enum-varnames:
             - INVALIDARGUMENT
             - NOTFOUND

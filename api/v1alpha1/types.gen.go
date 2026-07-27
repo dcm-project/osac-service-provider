@@ -5,13 +5,13 @@ package v1alpha1
 
 // Defines values for ErrorType.
 const (
-	ALREADYEXISTS    ErrorType = "https://dcm.example.com/errors/already-exists"
-	INTERNAL         ErrorType = "https://dcm.example.com/errors/internal"
-	INVALIDARGUMENT  ErrorType = "https://dcm.example.com/errors/invalid-argument"
-	NOTFOUND         ErrorType = "https://dcm.example.com/errors/not-found"
-	PERMISSIONDENIED ErrorType = "https://dcm.example.com/errors/permission-denied"
-	UNAUTHENTICATED  ErrorType = "https://dcm.example.com/errors/unauthenticated"
-	UNAVAILABLE      ErrorType = "https://dcm.example.com/errors/unavailable"
+	ALREADYEXISTS    ErrorType = "ALREADY_EXISTS"
+	INTERNAL         ErrorType = "INTERNAL"
+	INVALIDARGUMENT  ErrorType = "INVALID_ARGUMENT"
+	NOTFOUND         ErrorType = "NOT_FOUND"
+	PERMISSIONDENIED ErrorType = "PERMISSION_DENIED"
+	UNAUTHENTICATED  ErrorType = "UNAUTHENTICATED"
+	UNAVAILABLE      ErrorType = "UNAVAILABLE"
 )
 
 // Valid indicates whether the value is a known member of the ErrorType enum.
@@ -68,11 +68,11 @@ type Error struct {
 	// Title Short human-readable summary
 	Title string `json:"title"`
 
-	// Type URI reference identifying the error type
+	// Type Short error code identifying the error type. Despite the uri-reference format (RFC 7807 nominally expects a URI), this repo matches the DCM service provider ecosystem's established convention (see k8s-container-service-provider and acm-cluster-service-provider) of bare short codes rather than real URIs.
 	Type ErrorType `json:"type"`
 }
 
-// ErrorType URI reference identifying the error type
+// ErrorType Short error code identifying the error type. Despite the uri-reference format (RFC 7807 nominally expects a URI), this repo matches the DCM service provider ecosystem's established convention (see k8s-container-service-provider and acm-cluster-service-provider) of bare short codes rather than real URIs.
 type ErrorType string
 
 // Health Health status singleton resource
