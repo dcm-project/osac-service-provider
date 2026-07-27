@@ -1,0 +1,151 @@
+openapi: 3.0.4
+info:
+  title: OSAC Service Provider API
+  description: |
+    DCM service provider that integrates the Open Sovereign AI Cloud (OSAC)
+    platform with DCM, provisioning OpenShift clusters and VMs via OSAC's
+    fulfillment service gRPC API.
+
+    **Milestone 1 scope:** this spec currently defines only the health
+    endpoint. Cluster and VM CRUD paths are added in later milestones per
+    issue #1's suggested delivery milestones.
+  version: 1.0.0
+  contact:
+    name: DCM Project
+    url: https://github.com/dcm-project/osac-service-provider
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: /
+    description: OSAC Service Provider
+
+tags:
+  - name: Health
+    description: Health check operations
+
+paths:
+  /api/v1alpha1/health:
+    get:
+      summary: Health Check
+      description: |
+        Returns the health status of the service provider, reflecting real
+        OSAC gRPC connectivity and OIDC token validity.
+      operationId: getHealth
+      tags:
+        - Health
+      responses:
+        '200':
+          description: |
+            Health check completed. The `status` field, not the HTTP status
+            code, indicates whether the SP is healthy — an unhealthy SP still
+            returns 200 (see SC-002 in the spec).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '500':
+          description: Internal server error (e.g. an unexpected panic).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Health:
+      type: object
+      description: Health status singleton resource
+      x-aep-resource:
+        singular: health
+        plural: healths
+        singleton: true
+        type: osac-service-provider.dcm.io/health
+        patterns:
+          - health
+      required:
+        - type
+        - status
+        - path
+        - version
+        - uptime
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          readOnly: true
+          description: Resource type identifier
+          example: "osac-service-provider.dcm.io/health"
+        status:
+          type: string
+          description: Health status
+          enum:
+            - healthy
+            - unhealthy
+          example: "healthy"
+        path:
+          type: string
+          readOnly: true
+          description: Canonical path of the resource
+          example: "health"
+        version:
+          type: string
+          readOnly: true
+          description: Service provider build version
+          example: "0.0.1-dev"
+        uptime:
+          type: integer
+          readOnly: true
+          description: Seconds since the service provider started
+          example: 3600
+        detail:
+          type: string
+          readOnly: true
+          description: |
+            When unhealthy, distinguishes the cause (token invalid vs. OSAC
+            unreachable — both may be true simultaneously). Absent when
+            healthy.
+          example: "OIDC token invalid; OSAC fulfillment service unreachable"
+
+    Error:
+      type: object
+      description: RFC 7807 compliant error response
+      required:
+        - type
+        - title
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: URI reference identifying the error type
+          enum:
+            - https://dcm.example.com/errors/invalid-argument
+            - https://dcm.example.com/errors/not-found
+            - https://dcm.example.com/errors/already-exists
+            - https://dcm.example.com/errors/permission-denied
+            - https://dcm.example.com/errors/unauthenticated
+            - https://dcm.example.com/errors/internal
+            - https://dcm.example.com/errors/unavailable
+          x-enum-varnames:
+            - INVALIDARGUMENT
+            - NOTFOUND
+            - ALREADYEXISTS
+            - PERMISSIONDENIED
+            - UNAUTHENTICATED
+            - INTERNAL
+            - UNAVAILABLE
+        title:
+          type: string
+          description: Short human-readable summary
+        status:
+          type: integer
+          format: int32
+          description: HTTP status code
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence
+        instance:
+          type: string
+          format: uri-reference
+          description: URI reference for this specific error occurrence
