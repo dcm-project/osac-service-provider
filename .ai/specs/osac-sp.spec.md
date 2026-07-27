@@ -538,7 +538,7 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 | REQ-REG-090 | Non-retryable 4xx responses, including `409 Conflict` (name or provider ID already in use — no per-service-type carve-out under `control-plane`, unlike the superseded REQ-REG-080), MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-050 |
 | REQ-REG-100 | Registration MUST be idempotent: periodic re-registration updates/refreshes the entry (by `name`) rather than duplicating it. Unlike `environment-agent`, `control-plane`'s `Provider` row has no lease/TTL to expire, so periodic re-registration is not required to retain the slot — it remains valuable only to keep capability metadata (REQ-REG-040) fresh across restarts/upgrades | MUST | DD-050 |
 | REQ-REG-110 | The SP MUST use `control-plane`'s generated client library (`github.com/dcm-project/control-plane/pkg/sp/client/provider`) for registration, depended on via a pinned Go module commit SHA (pseudo-version) rather than a tagged release, since `control-plane` has none either | MUST | DD-050 |
-| REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential; `control-plane`'s SP registration endpoint does not require authentication in its current contract (verified: no JWT/OAuth2/OIDC middleware anywhere in `control-plane`'s router chain) | MUST | DD-050 |
+| REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential. `control-plane`'s provider API declares `security: bearerAuth` as of [`control-plane#24`](https://github.com/dcm-project/control-plane/pull/24), but that check is currently a no-op (`AUTH_DISABLED=true` by default) and `control-plane` sends no bearer token to SPs either — sending none here remains correct behavior today, but is a known, tracked production-auth gap rather than a permanent guarantee (see DD-050's Authentication Gap paragraph) | MUST | DD-050 |
 
 #### Configuration Introduced
 
@@ -864,16 +864,60 @@ client rather than `control-plane`'s newer `pkg/sp/client/provider`) — OSAC
 SP now targets the same backend as its siblings for Phase 1, rather than
 diverging from them, and is the first SP to exercise the newer client.
 
-**Correction to this decision's own prior claim:** the original version of
-this decision stated `control-plane`'s equivalent API "requires a bearer
-JWT," contrasting it with `environment-agent`'s unauthenticated endpoint.
-Re-verified while drafting this update — that claim does not hold.
-`control-plane`'s middleware chain (`internal/app/run.go`, `newRouter`) is
-only `middleware.RequestID` → `middleware.Recoverer` → OpenAPI request
-validation; there is no JWT/OAuth2/OIDC check anywhere in the repository
-(verified by grep across `internal/`), and
-`api/sp/v1alpha1/provider/openapi.yaml` has no `security:` scheme at all.
-Both targets require no authentication on this call today. See REQ-REG-115.
+**Correction to this decision's own prior claim (historical — since
+superseded again below):** the original version of this decision stated
+`control-plane`'s equivalent API "requires a bearer JWT," contrasting it
+with `environment-agent`'s unauthenticated endpoint. Re-verified while
+drafting this update — at `control-plane`@`6c16c06`, that claim did not
+hold: `control-plane`'s middleware chain (`internal/app/run.go`,
+`newRouter`) was only `middleware.RequestID` → `middleware.Recoverer` →
+OpenAPI request validation, with no JWT/OAuth2/OIDC check anywhere in the
+repository and no `security:` scheme on
+`api/sp/v1alpha1/provider/openapi.yaml`. Both targets required no
+authentication on this call as of that commit.
+
+**Second correction — that claim is itself now stale (found during PR
+review, not caught by the original re-verification):**
+[`control-plane#24`](https://github.com/dcm-project/control-plane/pull/24)
+(merged 2026-07-21, six days before the correction above was written) added
+in-app JWT bearer validation
+([`internal/auth`](https://github.com/dcm-project/control-plane/blob/main/internal/auth))
+as part of the
+[authentication enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/authentication/authentication.md),
+and both `api/sp/v1alpha1/provider/openapi.yaml` and
+`api/sp/v1alpha1/resource_manager/openapi.yaml` now declare
+`security: [bearerAuth: []]` with no path-level override. **The behavior
+this SP implements is still correct today**: `AUTH_DISABLED` defaults to
+`true` in `control-plane`
+([`internal/app/config.go`](https://github.com/dcm-project/control-plane/blob/main/internal/app/config.go)),
+making the bearer check a no-op, and `control-plane`'s own outbound call to
+the SP's endpoint sets no `Authorization` header either — so REQ-REG-115's
+requirement (send no bearer credential) remains the right behavior, not a
+regression. What changed is that this is now a **known, tracked gap rather
+than a permanent architectural guarantee** — see the Authentication Gap
+paragraph below. See REQ-REG-115.
+
+**Authentication Gap (open, not scheduled):** the authentication
+enhancement documents `AUTH_DISABLED=true` as a transitional mitigation and
+states it "must not be used in production deployments." The ticket meant to
+give SPs a real, authenticated path to `control-plane` —
+[FLPATH-4196](https://redhat.atlassian.net/browse/FLPATH-4196) and its
+enhancement-doc story
+[FLPATH-4455](https://redhat.atlassian.net/browse/FLPATH-4455) — was closed
+Won't-Do ("will be handled in the agents epic as the architecture has
+changed"). The successor,
+[FLPATH-4622](https://redhat.atlassian.net/browse/FLPATH-4622), has not
+started and is blocked on the Phase 2 `environment-agent` implementation
+itself
+([FLPATH-4486](https://redhat.atlassian.net/browse/FLPATH-4486)). So Phase 1
+currently has **no active, unblocked implementation path** to
+production-safe authentication against `control-plane` — closing this gap
+may require the Phase 2 migration this decision already defers to. Treat
+this as a Phase 1 production blocker to track, not a cosmetic doc gap;
+re-evaluate the Phase 2 migration trigger (maturity bar, above) if it
+remains unaddressed by the time this SP approaches a production rollout.
+Full writeup: [enhancements#96](https://github.com/dcm-project/enhancements/pull/96)
+("Authentication" and "Risks and Mitigations" sections).
 
 **This is not just a client-library swap — `control-plane`'s CRUD-dispatch
 model differs materially from `environment-agent`'s, which matters for
