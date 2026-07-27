@@ -22,8 +22,9 @@ additions.
 - OIDC client-credentials bootstrap against OSAC's Keycloak and a gRPC
   connection to OSAC's fulfillment service, sufficient to back a real health
   check (full CRUD-service gRPC stub generation is Milestone 2)
-- `GET /api/v1alpha1/health` reporting real OSAC connectivity + OIDC token
-  health (not a stub that always reports healthy)
+- `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health`
+  (one per registered provider — see DD-010) reporting real OSAC connectivity
+  + OIDC token health (not a stub that always reports healthy)
 - Two-name registration with the environment agent (`osac-sp-cluster` /
   `osac-sp-vm`), each independently retried
 - No cluster/VM REST endpoints, no gRPC CRUD calls, no status polling, no
@@ -54,16 +55,18 @@ additions.
                           +-------------------+-------------------+
                           ^                                       |
                           |                                       v
-                   Registration (x2)                        Health Poll
-              POST /api/v1alpha1/providers                  GET /health
+                   Registration (x2)                   Health Poll (x2)
+              POST /api/v1alpha1/providers        GET {provider.endpoint}/health
+                          |                        (once per registered provider)
                           |                                       |
 +-------------------------+---------------------------------------+--------+
 |                       OSAC Service Provider                              |
 |                                                                          |
 |  +-------------+  +----------------+  +------------------------------+  |
 |  | HTTP Server |--| Health Handler |--| OSAC Client Bootstrap         |  |
-|  | (chi)       |  | (/health)      |  | - OIDC token source (OAuth2   |  |
-|  +------+------+  +----------------+  |   client-credentials)         |  |
+|  | (chi)       |  | (clusters/vms  |  | - OIDC token source (OAuth2   |  |
+|  |             |  |  /health)      |  |   client-credentials, issuer   |  |
+|  +------+------+  +----------------+  |   discovery + token endpoint) |  |
 |         |                             | - gRPC ClientConn + auth      |  |
 |  +------+------+                      |   interceptor (bearer token)  |  |
 |  | Registrar   |                      +---------------+----------------+  |
@@ -126,7 +129,7 @@ authentication/authorization middleware on the DCM-facing API, rate limiting.
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-HTTP-010 | The SP MUST start an HTTP server on the configured address | MUST | |
-| REQ-HTTP-020 | The SP MUST register `GET /api/v1alpha1/health` | MUST | DD-010 |
+| REQ-HTTP-020 | The SP MUST register `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health` | MUST | DD-010 |
 | REQ-HTTP-030 | The SP MUST initiate graceful shutdown on SIGTERM: stop new connections, drain in-flight requests within configured timeout, exit cleanly | MUST | |
 | REQ-HTTP-040 | The SP MUST initiate graceful shutdown on SIGINT, behaving identically to REQ-HTTP-030 | MUST | |
 | REQ-HTTP-050 | The SP MUST load configuration values from environment variables | MUST | |
@@ -156,7 +159,7 @@ authentication/authorization middleware on the DCM-facing API, rate limiting.
 
 - **Validates:** REQ-HTTP-020
 - **Given** the HTTP server has started
-- **When** a GET request is made to `/api/v1alpha1/health`
+- **When** a GET request is made to `/api/v1alpha1/clusters/health` or `/api/v1alpha1/vms/health`
 - **Then** the request MUST be routed to the health handler
 
 ##### AC-HTTP-030: Graceful shutdown on SIGTERM
@@ -223,8 +226,11 @@ None - independently deliverable.
 
 Establishes the SP's connection to OSAC: an OIDC client-credentials token
 source against OSAC's Keycloak, and a gRPC `ClientConn` to the fulfillment
-service with a per-RPC bearer-token interceptor. This is the minimum needed
-to back a real health check in this milestone. Full generated CRUD stubs
+service with a per-RPC bearer-token interceptor. `oidcIssuerUrl` is an OIDC
+**issuer** identifier, not a token endpoint — the actual token endpoint MUST
+be resolved via standard OIDC discovery before any token request is made
+(see DD-060). This is the minimum needed to back a real health check in this
+milestone. Full generated CRUD stubs
 (`Clusters`, `ComputeInstances`, `Subnets`, `VirtualNetworks`) are generated
 in Milestone 2 via a `buf`/`protoc` pipeline against
 [`osac-project/fulfillment-service`](https://github.com/osac-project/fulfillment-service)'s
@@ -239,12 +245,13 @@ breaking beyond token refresh and connection backoff.
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-OSAC-010 | The SP MUST obtain an OIDC access token via OAuth2 client-credentials grant against the configured `oidcIssuerUrl`, using `oidcClientId`/`oidcClientSecret` | MUST | |
+| REQ-OSAC-010 | The SP MUST obtain an OIDC access token via OAuth2 client-credentials grant against the token endpoint resolved per REQ-OSAC-011, using `oidcClientId`/`oidcClientSecret` | MUST | DD-060 |
+| REQ-OSAC-011 | The SP MUST resolve the token endpoint from `oidcIssuerUrl` via OIDC discovery (`GET {oidcIssuerUrl}/.well-known/openid-configuration`, extracting `token_endpoint`) rather than treating `oidcIssuerUrl` itself as the token endpoint | MUST | DD-060 |
 | REQ-OSAC-020 | The SP MUST refresh the OIDC token before expiry and supply it as a gRPC bearer credential (`PerRPCCredentials`) on every call to the fulfillment service | MUST | |
 | REQ-OSAC-030 | The SP MUST establish a gRPC `ClientConn` to `fulfillmentAddress` | MUST | |
 | REQ-OSAC-040 | When `tlsEnabled=true`, the gRPC connection MUST use TLS, loading a CA certificate from `tlsCertFile` if set | MUST | |
 | REQ-OSAC-050 | When `tlsEnabled=false` (default), the gRPC connection MUST use insecure transport credentials | MUST | |
-| REQ-OSAC-060 | OIDC token fetch failures MUST be retried with exponential backoff and MUST NOT crash the SP or block server startup | MUST | |
+| REQ-OSAC-060 | OIDC discovery failures and token fetch failures MUST be retried with exponential backoff and MUST NOT crash the SP or block server startup | MUST | |
 | REQ-OSAC-070 | The bootstrap component MUST expose a query method reporting current OIDC token validity (has a non-expired cached token) for use by the health handler | MUST | |
 | REQ-OSAC-080 | The bootstrap component MUST expose a query method reporting gRPC connectivity to the fulfillment service, using a lightweight, unauthenticated probe (`osac.public.v1.Capabilities/Get`) with a short timeout | MUST | DD-020 |
 | REQ-OSAC-090 | The connectivity probe (REQ-OSAC-080) MUST NOT be invoked more often than once per health check request and MUST NOT itself force an OIDC token refresh | MUST | |
@@ -268,7 +275,22 @@ breaking beyond token refresh and connection backoff.
 - **Validates:** REQ-OSAC-010
 - **Given** valid OIDC issuer URL, client ID, and client secret
 - **When** the SP starts
-- **Then** the bootstrap component MUST obtain an access token from Keycloak
+- **Then** the bootstrap component MUST first discover the token endpoint (AC-OSAC-011), then obtain an access token from it
+
+##### AC-OSAC-011: Token endpoint discovered from issuer, not assumed
+
+- **Validates:** REQ-OSAC-011
+- **Given** `oidcIssuerUrl=https://keycloak.example.com/realms/osac` and a discovery document at `{oidcIssuerUrl}/.well-known/openid-configuration` whose `token_endpoint` is `https://keycloak.example.com/realms/osac/protocol/openid-connect/token`
+- **When** the bootstrap component fetches a token
+- **Then** the token request MUST be sent to the discovered `token_endpoint`, not to `oidcIssuerUrl` directly
+
+##### AC-OSAC-012: Discovery failure is retried, non-fatal
+
+- **Validates:** REQ-OSAC-011, REQ-OSAC-060
+- **Given** the issuer's discovery document endpoint is unreachable or returns a non-2xx status
+- **When** the SP starts
+- **Then** the SP MUST continue starting the HTTP server
+- **And** discovery MUST be retried with exponential backoff in the background, using the same backoff sequence as token fetch retries (AC-OSAC-060)
 
 ##### AC-OSAC-020: Token refresh before expiry
 
@@ -302,7 +324,7 @@ breaking beyond token refresh and connection backoff.
 ##### AC-OSAC-060: Token fetch retry, non-fatal
 
 - **Validates:** REQ-OSAC-060
-- **Given** the Keycloak token endpoint is unreachable
+- **Given** the discovered Keycloak token endpoint is unreachable (discovery itself having already succeeded)
 - **When** the SP starts
 - **Then** the SP MUST continue starting the HTTP server
 - **And** token fetch MUST be retried with exponential backoff in the background
@@ -353,10 +375,19 @@ None - independently deliverable.
 
 #### Overview
 
-Implementation of `GET /api/v1alpha1/health`, reporting real OSAC
-connectivity and OIDC token health — not a stub that always reports healthy.
-Polled by the environment agent per the three-state health model (Ready,
-Unhealthy, Unavailable).
+Implementation of `GET /api/v1alpha1/clusters/health` and
+`GET /api/v1alpha1/vms/health`, reporting real OSAC connectivity and OIDC
+token health — not a stub that always reports healthy. **Two paths, not
+one:** the environment agent health-checks each registered provider
+independently by polling `GET {provider.endpoint}/health` (per
+`environment-agent`'s own spec, `AC-HMN-010`); since Topic 4.4 registers
+`cluster` at `{provider.endpoint}/api/v1alpha1/clusters` and `vm` at
+`{provider.endpoint}/api/v1alpha1/vms` (REQ-REG-030), the agent will poll
+`/api/v1alpha1/clusters/health` and `/api/v1alpha1/vms/health`
+independently — see DD-010. Both paths report identical status: this SP's
+health (OIDC token validity + OSAC gRPC connectivity) is a single, global
+condition, not per-service-type. Polled by the environment agent per the
+three-state health model (Ready, Unhealthy, Unavailable).
 
 Out of scope: readiness vs. liveness distinction, hub-availability reporting
 (`At least one hub is registered` — deferred until cluster/VM milestones
@@ -366,8 +397,9 @@ where hub-related failures are actually observable).
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-HLT-010 | The SP MUST expose `GET /api/v1alpha1/health` and return HTTP 200 OK | MUST | |
-| REQ-HLT-020 | The health response body MUST include `status`, `type`, `path`, `version`, and `uptime` fields | MUST | DD-030 |
+| REQ-HLT-010 | The SP MUST expose `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health`, each returning HTTP 200 OK | MUST | DD-010 |
+| REQ-HLT-015 | Both health endpoints MUST report identical status, derived from the same underlying OIDC/OSAC health check (this SP has one global health condition, not one per service type) | MUST | |
+| REQ-HLT-020 | Each health response body MUST include `status`, `type`, `path`, `version`, and `uptime` fields | MUST | DD-030 |
 | REQ-HLT-030 | `status` MUST be `"healthy"` only when both the cached OIDC token is valid (REQ-OSAC-070) AND the OSAC connectivity probe succeeds (REQ-OSAC-080); otherwise `"unhealthy"` | MUST | |
 | REQ-HLT-040 | The response MUST set `Content-Type: application/json` | MUST | |
 | REQ-HLT-050 | The health handler MUST NOT force a new OIDC token fetch on every poll; it MUST query cached token validity (REQ-OSAC-070) | MUST | |
@@ -380,14 +412,21 @@ where hub-related failures are actually observable).
 
 - **Validates:** REQ-HLT-010
 - **Given** the HTTP server is running
-- **When** a GET request is made to `/api/v1alpha1/health`
-- **Then** the SP MUST return HTTP 200 OK
+- **When** a GET request is made to `/api/v1alpha1/clusters/health` or to `/api/v1alpha1/vms/health`
+- **Then** the SP MUST return HTTP 200 OK from either path
+
+##### AC-HLT-011: Both health paths report identical status
+
+- **Validates:** REQ-HLT-015
+- **Given** a fixed OIDC token validity and OSAC connectivity state
+- **When** `/api/v1alpha1/clusters/health` and `/api/v1alpha1/vms/health` are each called
+- **Then** both responses MUST report the same `status` value
 
 ##### AC-HLT-020: Health response body — healthy
 
 - **Validates:** REQ-HLT-020, REQ-HLT-030
 - **Given** a valid cached OIDC token and a reachable OSAC fulfillment service
-- **When** GET `/api/v1alpha1/health` is called
+- **When** GET `/api/v1alpha1/clusters/health` (or `/api/v1alpha1/vms/health`) is called
 - **Then** the response body MUST contain:
   - `status`: `"healthy"`
   - `type`: `"osac-service-provider.dcm.io/health"`
@@ -400,7 +439,7 @@ where hub-related failures are actually observable).
 - **Validates:** REQ-HLT-030
 - **Given** no valid cached OIDC token (e.g., Keycloak unreachable at startup)
 - **And** the OSAC fulfillment service is reachable
-- **When** GET `/api/v1alpha1/health` is called
+- **When** GET `/api/v1alpha1/clusters/health` (or `/api/v1alpha1/vms/health`) is called
 - **Then** the response MUST be HTTP 200 OK with `status: "unhealthy"`
 
 ##### AC-HLT-026: Health response body — unhealthy, OSAC unreachable
@@ -408,13 +447,13 @@ where hub-related failures are actually observable).
 - **Validates:** REQ-HLT-030
 - **Given** a valid cached OIDC token
 - **And** the OSAC fulfillment service is unreachable
-- **When** GET `/api/v1alpha1/health` is called
+- **When** GET `/api/v1alpha1/clusters/health` (or `/api/v1alpha1/vms/health`) is called
 - **Then** the response MUST be HTTP 200 OK with `status: "unhealthy"`
 
 ##### AC-HLT-030: Health response content type
 
 - **Validates:** REQ-HLT-040
-- **Given** any call to the health endpoint
+- **Given** any call to either health endpoint
 - **When** the response is returned
 - **Then** the `Content-Type` header MUST be `application/json`
 
@@ -422,13 +461,13 @@ where hub-related failures are actually observable).
 
 - **Validates:** REQ-HLT-050
 - **Given** a valid cached token exists
-- **When** the health endpoint is called repeatedly
+- **When** either health endpoint is called repeatedly
 - **Then** the OIDC token endpoint MUST NOT be called as part of serving the health request
 
 ##### AC-HLT-050: Connectivity probe invoked per request
 
 - **Validates:** REQ-HLT-060
-- **Given** the health endpoint is called
+- **Given** either health endpoint is called
 - **When** the request is processed
 - **Then** the OSAC connectivity probe MUST be invoked and its result MUST determine part of the reported status
 
@@ -436,7 +475,7 @@ where hub-related failures are actually observable).
 
 - **Validates:** REQ-HLT-070
 - **Given** the cached token is invalid but OSAC is reachable
-- **When** GET `/api/v1alpha1/health` is called
+- **When** GET `/api/v1alpha1/clusters/health` (or `/api/v1alpha1/vms/health`) is called
 - **Then** the `detail` field, if present, MUST reference token/authentication rather than connectivity
 
 #### Dependencies
@@ -668,18 +707,44 @@ All configuration is loaded from environment variables.
 
 ## 7. Design Decisions
 
-### DD-010: Health endpoint path scoped to `/api/v1alpha1/health`
+### DD-010: One health endpoint per registered provider, not a single unified path
 
-**Decision:** Serve health only at the resource-relative path
-`/api/v1alpha1/health` in this milestone (not also at root `/health`).
+**Decision:** Serve health at `GET /api/v1alpha1/clusters/health` and
+`GET /api/v1alpha1/vms/health` — one path per independently-registered
+provider (Topic 4.4) — rather than a single unified
+`GET /api/v1alpha1/health`. Both paths report identical status, since this
+SP's OIDC/OSAC health is one global condition.
 
-**Rationale:** Per issue #1's REST API contract table, `/api/v1alpha1/health`
-is the SP's advertised health path. Sibling repos additionally serve a root
-`/health` for infrastructure readiness probing; revisit adding that alongside
-this path once a Containerfile/Deployment manifest exists for this repo
-(tracked as a follow-up, not blocking this milestone).
+**Rationale (superseding the original decision in this slot, which was
+wrong):** `environment-agent`'s own detailed spec
+(`.ai/specs/environment-agent.spec.md`) is explicit and concrete about how
+health polling addresses a registered SP — `AC-HMN-010`: *"Given an external
+SP is registered with endpoint `https://sp.example.com:8080`... When the
+health check polls `GET https://sp.example.com:8080/health`"* — i.e. the
+agent polls **`{registered endpoint}/health`**, literally appending `/health`
+to whatever `endpoint` value the SP registered. This is reinforced by
+`REQ-RTE-040` in the same spec: *"the agent MUST forward creation requests
+via `POST {endpoint}`"* with no additional path segments added by the agent
+— which only works if `endpoint` is already the full resource-collection
+URL. Since Topic 4.4 (REQ-REG-030) registers `cluster` at
+`{provider.endpoint}/api/v1alpha1/clusters` and `vm` at
+`{provider.endpoint}/api/v1alpha1/vms`, applying `{endpoint}/health`
+per-registration yields `/api/v1alpha1/clusters/health` and
+`/api/v1alpha1/vms/health` — not a third, unrelated unified path. This also
+matches the real, shipped convention in every sibling SP checked
+(`k8s-container-service-provider` → `/api/v1alpha1/containers/health`,
+`acm-cluster-service-provider` → `/api/v1alpha1/clusters/health`,
+`k8s-storage-service-provider` → `/api/v1alpha1/volumes/health`,
+`three-tier-app-demo-service-provider` → `/api/v1alpha1/three-tier-apps/health`):
+health always nests under the SP's own registered resource path, never a
+bare top-level path.
 
-**Related requirements:** REQ-HTTP-020, REQ-HLT-010
+The original version of this decision cited issue #1's REST API contract
+table for a single `/api/v1alpha1/health` path without verifying it against
+`environment-agent`'s actual polling contract — a hallucination corrected
+here before implementation.
+
+**Related requirements:** REQ-HTTP-020, REQ-HLT-010, REQ-HLT-015
 
 ### DD-020: Minimal `Capabilities`-only gRPC client for Milestone 1
 
@@ -784,6 +849,42 @@ REQ-REG-040.
 
 **Related requirements:** REQ-REG-040, REQ-REG-110, REQ-REG-115
 
+### DD-060: Resolve the OIDC token endpoint via discovery, not by treating the issuer URL as the token endpoint
+
+**Decision:** Before requesting an access token, the SP MUST perform OIDC
+discovery — `GET {oidcIssuerUrl}/.well-known/openid-configuration` — and use
+the returned `token_endpoint` for the client-credentials grant. `oidcIssuerUrl`
+MUST NOT be passed directly as the OAuth2 `TokenURL`.
+
+**Rationale:** An OIDC *issuer* URL (e.g.
+`https://keycloak.example.com/realms/osac`) and its *token endpoint* (e.g.
+`https://keycloak.example.com/realms/osac/protocol/openid-connect/token`) are
+different URLs in every real deployment; treating them as interchangeable
+was a hallucination in the original implementation, caught by the same
+"verify against an authoritative source" review that caught DD-010/SC-001.
+This is confirmed by consistent, repeated precedent across both ecosystems
+this SP straddles:
+- `osac-project/fulfillment-service` ships its own `internal/oauth` package
+  (`DiscoveryTool`, `ServerMetadata.TokenEndpoint`) specifically to resolve a
+  token endpoint from an issuer URL via `.well-known/openid-configuration`
+  before performing any OAuth flow, including client-credentials
+  (`oauth_credentials_flow.go`).
+- `osac-project/osac-ux`'s own OIDC client code
+  (`proxy/auth/oidc.go`) performs the identical
+  `strings.TrimSuffix(issuerURL, "/") + "/.well-known/openid-configuration"`
+  discovery.
+- `dcm-project/control-plane` already depends on
+  `github.com/coreos/go-oidc/v3` for OIDC concerns elsewhere in the DCM
+  ecosystem — the standard Go library for exactly this discovery step.
+
+**Consequence:** the OIDC bootstrap can no longer build a static
+`clientcredentials.Config` at construction time (`New()`); discovery must
+happen lazily, inside the same retryable/non-blocking loop as token fetch
+(REQ-OSAC-060), since the issuer's discovery document may be transiently
+unreachable at startup just like the token endpoint itself.
+
+**Related requirements:** REQ-OSAC-010, REQ-OSAC-011, REQ-OSAC-060
+
 ---
 
 ## 8. Spec Clarifications
@@ -817,9 +918,9 @@ unavailable (non-200/timeout) at the transport level.
 | Prefix | Topic | Count |
 |--------|-------|-------|
 | REQ-HTTP-NNN | 4.1: HTTP Server | 9 |
-| REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 9 |
-| REQ-HLT-NNN | 4.3: Health Service | 7 |
+| REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 10 |
+| REQ-HLT-NNN | 4.3: Health Service | 8 |
 | REQ-REG-NNN | 4.4: Environment Agent Registration | 12 |
 | REQ-XC-LOG-NNN | 5.1: Logging | 2 |
 | REQ-XC-CFG-NNN | 5.2: Configuration Management | 2 |
-| **Total** | | **41** |
+| **Total** | | **43** |

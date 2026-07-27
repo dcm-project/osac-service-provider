@@ -34,20 +34,26 @@ struct fields, exact backoff durations), not existence-only checks
 
 ## 2. `internal/osac` (OSAC client bootstrap)
 
-Collaborators faked: Keycloak token endpoint (`httptest.Server` serving a
-canned OAuth2 token response), OSAC `Capabilities` service (in-memory
-`bufconn`-free stub satisfying the generated client interface directly, or a
-hand-rolled fake implementing the same method signature — no real gRPC
-dialing in unit scope; that's covered by TC-I cases).
+Collaborators faked: an OIDC issuer (`httptest.Server` serving a canned
+`.well-known/openid-configuration` discovery document plus a token endpoint
+at the URL that document advertises — the fake must NOT accept token
+requests at the issuer URL itself, so tests fail loudly if the code
+regresses to treating the issuer as the token endpoint), OSAC `Capabilities`
+service (in-memory `bufconn`-free stub satisfying the generated client
+interface directly, or a hand-rolled fake implementing the same method
+signature — no real gRPC dialing in unit scope; that's covered by TC-I
+cases).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-010 | Fetches OIDC token on `Start` | REQ-OSAC-010, AC-OSAC-010 | Fake token endpoint returns `{access_token: "tok-abc", expires_in: 300}`; call `Start`; assert the bootstrap's cached token value equals exactly `"tok-abc"`. |
+| TC-U-010 | Fetches OIDC token on `Start`, via the discovered token endpoint | REQ-OSAC-010, REQ-OSAC-011, AC-OSAC-010 | Fake discovery document at `{issuer}/.well-known/openid-configuration` advertises `token_endpoint: "{issuer}/protocol/openid-connect/token"`; that exact URL returns `{access_token: "tok-abc", expires_in: 300}`; call `Start`; assert the bootstrap's cached token value equals exactly `"tok-abc"`. |
 | TC-U-011 | Refreshes token before expiry | REQ-OSAC-020, AC-OSAC-020 | Fake token endpoint returns token A (expires in 1s), then token B on second call; advance a fake clock past the refresh margin; assert the bearer credential attached to a subsequent gRPC call equals token B's exact value, not token A's. |
 | TC-U-012 | Builds insecure transport credentials when TLS disabled | REQ-OSAC-050, AC-OSAC-050 | `osac.tlsEnabled=false`; call the internal dial-options builder; assert the returned `grpc.DialOption` set is equal to (or wraps) `grpc.WithTransportCredentials(insecure.NewCredentials())` — assert on the credential's `Info().SecurityProtocol` value, not just "no error". |
 | TC-U-013 | Builds TLS transport credentials when TLS enabled | REQ-OSAC-040, AC-OSAC-040 | `osac.tlsEnabled=true`, `tlsCertFile` points to a test CA PEM fixture; assert the returned credentials' `Info().SecurityProtocol == "tls"` and the loaded cert pool contains exactly the test CA's subject. |
-| TC-U-014 | Token fetch failure does not panic or block `Start` | REQ-OSAC-060, AC-OSAC-060 | Fake token endpoint returns `500` on every call; call `Start` with a bounded test timeout; assert `Start` returns (does not hang) and returns no fatal error — background retry goroutine is started. |
+| TC-U-014 | Token fetch failure does not panic or block `Start` | REQ-OSAC-060, AC-OSAC-060 | Discovery succeeds, but the discovered token endpoint returns `500` on every call; call `Start` with a bounded test timeout; assert `Start` returns (does not hang) and returns no fatal error — background retry goroutine is started. |
 | TC-U-015 | Token fetch retries with exponential backoff | REQ-OSAC-060 | Fake token endpoint fails 3 times then succeeds; using an injected fake clock/backoff, assert the recorded retry delays are non-decreasing and match the configured backoff multiplier exactly (e.g., 1s, 2s, 4s). |
+| TC-U-023 | Discovers token endpoint from issuer before fetching a token | REQ-OSAC-011, AC-OSAC-011 | Fake discovery document's `token_endpoint` differs from the issuer URL (e.g. issuer `https://kc.example.com/realms/osac`, `token_endpoint` `https://kc.example.com/realms/osac/protocol/openid-connect/token`); call `Start`; assert the fake HTTP server recorded the token POST at the discovered URL and recorded zero token POSTs at the bare issuer URL. |
+| TC-U-024 | Discovery failure does not panic or block `Start`, retried with backoff | REQ-OSAC-011, REQ-OSAC-060, AC-OSAC-012 | Fake discovery endpoint (`.well-known/openid-configuration`) returns `500` on every call; call `Start` with a bounded test timeout; assert `Start` returns without hanging, `TokenStatus().Valid == false` throughout, and discovery is retried using the same exponential backoff sequence as TC-U-015. |
 | TC-U-016 | Token validity query — valid | REQ-OSAC-070, AC-OSAC-070 | Seed the bootstrap with a cached token expiring in 10 minutes; call `TokenStatus()`; assert `valid == true` and `expiresAt` equals the exact seeded expiry time. |
 | TC-U-017 | Token validity query — never obtained | REQ-OSAC-070, AC-OSAC-071 | Construct the bootstrap with no token ever fetched; call `TokenStatus()`; assert `valid == false`. |
 | TC-U-018 | Token validity query — expired | REQ-OSAC-070 | Seed a cached token with `expiresAt` in the past; call `TokenStatus()`; assert `valid == false`. |
@@ -63,7 +69,12 @@ dialing in unit scope; that's covered by TC-I cases).
 Collaborator faked: an `OSACStatus` interface (satisfied by
 `internal/osac`'s bootstrap) with `TokenStatus()` and `Probe(ctx)` — injected
 as a hand-written function-field mock (`mockOSACStatus{TokenStatusFunc,
-ProbeFunc}`), per the sibling repos' "no mocking framework" convention.
+ProbeFunc}`), per the sibling repos' "no mocking framework" convention. Per
+DD-010, the `StrictServerInterface` exposes two generated methods
+(`GetClustersHealth`, `GetVMsHealth`) that both delegate to the same shared
+internal status-computation logic; cases below exercise that shared logic
+once (via either entry point) except where the test is specifically about
+the two-entry-point relationship (TC-U-039).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -76,6 +87,7 @@ ProbeFunc}`), per the sibling repos' "no mocking framework" convention.
 | TC-U-036 | Probe invoked exactly once per health call | REQ-HLT-060, AC-HLT-050 | Mock's `ProbeFunc` increments a counter; call `CheckHealth` once; assert the counter equals exactly `1` (not 0, not 2+). |
 | TC-U-037 | Unhealthy detail names token cause | REQ-HLT-070, AC-HLT-060 | Mock returns `valid=false`, `connected=true`; assert the `detail` string contains `"token"` (case-insensitive) and does not claim a connectivity failure. |
 | TC-U-038 | Unhealthy detail names connectivity cause | REQ-HLT-070 | Mock returns `valid=true`, `connected=false`; assert the `detail` string contains `"osac"` or `"connect"` (case-insensitive) and does not claim a token failure. |
+| TC-U-039 | Both StrictServerInterface entry points report identical status | REQ-HLT-015, AC-HLT-011 | Fixed mock state (`valid=true`, `connected=false`); call `GetClustersHealth` and `GetVMsHealth` independently; assert both returned bodies have identical `status` and `detail` values. |
 
 ---
 
@@ -106,7 +118,7 @@ a real registration server (end-to-end wiring is TC-I scope).
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-U-070 | Panic in handler returns RFC 7807 INTERNAL | REQ-HTTP-070, AC-HTTP-070 | Register a handler that panics with a string value; send a request via `httptest`; assert response status `== 500`, `Content-Type == "application/problem+json"`, and the decoded body's `type` field equals exactly `"INTERNAL"`. |
-| TC-U-071 | Request logging captures method/path/status/duration | REQ-HTTP-060, AC-HTTP-060 | Inject a test log handler capturing structured attributes; send a `GET /api/v1alpha1/health` request; assert the captured log record has `method == "GET"`, `path == "/api/v1alpha1/health"`, `status` equal to the actual response status code, and a `duration` attribute present with a non-negative value. |
+| TC-U-071 | Request logging captures method/path/status/duration | REQ-HTTP-060, AC-HTTP-060 | Inject a test log handler capturing structured attributes; send a `GET /api/v1alpha1/clusters/health` request; assert the captured log record has `method == "GET"`, `path == "/api/v1alpha1/clusters/health"`, `status` equal to the actual response status code, and a `duration` attribute present with a non-negative value. |
 | TC-U-072 | Request timeout cancels context | REQ-HTTP-090, AC-HTTP-090 | Configure `requestTimeout=10ms`; register a handler that sleeps 100ms and then checks `ctx.Err()`; assert the handler observes `context.DeadlineExceeded` (not nil). |
 | TC-U-073 | Recovery middleware is outermost | REQ-HTTP-070 | Register a second middleware that also panics; assert the outer recovery middleware still produces the RFC 7807 INTERNAL response rather than an unhandled panic escaping the test. |
 
@@ -117,8 +129,8 @@ a real registration server (end-to-end wiring is TC-I scope).
 | Spec Section | REQ Count | AC Count | TC Count (this file) | Notes |
 |---|---|---|---|---|
 | 4.1 HTTP Server | 9 | 9 | 4 (TC-U-070..073) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
-| 4.2 OSAC Client Bootstrap | 9 | 13 | 13 (TC-U-010..022) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
-| 4.3 Health Service | 7 | 9 | 9 (TC-U-030..038) | Full unit coverage. |
+| 4.2 OSAC Client Bootstrap | 10 | 15 | 15 (TC-U-010..024) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
+| 4.3 Health Service | 8 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
 | 4.4 Environment Agent Registration | 12 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |
 | 5.2 Configuration Management | 2 | 2 | 4 (TC-U-001..004) | Full unit coverage. |
