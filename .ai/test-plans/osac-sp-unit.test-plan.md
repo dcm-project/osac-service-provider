@@ -25,9 +25,9 @@ struct fields, exact backoff durations), not existence-only checks
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-001 | Loads all values from environment variables | REQ-XC-CFG-010, AC-XC-CFG-010 | Set every env var (`SP_SERVER_ADDRESS`, `SP_OSAC_*`, `SP_AGENT_REGISTRATION_URL`, `SP_ENDPOINT`, `SP_PROVIDER_*`) to distinct non-default values; assert the parsed `Config` struct's fields equal those exact values field-by-field. |
+| TC-U-001 | Loads all values from environment variables | REQ-XC-CFG-010, AC-XC-CFG-010 | Set every env var (`SP_SERVER_ADDRESS`, `SP_OSAC_*`, `DCM_REGISTRATION_URL`, `SP_ENDPOINT`, `SP_PROVIDER_*`) to distinct non-default values; assert the parsed `Config` struct's fields equal those exact values field-by-field. |
 | TC-U-002 | Applies documented defaults when optional vars are unset | REQ-XC-CFG-010 | Unset all optional vars; assert `server.address == ":8080"`, `server.shutdownTimeout == 15s`, `server.requestTimeout == 30s`, `osac.tlsEnabled == false`, `osac.probeTimeout == 5s`, `provider.clusterName == "osac-sp-cluster"`, `provider.vmName == "osac-sp-vm"`. |
-| TC-U-003 | Fails fast when a required field is missing (table-driven) | REQ-XC-CFG-020, AC-XC-CFG-020 | Table over `{SP_OSAC_FULFILLMENT_ADDRESS, SP_OSAC_OIDC_ISSUER_URL, SP_OSAC_OIDC_CLIENT_ID, SP_OSAC_OIDC_CLIENT_SECRET, SP_AGENT_REGISTRATION_URL, SP_ENDPOINT}`; for each, unset only that var (others valid) and assert `Load()` returns a non-nil error whose message contains that exact env var name. |
+| TC-U-003 | Fails fast when a required field is missing (table-driven) | REQ-XC-CFG-020, AC-XC-CFG-020 | Table over `{SP_OSAC_FULFILLMENT_ADDRESS, SP_OSAC_OIDC_ISSUER_URL, SP_OSAC_OIDC_CLIENT_ID, SP_OSAC_OIDC_CLIENT_SECRET, DCM_REGISTRATION_URL, SP_ENDPOINT}`; for each, unset only that var (others valid) and assert `Load()` returns a non-nil error whose message contains that exact env var name. |
 | TC-U-004 | Fails fast when a required field is empty string | REQ-XC-CFG-020 | Set `SP_ENDPOINT=""` explicitly (as opposed to unset); assert `Load()` returns an error naming `SP_ENDPOINT`. |
 
 ---
@@ -97,22 +97,23 @@ the two-entry-point relationship (TC-U-039).
 
 ## 4. `internal/registration`
 
-Collaborator faked: the `environment-agent` `pkg/client` HTTP round-tripper —
-injected as a fake `http.RoundTripper` returning canned status codes/bodies
-per call, so payload construction and retry/backoff logic are tested without
-a real registration server (end-to-end wiring is TC-I scope).
+Collaborator faked: `control-plane`'s `pkg/sp/client/provider` HTTP
+round-tripper — injected as a fake `http.RoundTripper` returning canned
+status codes/bodies per call, so payload construction and retry/backoff
+logic are tested without a real registration server (end-to-end wiring is
+TC-I scope).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-U-050 | Cluster registration payload fields | REQ-REG-020, REQ-REG-030, REQ-REG-040, AC-REG-020 | Trigger the cluster registration call; capture the request body sent to the fake round-tripper; assert `name == "osac-sp-cluster"`, `service_type == "cluster"`, `endpoint == "<provider.endpoint>/api/v1alpha1/clusters"`, `schema_version == "v1alpha1"`, and within `metadata`: `supported_platforms == ["baremetal"]`, `supported_provisioning_types == ["hypershift"]`, `len(kubernetes_supported_versions) > 0`. |
 | TC-U-051 | VM registration payload fields | REQ-REG-020, REQ-REG-030, AC-REG-021 | Trigger the vm registration call; assert `name == "osac-sp-vm"`, `service_type == "vm"`, `endpoint == "<provider.endpoint>/api/v1alpha1/vms"`, `schema_version == "v1alpha1"`. |
 | TC-U-052 | Two independent registration calls are issued | REQ-REG-010, AC-REG-010 | Trigger `Start()`; assert the fake round-tripper recorded exactly 2 initial requests, with distinct `name` values `osac-sp-cluster` and `osac-sp-vm`. |
-| TC-U-053 | VM 409 is logged as non-fatal and retried | REQ-REG-080, AC-REG-060 | Fake round-tripper returns `409` for every `vm` call, `201` for `cluster`; assert (a) the returned/observed registration state for `vm` is not marked as a fatal failure, (b) a subsequent scheduled retry attempt for `vm` is still made after the lease-renewal interval elapses (using a fake clock), (c) `cluster`'s state is `registered` and unaffected. |
-| TC-U-054 | Non-retryable 4xx (not 409/vm) stops retries | REQ-REG-090, AC-REG-070 | Fake round-tripper returns `400` for the `cluster` call; advance the fake clock past several backoff intervals; assert no further `cluster` registration requests were sent after the first `400`. |
+| TC-U-053 | 409 Conflict is non-retryable, same as other 4xx | REQ-REG-090, AC-REG-060 | Fake round-tripper returns `409` for every `vm` call, `201` for `cluster`; assert (a) `vm`'s registration is logged at ERROR level and marked non-retryable — same handling as a `400` — (b) no further `vm` registration requests are sent after the first `409` (advance a fake clock past several backoff intervals to confirm), (c) `cluster`'s state is `registered` and unaffected. Supersedes the pre-pivot "409 is retryable" test design — see DD-050. |
+| TC-U-054 | Non-retryable 4xx stops retries | REQ-REG-090, AC-REG-070 | Fake round-tripper returns `400` for the `cluster` call; advance the fake clock past several backoff intervals; assert no further `cluster` registration requests were sent after the first `400`. |
 | TC-U-055 | Retryable failure uses exponential backoff | REQ-REG-070, AC-REG-050 | Fake round-tripper returns connection-refused-equivalent errors 3 times then succeeds for `cluster`; assert the recorded retry delays match the configured exponential sequence exactly. |
 | TC-U-056 | Registration does not block on construction | REQ-REG-050, AC-REG-030 | Fake round-tripper's handler blocks until explicitly released; call `Start()`; assert `Start()` returns before the round-tripper is released (i.e., registration runs in a goroutine, not synchronously in `Start`). |
 | TC-U-057 | Cluster failure does not affect VM registration | REQ-REG-060, AC-REG-040 | Fake round-tripper returns `500` for every `cluster` call and `201` for the first `vm` call; assert `vm`'s state reaches `registered` regardless of `cluster`'s ongoing retries. |
-| TC-U-058 | Idempotent re-registration reuses same name | REQ-REG-100, AC-REG-080 | Call the registration path twice (simulating a restart); assert both calls send the same `name`/`service_type` pair (no suffix/uniqueness token appended) so the environment agent's idempotency-on-`name` behavior is preserved. |
+| TC-U-058 | Idempotent re-registration reuses same name | REQ-REG-100, AC-REG-080 | Call the registration path twice (simulating a restart); assert both calls send the same `name`/`service_type` pair (no suffix/uniqueness token appended) so `control-plane`'s idempotency-on-`name` behavior is preserved. |
 | TC-U-059 | No Authorization header on registration requests | REQ-REG-115, AC-REG-095 | Trigger both registration calls; inspect the requests recorded by the fake round-tripper; assert neither request has an `Authorization` header set. |
 
 ---
@@ -135,6 +136,6 @@ a real registration server (end-to-end wiring is TC-I scope).
 | 4.1 HTTP Server | 9 | 9 | 4 (TC-U-070..073) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
 | 4.2 OSAC Client Bootstrap | 10 | 14 | 16 (TC-U-010..025) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
 | 4.3 Health Service | 8 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
-| 4.4 Environment Agent Registration | 12 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
+| 4.4 SP Registration (`control-plane`) | 12 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |
 | 5.2 Configuration Management | 2 | 2 | 4 (TC-U-001..004) | Full unit coverage. |

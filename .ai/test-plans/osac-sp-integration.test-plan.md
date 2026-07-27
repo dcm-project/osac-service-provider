@@ -6,9 +6,9 @@ health") as specified in
 wire multiple real components together — a real HTTP server bound to a
 loopback port, a real gRPC server over `bufconn` implementing the
 `Capabilities` service, and a real `httptest.Server` standing in for
-Keycloak's token endpoint and the environment agent's registration
+Keycloak's token endpoint and `control-plane`'s SP registration
 endpoint — with only the genuinely external systems (real OSAC, real
-Keycloak, real environment agent) replaced by fakes.
+Keycloak, real `control-plane`) replaced by fakes.
 
 **Framework:** Ginkgo v2 + Gomega. Files use the `_integration_test.go`
 suffix. Run with:
@@ -67,26 +67,27 @@ health/token-caching behavior below, and a real gRPC server bound via
 
 ---
 
-## 3. Environment agent registration against a fake agent
+## 3. SP registration against a fake `control-plane`
 
-Test harness: an `httptest.Server` implementing `environment-agent`'s current
-`api/v1alpha1/openapi.yaml` contract for `POST /api/v1alpha1/providers`
-(pinned to the same commit SHA as the `go.mod` dependency, per DD-050), with
-a handler that records every request body and can be configured to return
-specific status codes per call. `environment-agent` itself has no real
-registration handler implementation yet (see DD-050) — this fake stands in
-for what the OpenAPI contract specifies, not a live instance.
+Test harness: an `httptest.Server` implementing `control-plane`'s current
+`api/sp/v1alpha1/provider/openapi.yaml` contract for
+`POST /api/v1alpha1/providers` (pinned to the same commit SHA as the
+`go.mod` dependency, per DD-050), with a handler that records every request
+body and can be configured to return specific status codes per call. This
+mirrors `control-plane`'s actual, implemented `RegisterOrUpdateProvider`
+conflict semantics (name/ID-based only, no per-service-type exclusivity —
+see DD-050) rather than faking a live instance.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-020 | Both registrations are sent on startup | REQ-REG-010, AC-REG-010 | Fake agent returns `201` for all requests; start the SP; within a bounded wait, assert the fake agent recorded exactly 2 distinct requests with `name` values `"osac-sp-cluster"` and `"osac-sp-vm"` respectively. |
+| TC-I-020 | Both registrations are sent on startup | REQ-REG-010, AC-REG-010 | Fake `control-plane` returns `201` for all requests; start the SP; within a bounded wait, assert the fake recorded exactly 2 distinct requests with `name` values `"osac-sp-cluster"` and `"osac-sp-vm"` respectively. |
 | TC-I-021 | Cluster registration payload matches contract exactly | REQ-REG-020, REQ-REG-030, REQ-REG-040, AC-REG-020 | Inspect the recorded cluster registration request body; assert every field listed in AC-REG-020 matches exactly (not just "field present"), including `supported_platforms`/`supported_provisioning_types`/`kubernetes_supported_versions` nested under `metadata` rather than top-level. |
-| TC-I-022 | Registration does not block server readiness | REQ-REG-050, AC-REG-030 | Fake agent's handler blocks (does not respond) until explicitly released; assert `GET /api/v1alpha1/clusters/health` still succeeds with a normal HTTP response while registration is still pending. |
-| TC-I-023 | VM 409 does not affect cluster registration success | REQ-REG-060, REQ-REG-080, AC-REG-040, AC-REG-060 | Fake agent returns `409` for `vm` requests and `201` for `cluster`; assert (via the fake agent's recorded request log, polled with a bounded wait) that `cluster` registration completed successfully and that a `vm` retry request is eventually re-sent after the configured lease-renewal interval (using a shortened test interval). |
-| TC-I-024 | Non-retryable 4xx on cluster does not crash the process or block vm registration | REQ-REG-090, AC-REG-070 | Fake agent returns `400` for `cluster`, `201` for `vm`; assert the SP process/goroutines remain alive (health endpoint still responds) and `vm` registration recorded a successful request. |
-| TC-I-025 | Retry backoff observed against a flaky fake agent | REQ-REG-070, AC-REG-050 | Fake agent fails the first 2 requests per service type (connection reset) then succeeds; assert both service types eventually reach a recorded successful request, and the elapsed wall-clock time between attempts is consistent with the configured initial backoff (bounded assertion, e.g. `>= initialBackoff` and `< initialBackoff * 4`). |
-| TC-I-026 | Idempotent re-registration on simulated restart | REQ-REG-100, AC-REG-080 | Run the registration flow twice against the same fake agent instance (simulating a process restart) without changing configuration; assert both runs send identical `name`/`service_type` pairs, consistent with the agent's documented idempotency-on-`name` behavior (no client-side dedup logic needed, but no drift in identifying fields either). |
-| TC-I-027 | No Authorization header sent to the fake agent | REQ-REG-115, AC-REG-095 | Fake agent handler records all request headers; start the SP and let both registrations fire; assert neither recorded request has an `Authorization` header. |
+| TC-I-022 | Registration does not block server readiness | REQ-REG-050, AC-REG-030 | Fake `control-plane`'s handler blocks (does not respond) until explicitly released; assert `GET /api/v1alpha1/clusters/health` still succeeds with a normal HTTP response while registration is still pending. |
+| TC-I-023 | VM 409 Conflict is non-retryable, cluster registration still succeeds | REQ-REG-060, REQ-REG-090, AC-REG-040, AC-REG-060 | Fake `control-plane` returns `409` for `vm` requests and `201` for `cluster`; assert (via the fake's recorded request log, polled with a bounded wait) that `cluster` registration completed successfully, that exactly one `vm` request was recorded (no retry after the `409`), and that the `vm` failure is logged at ERROR level. Supersedes the pre-pivot "409 is retryable" test design — see DD-050. |
+| TC-I-024 | Non-retryable 4xx on cluster does not crash the process or block vm registration | REQ-REG-090, AC-REG-070 | Fake `control-plane` returns `400` for `cluster`, `201` for `vm`; assert the SP process/goroutines remain alive (health endpoint still responds) and `vm` registration recorded a successful request. |
+| TC-I-025 | Retry backoff observed against a flaky fake `control-plane` | REQ-REG-070, AC-REG-050 | Fake fails the first 2 requests per service type (connection reset) then succeeds; assert both service types eventually reach a recorded successful request, and the elapsed wall-clock time between attempts is consistent with the configured initial backoff (bounded assertion, e.g. `>= initialBackoff` and `< initialBackoff * 4`). |
+| TC-I-026 | Idempotent re-registration on simulated restart | REQ-REG-100, AC-REG-080 | Run the registration flow twice against the same fake `control-plane` instance (simulating a process restart) without changing configuration; assert both runs send identical `name`/`service_type` pairs, consistent with `control-plane`'s documented idempotency-on-`name` behavior (no client-side dedup logic needed, but no drift in identifying fields either). |
+| TC-I-027 | No Authorization header sent to the fake `control-plane` | REQ-REG-115, AC-REG-095 | Fake handler records all request headers; start the SP and let both registrations fire; assert neither recorded request has an `Authorization` header. |
 
 ---
 
@@ -94,7 +95,7 @@ for what the OpenAPI contract specifies, not a live instance.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-030 | Cold start reaches healthy + fully registered | REQ-HTTP-010, REQ-OSAC-010, REQ-OSAC-011, REQ-OSAC-030, REQ-HLT-030, REQ-REG-010, AC-HLT-020, AC-REG-010 | With all fakes healthy (Keycloak discovery + token endpoints valid, `bufconn` Capabilities up, fake agent returning 201), start the SP from cold (fresh config, no pre-seeded state); poll `GET /api/v1alpha1/clusters/health` until `status == "healthy"` (bounded wait); assert `GET /api/v1alpha1/vms/health` reports the same status; assert the fake agent independently recorded both `osac-sp-cluster` and `osac-sp-vm` registrations by the same deadline. |
+| TC-I-030 | Cold start reaches healthy + fully registered | REQ-HTTP-010, REQ-OSAC-010, REQ-OSAC-011, REQ-OSAC-030, REQ-HLT-030, REQ-REG-010, AC-HLT-020, AC-REG-010 | With all fakes healthy (Keycloak discovery + token endpoints valid, `bufconn` Capabilities up, fake `control-plane` returning 201), start the SP from cold (fresh config, no pre-seeded state); poll `GET /api/v1alpha1/clusters/health` until `status == "healthy"` (bounded wait); assert `GET /api/v1alpha1/vms/health` reports the same status; assert the fake `control-plane` independently recorded both `osac-sp-cluster` and `osac-sp-vm` registrations by the same deadline. |
 
 ---
 
@@ -105,5 +106,5 @@ for what the OpenAPI contract specifies, not a live instance.
 | 4.1 HTTP Server | 9 | 9 | 6 (TC-I-001..006) | Lifecycle/signal-handling ACs not practical to unit test are covered here. |
 | 4.2 OSAC Client Bootstrap | 10 | 14 | 2 dedicated (TC-I-015, TC-I-017) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). |
 | 4.3 Health Service | 8 | 10 | 8 (TC-I-010..017) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement. |
-| 4.4 Environment Agent Registration | 12 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake agent HTTP server implementing environment-agent's current (unimplemented server-side) contract. |
+| 4.4 SP Registration (`control-plane`) | 12 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake HTTP server implementing `control-plane`'s current (implemented server-side) SP API contract. |
 | Full-stack | - | - | 1 (TC-I-030) | Cross-cutting cold-start smoke test. |

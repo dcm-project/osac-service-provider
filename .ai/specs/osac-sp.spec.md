@@ -3,17 +3,20 @@
 ## 1. Overview
 
 The OSAC Service Provider (OSAC SP) is a DCM Service Provider that integrates
-the Open Sovereign AI Cloud (OSAC) platform with DCM through the environment
-agent model, provisioning OpenShift clusters and VMs via OSAC's fulfillment
-service gRPC API.
+the Open Sovereign AI Cloud (OSAC) platform with DCM, provisioning OpenShift
+clusters and VMs via OSAC's fulfillment service gRPC API. **Delivery is
+two-phase: Phase 1 registers with and dispatches through `control-plane`'s SP
+API; migration to the `environment-agent` model is deferred to Phase 2, once
+that project matures** — see DD-050 and
+[enhancements#95](https://github.com/dcm-project/enhancements/issues/95).
 
 **This spec covers Milestone 1 only** — the first independently reviewable
 slice per [issue #1](https://github.com/dcm-project/osac-service-provider/issues/1)'s
-suggested delivery milestones: repo skeleton, environment-agent registration
-(two service types), and a health endpoint backed by real OSAC connectivity
-and OIDC token validity. **No cluster or VM CRUD endpoints are in scope for
-this spec** — those land in later milestones (2–6) with their own spec
-additions.
+suggested delivery milestones: repo skeleton, Phase 1 (`control-plane`)
+registration (two service types), and a health endpoint backed by real OSAC
+connectivity and OIDC token validity. **No cluster or VM CRUD endpoints are
+in scope for this spec** — those land in later milestones (2–6) with their
+own spec additions.
 
 **Version scope (Milestone 1):**
 
@@ -25,21 +28,21 @@ additions.
 - `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health`
   (one per registered provider — see DD-010) reporting real OSAC connectivity
   + OIDC token health (not a stub that always reports healthy)
-- Two-name registration with the environment agent (`osac-sp-cluster` /
+- Two-name registration with `control-plane`'s SP API (`osac-sp-cluster` /
   `osac-sp-vm`), each independently retried
 - No cluster/VM REST endpoints, no gRPC CRUD calls, no status polling, no
   CloudEvents publishing — all deferred to later milestones
 
 **Reference documents:**
 
-- [OSAC SP Enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md) (source of truth for design decisions)
+- [OSAC SP Enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md) (source of truth for design decisions; Phase 1/2 update tracked in [enhancements#95](https://github.com/dcm-project/enhancements/issues/95))
 - [Implementation plan (issue #1)](https://github.com/dcm-project/osac-service-provider/issues/1)
 - [SP Registration Flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/sp-registration-flow/sp-registration-flow.md)
-- [Environment Agent Enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/environment-agent/environment-agent.md)
 - [SP Health Check](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-provider-health-check/service-provider-health-check.md)
 - OSAC public protos: [`osac-project/fulfillment-service/proto/public/osac/public/v1/`](https://github.com/osac-project/fulfillment-service/tree/main/proto/public/osac/public/v1)
-- Reference implementations (structure/conventions template): [`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider), [`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider), [`kubevirt-service-provider`](https://github.com/dcm-project/kubevirt-service-provider) — **note:** these register directly against `control-plane`'s (formerly `service-provider-manager`'s) SP API, not against `environment-agent`; OSAC SP does not follow their registration wiring (see DD-050)
-- [`dcm-project/environment-agent`](https://github.com/dcm-project/environment-agent) (`api/v1alpha1/openapi.yaml`) — authoritative registration contract this SP integrates with (see DD-050)
+- Reference implementations (structure/conventions template): [`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider), [`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider), [`kubevirt-service-provider`](https://github.com/dcm-project/kubevirt-service-provider) — **note:** these also register against `control-plane`'s SP API, via the archived `service-provider-manager` client rather than `control-plane`'s newer `pkg/sp/client/provider`; OSAC SP now targets the same backend as its siblings, just on the newer client (see DD-050)
+- [`dcm-project/control-plane`](https://github.com/dcm-project/control-plane) (`api/sp/v1alpha1/provider/openapi.yaml`) — authoritative Phase 1 registration contract this SP integrates with (see DD-050)
+- [`dcm-project/environment-agent`](https://github.com/dcm-project/environment-agent) — Phase 2 target, deferred pending maturity (see DD-050)
 - OpenAPI Spec: `api/v1alpha1/openapi.yaml` (source of truth for the API contract, once authored)
 
 ---
@@ -48,8 +51,8 @@ additions.
 
 ```
                                      +------------------+
-                                     |   Environment    |
-                                     |      Agent       |
+                                     |  control-plane   |
+                                     |   (SP + SPRM)    |
                                      +--------+---------+
                                               |
                           +-------------------+-------------------+
@@ -57,8 +60,8 @@ additions.
                           |                                       v
                    Registration (x2)                   Health Poll (x2)
               POST /api/v1alpha1/providers        GET {provider.endpoint}/health
-                          |                        (once per registered provider)
-                          |                                       |
+                          |                    (healthcheck.Monitor, once per
+                          |                        registered provider)
 +-------------------------+---------------------------------------+--------+
 |                       OSAC Service Provider                              |
 |                                                                          |
@@ -70,7 +73,8 @@ additions.
 |         |                             | - gRPC ClientConn + auth      |  |
 |  +------+------+                      |   interceptor (bearer token)  |  |
 |  | Registrar   |                      +---------------+----------------+  |
-|  | (env-agent  |                                      |                   |
+|  | (control-   |                                      |                   |
+|  |  plane      |                                      |                   |
 |  |  client)    |                                      |                   |
 |  +-------------+                                      |                   |
 +--------------------------------------------------------+-----------------+
@@ -91,14 +95,14 @@ additions.
 | 1 | HTTP Server                         | HTTP   | -          |
 | 2 | OSAC Client Bootstrap               | OSAC   | -          |
 | 3 | Health Service                      | HLT    | 1, 2       |
-| 4 | Environment Agent Registration      | REG    | 1          |
+| 4 | SP Registration (`control-plane`)   | REG    | 1          |
 
 ```
 Topic 1: HTTP Server              (independent)
 Topic 2: OSAC Client Bootstrap    (independent)
   |         |
-  |         +---> Topic 3: Health Service       (depends on 1, 2)
-  +---> Topic 4: Environment Agent Registration  (depends on 1)
+  |         +---> Topic 3: Health Service               (depends on 1, 2)
+  +---> Topic 4: SP Registration (`control-plane`)       (depends on 1)
 ```
 
 Topics 1 and 2 can be delivered in parallel. Topics 3 and 4 depend on their
@@ -387,16 +391,21 @@ None - independently deliverable.
 Implementation of `GET /api/v1alpha1/clusters/health` and
 `GET /api/v1alpha1/vms/health`, reporting real OSAC connectivity and OIDC
 token health — not a stub that always reports healthy. **Two paths, not
-one:** the environment agent health-checks each registered provider
-independently by polling `GET {provider.endpoint}/health` (per
-`environment-agent`'s own spec, `AC-HMN-010`); since Topic 4.4 registers
-`cluster` at `{provider.endpoint}/api/v1alpha1/clusters` and `vm` at
-`{provider.endpoint}/api/v1alpha1/vms` (REQ-REG-030), the agent will poll
-`/api/v1alpha1/clusters/health` and `/api/v1alpha1/vms/health`
-independently — see DD-010. Both paths report identical status: this SP's
-health (OIDC token validity + OSAC gRPC connectivity) is a single, global
-condition, not per-service-type. Polled by the environment agent per the
-three-state health model (Ready, Unhealthy, Unavailable).
+one:** `control-plane`'s `internal/sp/healthcheck.Monitor` health-checks
+each registered provider row independently by polling
+`GET {provider.Endpoint}/health` on an interval (verified directly in its
+implementation, not just inferred from a spec — see DD-010); since Topic 4.4
+registers `cluster` at `{provider.endpoint}/api/v1alpha1/clusters` and `vm`
+at `{provider.endpoint}/api/v1alpha1/vms` (REQ-REG-030), this yields
+`/api/v1alpha1/clusters/health` and `/api/v1alpha1/vms/health` polled
+independently. Both paths report identical status: this SP's health (OIDC
+token validity + OSAC gRPC connectivity) is a single, global condition, not
+per-service-type. `control-plane`'s monitor derives its own three-state model
+(Ready, Unhealthy, Unavailable) from this SP's two-state
+`{"status": "healthy"|"unhealthy"}` response body plus HTTP-level
+reachability (non-2xx/timeout escalates to `Unavailable` after
+`MaxConsecutiveFailures`) — this SP only needs to produce the two-state body
+correctly; the three-state derivation is `control-plane`'s responsibility.
 
 Out of scope: readiness vs. liveness distinction, hub-availability reporting
 (`At least one hub is registered` — deferred until cluster/VM milestones
@@ -493,18 +502,23 @@ Depends on Topic 1 (HTTP Server) and Topic 2 (OSAC Client Bootstrap).
 
 ---
 
-### 4.4 Environment Agent Registration
+### 4.4 SP Registration (`control-plane`)
 
 #### Overview
 
-Self-register with the environment agent on startup, using **two** distinct
-provider names — `osac-sp-cluster` (service_type `cluster`) and
-`osac-sp-vm` (service_type `vm`) — per the enhancement's
-[Registration Flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#registration-flow).
+Self-register with `control-plane`'s SP API on startup, using **two**
+distinct provider names — `osac-sp-cluster` (service_type `cluster`) and
+`osac-sp-vm` (service_type `vm`) — following the same
+`name`-as-natural-key idempotency structure as the enhancement's
+[Registration Flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#registration-flow),
+now updated for the Phase 1 target (DD-050,
+[enhancements#95](https://github.com/dcm-project/enhancements/issues/95)).
 The two registrations are independent: neither's success or failure affects
-the other, since `vm` may legitimately be rejected with `409 Conflict` if
-another SP (e.g., `kubevirt-service-provider`) already holds that service
-type slot.
+the other. Unlike `environment-agent`, `control-plane` enforces **no
+per-service-type exclusivity** — conflicts are name/ID-based only (see
+DD-050) — so there is no "another SP already holds this service type slot"
+scenario to accommodate; a `409` here signals a genuine registration data
+conflict, not contention with `kubevirt-service-provider` or any other SP.
 
 Out of scope: de-registration on shutdown, registration status surfaced in
 the health check (deferred — see Topic 4.3 out-of-scope note).
@@ -513,24 +527,24 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-REG-010 | The SP MUST register with the environment agent on startup via two independent calls: one for `service_type=cluster` (name `osac-sp-cluster`), one for `service_type=vm` (name `osac-sp-vm`) | MUST | |
+| REQ-REG-010 | The SP MUST register with `control-plane` on startup via two independent calls: one for `service_type=cluster` (name `osac-sp-cluster`), one for `service_type=vm` (name `osac-sp-vm`) | MUST | |
 | REQ-REG-020 | Each registration payload MUST include `name`, `service_type`, `endpoint`, and `schema_version` | MUST | |
 | REQ-REG-030 | The cluster registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/clusters`; the vm registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/vms` | MUST | |
-| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object (the environment agent's `Provider` resource has no top-level fields for these) | MUST | DD-050 |
+| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object (`control-plane`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these — same `additionalProperties` catch-all shape `environment-agent`'s would have had) | MUST | DD-050 |
 | REQ-REG-050 | Both registrations MUST execute asynchronously and MUST NOT block server startup | MUST | |
 | REQ-REG-060 | The two registrations MUST be independent: a failure (including non-retryable 4xx) on one MUST NOT stop or delay the other | MUST | |
 | REQ-REG-070 | Registration MUST retry with exponential backoff on retryable failures (connection errors, 5xx) | MUST | |
-| REQ-REG-080 | A `409 Conflict` response on the `vm` registration MUST be treated as retryable — logged, not fatal — and retried on the same periodic cadence as lease renewal, so the SP can acquire the slot later if the incumbent's lease expires | MUST | |
-| REQ-REG-090 | Non-retryable 4xx responses (other than `409` on `vm`, per REQ-REG-080) MUST stop retries for that registration immediately and be logged | MUST | |
-| REQ-REG-100 | Registration MUST be idempotent: periodic re-registration renews the lease rather than duplicating the entry | MUST | |
-| REQ-REG-110 | The SP MUST use the `environment-agent` project's generated client library (`github.com/dcm-project/environment-agent/pkg/client`) for registration, depended on via a pinned Go module commit SHA (pseudo-version) rather than a tagged release, since none exist yet | MUST | DD-050 |
-| REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential; the environment agent's registration endpoint does not require authentication in its current contract | MUST | DD-050 |
+| REQ-REG-080 | **Superseded by REQ-REG-090 under the Phase 1 (`control-plane`) target — see DD-050.** (Originally: a `409 Conflict` on the `vm` registration was treated as retryable, modeling `environment-agent`'s per-service-type slot contention. `control-plane` has no such exclusivity — a `409` there is a genuine name/ID conflict per `RegisterOrUpdateProvider`'s rules, not a transient race to retry into. Retained as an ID for traceability; not implemented as distinct behavior.) | N/A | DD-050 |
+| REQ-REG-090 | Non-retryable 4xx responses, including `409 Conflict` (name or provider ID already in use — no per-service-type carve-out under `control-plane`, unlike the superseded REQ-REG-080), MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-050 |
+| REQ-REG-100 | Registration MUST be idempotent: periodic re-registration updates/refreshes the entry (by `name`) rather than duplicating it. Unlike `environment-agent`, `control-plane`'s `Provider` row has no lease/TTL to expire, so periodic re-registration is not required to retain the slot — it remains valuable only to keep capability metadata (REQ-REG-040) fresh across restarts/upgrades | MUST | DD-050 |
+| REQ-REG-110 | The SP MUST use `control-plane`'s generated client library (`github.com/dcm-project/control-plane/pkg/sp/client/provider`) for registration, depended on via a pinned Go module commit SHA (pseudo-version) rather than a tagged release, since `control-plane` has none either | MUST | DD-050 |
+| REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential; `control-plane`'s SP registration endpoint does not require authentication in its current contract (verified: no JWT/OAuth2/OIDC middleware anywhere in `control-plane`'s router chain) | MUST | DD-050 |
 
 #### Configuration Introduced
 
 | Config Key | Env Var | Default | Required | Description |
 |------------|---------|---------|----------|-------------|
-| agent.registrationUrl | SP_AGENT_REGISTRATION_URL | - | Yes | Environment agent base URL (e.g. `https://agent.example.com/api/v1alpha1`) passed to the generated client's `NewClient` |
+| dcm.registrationUrl | DCM_REGISTRATION_URL | - | Yes | `control-plane` base URL (e.g. `https://control-plane.example.com/api/v1alpha1`), passed to the generated client's `NewClient` — env var name matches sibling SPs' existing `DCM_REGISTRATION_URL` convention (`k8s-container-service-provider`, `acm-cluster-service-provider`), since they target the same backend |
 | provider.endpoint | SP_ENDPOINT | - | Yes | Externally reachable base URL for this SP |
 | provider.clusterName | SP_PROVIDER_CLUSTER_NAME | osac-sp-cluster | No | Registered name for the `cluster` service type |
 | provider.vmName | SP_PROVIDER_VM_NAME | osac-sp-vm | No | Registered name for the `vm` service type |
@@ -580,30 +594,29 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 ##### AC-REG-040: Independent registration outcomes
 
 - **Validates:** REQ-REG-060
-- **Given** the `vm` registration fails immediately (e.g., non-retryable 4xx other than 409)
+- **Given** the `vm` registration fails immediately (e.g., non-retryable 4xx)
 - **When** the failure occurs
-- **Then** the `cluster` registration MUST proceed unaffected and MUST succeed if the agent accepts it
+- **Then** the `cluster` registration MUST proceed unaffected and MUST succeed if `control-plane` accepts it
 
 ##### AC-REG-050: Exponential backoff on retryable failure
 
 - **Validates:** REQ-REG-070
-- **Given** the environment agent is unreachable
+- **Given** `control-plane` is unreachable
 - **When** a registration attempt fails
 - **Then** the SP MUST retry with exponential backoff
 
-##### AC-REG-060: VM registration 409 is non-fatal and retried
+##### AC-REG-060: 409 Conflict is non-retryable (superseded from "VM 409 is non-fatal and retried")
 
-- **Validates:** REQ-REG-080
-- **Given** the `vm` registration receives `409 Conflict` (another SP holds the slot)
+- **Validates:** REQ-REG-090 (formerly REQ-REG-080 — see DD-050)
+- **Given** a registration receives `409 Conflict` from `control-plane` (name or provider ID already in use)
 - **When** the response is handled
-- **Then** the SP MUST log the conflict at INFO/WARN level (not ERROR)
-- **And** MUST NOT mark the SP as failed
-- **And** MUST retry the `vm` registration on the same cadence as lease renewal
+- **Then** the SP MUST treat it identically to any other non-retryable 4xx: log at ERROR level, stop retrying that registration, and continue running
+- **And** MUST NOT special-case it as a retryable slot-contention scenario (that model does not apply to `control-plane` — see DD-050)
 
 ##### AC-REG-070: Non-retryable 4xx stops retries
 
 - **Validates:** REQ-REG-090
-- **Given** a registration receives a non-retryable 4xx response (e.g., 400 Bad Request)
+- **Given** a registration receives a non-retryable 4xx response (e.g., 400 Bad Request, 409 Conflict)
 - **When** the response is handled
 - **Then** the SP MUST NOT retry that registration
 - **And** MUST log the error at ERROR level
@@ -621,13 +634,13 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 - **Validates:** REQ-REG-110
 - **Given** the registration subsystem is implemented
 - **When** a registration request is sent
-- **Then** it MUST use `github.com/dcm-project/environment-agent/pkg/client`, imported via a `go.mod` entry pinned to a specific commit SHA (pseudo-version)
+- **Then** it MUST use `github.com/dcm-project/control-plane/pkg/sp/client/provider`, imported via a `go.mod` entry pinned to a specific commit SHA (pseudo-version)
 
 ##### AC-REG-095: No authentication on registration requests
 
 - **Validates:** REQ-REG-115
 - **Given** a registration request is constructed
-- **When** it is sent to the environment agent
+- **When** it is sent to `control-plane`
 - **Then** the request MUST NOT carry an `Authorization` header or any bearer token
 
 #### Dependencies
@@ -684,7 +697,7 @@ Depends on Topic 1 (HTTP Server).
 ##### AC-XC-CFG-020: Fail-fast on missing required config
 
 - **Validates:** REQ-XC-CFG-020
-- **Given** a required config value (`SP_OSAC_FULFILLMENT_ADDRESS`, `SP_OSAC_OIDC_ISSUER_URL`, `SP_OSAC_OIDC_CLIENT_ID`, `SP_OSAC_OIDC_CLIENT_SECRET`, `SP_AGENT_REGISTRATION_URL`, or `SP_ENDPOINT`) is absent or empty
+- **Given** a required config value (`SP_OSAC_FULFILLMENT_ADDRESS`, `SP_OSAC_OIDC_ISSUER_URL`, `SP_OSAC_OIDC_CLIENT_ID`, `SP_OSAC_OIDC_CLIENT_SECRET`, `DCM_REGISTRATION_URL`, or `SP_ENDPOINT`) is absent or empty
 - **When** the SP starts
 - **Then** the SP MUST return an error identifying the missing field
 - **And** MUST exit before starting the HTTP server or any subsystem
@@ -707,7 +720,7 @@ All configuration is loaded from environment variables.
 | osac.tlsEnabled | SP_OSAC_TLS_ENABLED | false | No | 2 |
 | osac.tlsCertFile | SP_OSAC_TLS_CERT_FILE | - | No | 2 |
 | osac.probeTimeout | SP_OSAC_PROBE_TIMEOUT | 5s | No | 2 |
-| agent.registrationUrl | SP_AGENT_REGISTRATION_URL | - | Yes | 4 |
+| dcm.registrationUrl | DCM_REGISTRATION_URL | - | Yes | 4 |
 | provider.endpoint | SP_ENDPOINT | - | Yes | 4 |
 | provider.clusterName | SP_PROVIDER_CLUSTER_NAME | osac-sp-cluster | No | 4 |
 | provider.vmName | SP_PROVIDER_VM_NAME | osac-sp-vm | No | 4 |
@@ -753,6 +766,16 @@ table for a single `/api/v1alpha1/health` path without verifying it against
 `environment-agent`'s actual polling contract — a hallucination corrected
 here before implementation.
 
+**Phase 1 (`control-plane`) confirmation:** unlike the `environment-agent`
+citations above (which were spec-only, since that project's own health
+checker is unimplemented), `control-plane`'s health-check monitor is real,
+running code, and confirms the identical convention directly:
+`internal/sp/healthcheck/monitor.go`'s `performHealthCheck` builds
+`strings.TrimRight(provider.Endpoint, "/") + "/health"` — the same
+`{registered endpoint}/health` construction, appended per-`Provider`-row.
+This decision needed no change for the Phase 1 pivot (DD-050); if anything,
+it is now verified against running code rather than an unimplemented spec.
+
 **Related requirements:** REQ-HTTP-020, REQ-HLT-010, REQ-HLT-015
 
 ### DD-020: Minimal `Capabilities`-only gRPC client for Milestone 1
@@ -795,68 +818,118 @@ OSAC fulfillment service) rather than one (a local Kubernetes API server).
 **Decision:** Implement the two registrations as fully independent
 goroutines/retry loops, not a single loop iterating over two service types.
 
-**Rationale:** The enhancement doc is explicit that a `vm` registration
-`409 Conflict` (another SP already holds the slot) must not be fatal to the
-process and must keep retrying on the lease-renewal cadence, while `cluster`
-registration must proceed and succeed independently. Sharing a retry loop
-would risk one service type's backoff/failure state leaking into the other.
+**Rationale (updated for Phase 1/`control-plane` — see DD-050):** originally
+justified by `environment-agent`'s `vm`-registration `409`/slot-contention
+scenario (kept not fatal, retried on the lease-renewal cadence) needing to
+coexist with `cluster` succeeding independently. That specific scenario is
+superseded (REQ-REG-080, see DD-050) — `control-plane` has no per-service-type
+slot contention. The decision itself still holds on general grounds: any
+independent, non-transient failure on one service type's registration (a
+validation bug in the `vm` metadata payload, a `control-plane`-side outage
+affecting only one in-flight request, etc.) must not block, delay, or leak
+backoff/failure state into the other's retry loop (REQ-REG-060). Sharing a
+retry loop would couple that state unnecessarily.
 
-**Related requirements:** REQ-REG-060, REQ-REG-080
+**Related requirements:** REQ-REG-060, REQ-REG-090
 
-### DD-050: Register with `environment-agent`'s pre-release API and client, not `control-plane`
+### DD-050: Two-phase registration target — `control-plane` for Phase 1, `environment-agent` deferred to Phase 2
 
-**Decision:** OSAC SP registers with the standalone
-[`dcm-project/environment-agent`](https://github.com/dcm-project/environment-agent)
-service (`POST /api/v1alpha1/providers`), using its generated
-`github.com/dcm-project/environment-agent/pkg/client`, pinned by commit SHA
-(no tagged releases exist). This is a different service and wire contract
-than `control-plane`'s `api/sp/v1alpha1/provider` (the successor to the now
-archived `service-provider-manager`, which all 5 existing sibling SPs still
-use directly).
+**Decision (supersedes the original single-phase decision in this slot):**
+OSAC SP's first release (Phase 1, this milestone) registers with
+[`dcm-project/control-plane`](https://github.com/dcm-project/control-plane)'s
+SP API (`POST /api/v1alpha1/providers`, per
+`api/sp/v1alpha1/provider/openapi.yaml`), using its generated
+`github.com/dcm-project/control-plane/pkg/sp/client/provider`, pinned by
+commit SHA (no tagged releases exist for `control-plane` either). Migration
+to `dcm-project/environment-agent` (the originally chosen target) is
+deferred to a future Phase 2, once that project reaches sufficient maturity.
+This reverses the direction taken during the original enhancement review —
+tracked for the enhancement doc update in
+[enhancements#95](https://github.com/dcm-project/enhancements/issues/95).
 
-**Rationale:** OSAC SP's own enhancement doc and issue #1 describe
-registering with "the environment agent," and `environment-agent`'s README
-confirms it is purpose-built for exactly this — "External SPs: Standalone SP
-processes that register to the agent via the REST API." The team confirmed
-this direction during the enhancement review, explicitly choosing it over
-`control-plane`'s direct-registration path. No existing SP repo actually
-depends on `environment-agent` today: `k8s-container`, `acm-cluster`, and
-`kubevirt` register directly with `control-plane`/the archived SPM, and
-`environment-agent`'s own spec only lists them as candidates for future
-in-process embedding (not yet implemented). OSAC SP will be the first SP to
-exercise this integration path in either direction.
+**Rationale — maturity comparison (why the reversal):** at
+`control-plane`@[`6c16c06`](https://github.com/dcm-project/control-plane/commit/6c16c0654018cd779a7c3ad8739427644732c41b),
+`POST /api/v1alpha1/providers` is a **complete, wired** implementation —
+`internal/sp/handlers/provider/handler.go` implements the generated
+`StrictServerInterface` end-to-end (List/Create/Get/Apply/Delete) against a
+real store, mounted in `internal/app/run.go`. `environment-agent`'s
+equivalent handler, by contrast, exists only as generated stubs
+(`server.gen.go`) with no `internal/handlers`/`internal/service`
+implementation and a no-op `main()` — unchanged from the original writeup of
+this decision. Neither project has tagged releases, but `control-plane`'s SP
+registration path is functionally complete today; `environment-agent`'s is
+not. `k8s-container`, `acm-cluster`, and `kubevirt` already register
+directly with `control-plane` (via the archived `service-provider-manager`
+client rather than `control-plane`'s newer `pkg/sp/client/provider`) — OSAC
+SP now targets the same backend as its siblings for Phase 1, rather than
+diverging from them, and is the first SP to exercise the newer client.
 
-**Maturity risk (accepted, tracked):** As of this writing, `environment-agent`
-is 18 days old, has no tagged releases, and its `POST /api/v1alpha1/providers`
-handler exists only as generated stubs (`server.gen.go`) — there is no
-`internal/handlers`/`internal/service` implementation yet, and `main()` is a
-no-op. Concretely, this means:
-- The Go dependency MUST be pinned to a specific commit SHA and bumped
-  deliberately, not tracked via `@latest` or a floating branch.
-- Milestone 1's registration integration tests (Topic 4, `osac-sp-integration.test-plan.md`
-  §3) exercise a **fake HTTP server implementing the current OpenAPI
-  contract**, not a live `environment-agent` instance — this was already the
-  planned test design and needs no rework.
-- The OpenAPI contract (`api/v1alpha1/openapi.yaml`, merged on `main`) could
-  still change before `environment-agent`'s own registration handler lands,
-  since nothing about it is released or frozen. Re-validating OSAC SP's
-  registration assumptions (schema fields, 409-conflict semantics,
-  idempotency-on-`name`) against a real running `environment-agent` is a
-  tracked follow-up once that work ships there — not a Milestone 1 blocker.
-- No authentication is required on this call today (`401` is explicitly
-  "reserved; authentication deferred to future version" in
-  `environment-agent`'s spec) — unlike `control-plane`'s equivalent API,
-  which requires a bearer JWT. See REQ-REG-115.
+**Correction to this decision's own prior claim:** the original version of
+this decision stated `control-plane`'s equivalent API "requires a bearer
+JWT," contrasting it with `environment-agent`'s unauthenticated endpoint.
+Re-verified while drafting this update — that claim does not hold.
+`control-plane`'s middleware chain (`internal/app/run.go`, `newRouter`) is
+only `middleware.RequestID` → `middleware.Recoverer` → OpenAPI request
+validation; there is no JWT/OAuth2/OIDC check anywhere in the repository
+(verified by grep across `internal/`), and
+`api/sp/v1alpha1/provider/openapi.yaml` has no `security:` scheme at all.
+Both targets require no authentication on this call today. See REQ-REG-115.
 
-**Schema consequence:** `environment-agent`'s generated `Provider` struct has
-no `supported_platforms`/`supported_provisioning_types`/
-`kubernetes_supported_versions` fields — these OSAC-specific values MUST be
-carried as additional keys inside `metadata` (`ProviderMetadata`'s
-`additionalProperties: true` catch-all, which flattens to sibling JSON keys
-alongside `region_code`/`zone`/`status`/`resources` on marshal). See
-REQ-REG-040.
+**This is not just a client-library swap — `control-plane`'s CRUD-dispatch
+model differs materially from `environment-agent`'s, which matters for
+future milestones even though it doesn't block this one:**
+`control-plane`'s `internal/sp/service/resource_manager.InstanceService`
+dispatches **synchronously over plain REST** directly to
+`provider.Endpoint` (`POST {endpoint}?id={instanceId}` with body
+`{"spec": {...}}`; `DELETE {endpoint}/{instanceId}`) — looked up from the
+same `Provider` row `POST /providers` writes — rather than
+`environment-agent`'s CloudEvent-through-a-messaging-topic model with a
+DCM-generated `resourceId` forwarded in the event body. Milestone 1 (this
+spec) only covers registration and health, so this doesn't change anything
+implemented here, but it means Milestone 2+'s CRUD/idempotent-creation
+design (currently written against the CloudEvent model elsewhere in the
+enhancement doc) will need real rework, not a find-replace, when that work
+starts — tracked as open questions in enhancements#95, not resolved here.
 
-**Related requirements:** REQ-REG-040, REQ-REG-110, REQ-REG-115
+**Confirmed favorably while researching this update:** `control-plane` has
+its own real health-check poller,
+`internal/sp/healthcheck.Monitor` (see the Phase 1 confirmation added to
+DD-010) — it polls `GET {provider.Endpoint}/health` on an interval and
+expects exactly the `{"status": "healthy"|"unhealthy"}` body this SP already
+implements (Topic 4.3), escalating to its own `Unavailable` state via
+consecutive-failure counting rather than reading a three-state body from the
+SP. **No change was needed to Topic 4.3's design or its already-implemented
+health handler for this pivot** — DD-010's two-endpoint-per-provider decision
+holds, now confirmed against running code instead of an unimplemented spec.
+
+**Lease/TTL consequence:** `control-plane`'s `Provider` row (see
+`internal/sp/store/model/provider.go`) has no lease/TTL/expiry field — a
+registered entry persists until explicitly deleted; health is tracked
+independently by the monitor above via `ConsecutiveFailures`, not by
+whether the SP keeps re-registering. This removes the "the SP loses its slot
+if it stops renewing" mechanic entirely, which is why REQ-REG-080's original
+"409 is retryable, retry on the lease-renewal cadence" behavior is superseded
+(folded into REQ-REG-090) rather than adapted — see DD-040.
+
+**Maturity risk (still accepted, now against a different target):**
+`control-plane` also has no tagged releases, so the Go dependency MUST still
+be pinned to a specific commit SHA and bumped deliberately, not tracked via
+`@latest` or a floating branch. Milestone 1's registration integration tests
+(Topic 4, `osac-sp-integration.test-plan.md` §3) exercise a **fake HTTP
+server implementing `control-plane`'s current OpenAPI contract**, not a live
+`control-plane` instance — consistent with the existing test-design
+philosophy (a fake was always the plan; only what it fakes has changed).
+
+**Schema consequence (unchanged by the pivot):** `control-plane`'s generated
+`Provider`/`ProviderMetadata` struct has no `supported_platforms`/
+`supported_provisioning_types`/`kubernetes_supported_versions` fields either
+— these OSAC-specific values MUST be carried as additional keys inside
+`metadata` (`ProviderMetadata`'s `additionalProperties: true` catch-all,
+which flattens to sibling JSON keys alongside `region_code`/`zone`/`status`/
+`resources` on marshal). See REQ-REG-040.
+
+**Related requirements:** REQ-REG-040, REQ-REG-080 (superseded), REQ-REG-090,
+REQ-REG-100, REQ-REG-110, REQ-REG-115
 
 ### DD-060: Resolve the OIDC token endpoint via discovery, not by treating the issuer URL as the token endpoint
 
@@ -937,9 +1010,13 @@ it in this milestone.
 
 Per the sibling SPs' established pattern (DD-070 in
 `k8s-container-service-provider`), an `"unhealthy"` status is still returned
-as **HTTP 200 OK** with the unhealthy body — it is not a 5xx response. The
-environment agent's polling logic distinguishes healthy/unhealthy from
-unavailable (non-200/timeout) at the transport level.
+as **HTTP 200 OK** with the unhealthy body — it is not a 5xx response.
+`control-plane`'s health-check monitor (`internal/sp/healthcheck.Monitor`,
+see DD-010/DD-050) distinguishes healthy/unhealthy (read from this SP's JSON
+body) from unavailable (non-2xx/timeout at the transport level, escalated
+after `MaxConsecutiveFailures`) — the same two-level distinction this
+sentence originally attributed to `environment-agent`, now confirmed against
+`control-plane`'s actual implementation.
 
 ---
 
@@ -950,7 +1027,7 @@ unavailable (non-200/timeout) at the transport level.
 | REQ-HTTP-NNN | 4.1: HTTP Server | 9 |
 | REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 10 |
 | REQ-HLT-NNN | 4.3: Health Service | 8 |
-| REQ-REG-NNN | 4.4: Environment Agent Registration | 12 |
+| REQ-REG-NNN | 4.4: SP Registration (`control-plane`) | 12 |
 | REQ-XC-LOG-NNN | 5.1: Logging | 2 |
 | REQ-XC-CFG-NNN | 5.2: Configuration Management | 2 |
 | **Total** | | **43** |
