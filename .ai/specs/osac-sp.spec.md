@@ -257,8 +257,9 @@ breaking beyond token refresh and connection backoff.
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-OSAC-010 | The SP MUST obtain an OIDC access token via OAuth2 client-credentials grant against the token endpoint resolved per REQ-OSAC-011, using `oidcClientId`/`oidcClientSecret` | MUST | DD-060 |
-| REQ-OSAC-011 | The SP MUST resolve the token endpoint from `oidcIssuerUrl` by trying `GET {oidcIssuerUrl}/.well-known/oauth-authorization-server` (RFC 8414) first and, only if that fails, falling back to `GET {oidcIssuerUrl}/.well-known/openid-configuration` (OpenID Connect Discovery 1.0), extracting `token_endpoint` from whichever succeeds, rather than treating `oidcIssuerUrl` itself as the token endpoint or querying only one of the two documents | MUST | DD-060 |
+| REQ-OSAC-010 | The SP MUST obtain an OIDC access token via OAuth2 client-credentials grant against the token endpoint resolved per REQ-OSAC-011/REQ-OSAC-012, using `oidcClientId`/`oidcClientSecret` | MUST | DD-060 |
+| REQ-OSAC-011 | The SP MUST resolve the token endpoint from `oidcIssuerUrl` by trying `GET {oidcIssuerUrl}/.well-known/oauth-authorization-server` (RFC 8414) first and, only if that fails, falling back to `GET {oidcIssuerUrl}/.well-known/openid-configuration` (OpenID Connect Discovery 1.0) | MUST | DD-060 |
+| REQ-OSAC-012 | The SP MUST extract `token_endpoint` from whichever discovery document succeeds, rather than treating `oidcIssuerUrl` itself as the token endpoint or querying only one of the two documents | MUST | DD-060 |
 | REQ-OSAC-020 | The SP MUST refresh the OIDC token before expiry and supply it as a gRPC bearer credential (`PerRPCCredentials`) on every call to the fulfillment service | MUST | |
 | REQ-OSAC-030 | The SP MUST establish a gRPC `ClientConn` to `fulfillmentAddress` | MUST | |
 | REQ-OSAC-040 | When `tlsEnabled=true`, the gRPC connection MUST use TLS, loading a CA certificate from `tlsCertFile` if set | MUST | |
@@ -291,7 +292,7 @@ breaking beyond token refresh and connection backoff.
 
 ##### AC-OSAC-011: Token endpoint discovered from issuer, not assumed
 
-- **Validates:** REQ-OSAC-011
+- **Validates:** REQ-OSAC-011, REQ-OSAC-012
 - **Given** `oidcIssuerUrl=https://keycloak.example.com/realms/osac` and a discovery document at `{oidcIssuerUrl}/.well-known/oauth-authorization-server` whose `token_endpoint` is `https://keycloak.example.com/realms/osac/protocol/openid-connect/token`
 - **When** the bootstrap component fetches a token
 - **Then** the token request MUST be sent to the discovered `token_endpoint`, not to `oidcIssuerUrl` directly
@@ -307,7 +308,7 @@ breaking beyond token refresh and connection backoff.
 
 ##### AC-OSAC-013: Falls back to OpenID Connect discovery when RFC 8414 discovery fails
 
-- **Validates:** REQ-OSAC-011
+- **Validates:** REQ-OSAC-011, REQ-OSAC-012
 - **Given** `{oidcIssuerUrl}/.well-known/oauth-authorization-server` returns a non-2xx status (e.g. `404`, matching a Keycloak realm that doesn't expose that document) but `{oidcIssuerUrl}/.well-known/openid-configuration` returns a valid discovery document
 - **When** the bootstrap component fetches a token
 - **Then** the SP MUST fall back to querying `{oidcIssuerUrl}/.well-known/openid-configuration` and use its `token_endpoint`
@@ -428,7 +429,8 @@ where hub-related failures are actually observable).
 | REQ-HLT-020 | Each health response body MUST include `status`, `type`, `path`, `version`, and `uptime` fields | MUST | DD-030 |
 | REQ-HLT-030 | `status` MUST be `"healthy"` only when both the cached OIDC token is valid (REQ-OSAC-070) AND the OSAC connectivity probe succeeds (REQ-OSAC-080); otherwise `"unhealthy"` | MUST | |
 | REQ-HLT-040 | The response MUST set `Content-Type: application/json` | MUST | |
-| REQ-HLT-050 | The health handler MUST NOT force a new OIDC token fetch on every poll; it MUST query cached token validity (REQ-OSAC-070) | MUST | |
+| REQ-HLT-050 | The health handler MUST NOT force a new OIDC token fetch on every poll | MUST | |
+| REQ-HLT-055 | The health handler MUST query the cached OIDC token validity (REQ-OSAC-070) on every poll | MUST | |
 | REQ-HLT-060 | The health handler MUST invoke the connectivity probe (REQ-OSAC-080) on every call, bounded by `osac.probeTimeout` | MUST | |
 | REQ-HLT-070 | When unhealthy, the response body SHOULD include a `detail` field distinguishing "token invalid" from "OSAC unreachable" (both may be true simultaneously) | SHOULD | |
 
@@ -485,7 +487,7 @@ where hub-related failures are actually observable).
 
 ##### AC-HLT-040: No forced token refresh on poll
 
-- **Validates:** REQ-HLT-050
+- **Validates:** REQ-HLT-050, REQ-HLT-055
 - **Given** a valid cached token exists
 - **When** either health endpoint is called repeatedly
 - **Then** the OIDC token endpoint MUST NOT be called as part of serving the health request
@@ -538,12 +540,11 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 | REQ-REG-010 | The SP MUST register with `control-plane` on startup via two independent calls: one for `service_type=cluster` (name `osac-sp-cluster`), one for `service_type=vm` (name `osac-sp-vm`) | MUST | |
 | REQ-REG-020 | Each registration payload MUST include `name`, `service_type`, `endpoint`, and `schema_version` | MUST | |
 | REQ-REG-030 | The cluster registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/clusters`; the vm registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/vms` | MUST | |
-| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object (`control-plane`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these — same `additionalProperties` catch-all shape `environment-agent`'s would have had) | MUST | DD-050 |
+| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object | MUST | DD-050 — `control-plane`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these; carried via its `additionalProperties` catch-all shape (same as `environment-agent`'s would have been) |
 | REQ-REG-050 | Both registrations MUST execute asynchronously and MUST NOT block server startup | MUST | |
 | REQ-REG-060 | The two registrations MUST be independent: a failure (including non-retryable 4xx) on one MUST NOT stop or delay the other | MUST | |
 | REQ-REG-070 | Registration MUST retry with exponential backoff on retryable failures (connection errors, 5xx) | MUST | |
-| REQ-REG-080 | **Superseded by REQ-REG-090 under the Phase 1 (`control-plane`) target — see DD-050.** (Originally: a `409 Conflict` on the `vm` registration was treated as retryable, modeling `environment-agent`'s per-service-type slot contention. `control-plane` has no such exclusivity — a `409` there is a genuine name/ID conflict per `RegisterOrUpdateProvider`'s rules, not a transient race to retry into. Retained as an ID for traceability; not implemented as distinct behavior.) | N/A | DD-050 |
-| REQ-REG-090 | Non-retryable 4xx responses, including `409 Conflict` (name or provider ID already in use — no per-service-type carve-out under `control-plane`, unlike the superseded REQ-REG-080), MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-050 |
+| REQ-REG-090 | Non-retryable 4xx responses, including `409 Conflict` (name or provider ID already in use — no per-service-type carve-out under `control-plane`), MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-050 |
 | REQ-REG-100 | Registration MUST be idempotent: periodic re-registration updates/refreshes the entry (by `name`) rather than duplicating it. Unlike `environment-agent`, `control-plane`'s `Provider` row has no lease/TTL to expire, so periodic re-registration is not required to retain the slot — it remains valuable only to keep capability metadata (REQ-REG-040) fresh across restarts/upgrades | MUST | DD-050 |
 | REQ-REG-110 | The SP MUST use `control-plane`'s generated client library (`github.com/dcm-project/control-plane/pkg/sp/client/provider`) for registration, depended on via a pinned Go module commit SHA (pseudo-version) rather than a tagged release, since `control-plane` has none either | MUST | DD-050 |
 | REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential. `control-plane`'s provider API declares `security: bearerAuth` as of [`control-plane#24`](https://github.com/dcm-project/control-plane/pull/24), but that check is currently a no-op (`AUTH_DISABLED=true` by default) and `control-plane` sends no bearer token to SPs either — sending none here remains correct behavior today, but is a known, tracked production-auth gap rather than a permanent guarantee (see DD-050's Authentication Gap paragraph) | MUST | DD-050 |
@@ -613,9 +614,9 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 - **When** a registration attempt fails
 - **Then** the SP MUST retry with exponential backoff
 
-##### AC-REG-060: 409 Conflict is non-retryable (superseded from "VM 409 is non-fatal and retried")
+##### AC-REG-060: 409 Conflict is non-retryable (revises the pre-pivot "VM 409 is non-fatal and retried" design)
 
-- **Validates:** REQ-REG-090 (formerly REQ-REG-080 — see DD-050)
+- **Validates:** REQ-REG-090
 - **Given** a registration receives `409 Conflict` from `control-plane` (name or provider ID already in use)
 - **When** the response is handled
 - **Then** the SP MUST treat it identically to any other non-retryable 4xx: log at ERROR level, stop retrying that registration, and continue running
@@ -690,7 +691,7 @@ Depends on Topic 1 (HTTP Server).
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-XC-CFG-010 | All configuration MUST be loadable from environment variables via `caarlos0/env` | MUST | |
+| REQ-XC-CFG-010 | All configuration MUST be loadable from environment variables | MUST | |
 | REQ-XC-CFG-020 | The SP MUST fail fast on startup when required configuration values are absent or empty, returning an error before starting any subsystem | MUST | |
 
 #### Acceptance Criteria
@@ -829,8 +830,8 @@ goroutines/retry loops, not a single loop iterating over two service types.
 **Rationale (updated for Phase 1/`control-plane` — see DD-050):** originally
 justified by `environment-agent`'s `vm`-registration `409`/slot-contention
 scenario (kept not fatal, retried on the lease-renewal cadence) needing to
-coexist with `cluster` succeeding independently. That specific scenario is
-superseded (REQ-REG-080, see DD-050) — `control-plane` has no per-service-type
+coexist with `cluster` succeeding independently. That specific scenario no
+longer applies (see DD-050) — `control-plane` has no per-service-type
 slot contention. The decision itself still holds on general grounds: any
 independent, non-transient failure on one service type's registration (a
 validation bug in the `vm` metadata payload, a `control-plane`-side outage
@@ -872,38 +873,22 @@ client rather than `control-plane`'s newer `pkg/sp/client/provider`) — OSAC
 SP now targets the same backend as its siblings for Phase 1, rather than
 diverging from them, and is the first SP to exercise the newer client.
 
-**Correction to this decision's own prior claim (historical — since
-superseded again below):** the original version of this decision stated
-`control-plane`'s equivalent API "requires a bearer JWT," contrasting it
-with `environment-agent`'s unauthenticated endpoint. Re-verified while
-drafting this update — at `control-plane`@`6c16c06`, that claim did not
-hold: `control-plane`'s middleware chain (`internal/app/run.go`,
-`newRouter`) was only `middleware.RequestID` → `middleware.Recoverer` →
-OpenAPI request validation, with no JWT/OAuth2/OIDC check anywhere in the
-repository and no `security:` scheme on
-`api/sp/v1alpha1/provider/openapi.yaml`. Both targets required no
-authentication on this call as of that commit.
-
-**Second correction — that claim is itself now stale (found during PR
-review, not caught by the original re-verification):**
+**Authentication:** `control-plane`'s SP registration and CRUD-dispatch APIs
+(`api/sp/v1alpha1/provider/openapi.yaml`,
+`api/sp/v1alpha1/resource_manager/openapi.yaml`) declare
+`security: [bearerAuth: []]`, enforced by in-app JWT bearer validation
+([`internal/auth`](https://github.com/dcm-project/control-plane/blob/main/internal/auth),
+added in
 [`control-plane#24`](https://github.com/dcm-project/control-plane/pull/24)
-(merged 2026-07-21, six days before the correction above was written) added
-in-app JWT bearer validation
-([`internal/auth`](https://github.com/dcm-project/control-plane/blob/main/internal/auth))
 as part of the
-[authentication enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/authentication/authentication.md),
-and both `api/sp/v1alpha1/provider/openapi.yaml` and
-`api/sp/v1alpha1/resource_manager/openapi.yaml` now declare
-`security: [bearerAuth: []]` with no path-level override. **The behavior
-this SP implements is still correct today**: `AUTH_DISABLED` defaults to
-`true` in `control-plane`
+[authentication enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/authentication/authentication.md)).
+That check is currently a no-op: `AUTH_DISABLED` defaults to `true`
 ([`internal/app/config.go`](https://github.com/dcm-project/control-plane/blob/main/internal/app/config.go)),
-making the bearer check a no-op, and `control-plane`'s own outbound call to
-the SP's endpoint sets no `Authorization` header either — so REQ-REG-115's
-requirement (send no bearer credential) remains the right behavior, not a
-regression. What changed is that this is now a **known, tracked gap rather
-than a permanent architectural guarantee** — see the Authentication Gap
-paragraph below. See REQ-REG-115.
+and `control-plane`'s own outbound call to the SP's endpoint sets no
+`Authorization` header either. Sending no bearer credential from this SP
+(REQ-REG-115) is therefore correct behavior today, but is a **known,
+tracked gap, not a permanent architectural guarantee** — see the
+Authentication Gap paragraph below.
 
 **Authentication Gap (open, not scheduled):** the authentication
 enhancement documents `AUTH_DISABLED=true` as a transitional mitigation and
@@ -959,9 +944,9 @@ holds, now confirmed against running code instead of an unimplemented spec.
 registered entry persists until explicitly deleted; health is tracked
 independently by the monitor above via `ConsecutiveFailures`, not by
 whether the SP keeps re-registering. This removes the "the SP loses its slot
-if it stops renewing" mechanic entirely, which is why REQ-REG-080's original
-"409 is retryable, retry on the lease-renewal cadence" behavior is superseded
-(folded into REQ-REG-090) rather than adapted — see DD-040.
+if it stops renewing" mechanic entirely, which is why the pre-pivot design's
+"409 is retryable, retry on the lease-renewal cadence" behavior was replaced
+by REQ-REG-090's non-retryable handling rather than adapted — see DD-040.
 
 **Maturity risk (still accepted, now against a different target):**
 `control-plane` also has no tagged releases, so the Go dependency MUST still
@@ -980,8 +965,8 @@ philosophy (a fake was always the plan; only what it fakes has changed).
 which flattens to sibling JSON keys alongside `region_code`/`zone`/`status`/
 `resources` on marshal). See REQ-REG-040.
 
-**Related requirements:** REQ-REG-040, REQ-REG-080 (superseded), REQ-REG-090,
-REQ-REG-100, REQ-REG-110, REQ-REG-115
+**Related requirements:** REQ-REG-040, REQ-REG-090, REQ-REG-100, REQ-REG-110,
+REQ-REG-115
 
 ### DD-060: Resolve the OIDC token endpoint via discovery, not by treating the issuer URL as the token endpoint
 
@@ -1038,7 +1023,7 @@ unreachable at startup just like the token endpoint itself. Discovery logic
 must attempt both well-known paths, in order, before treating discovery as
 failed for that attempt.
 
-**Related requirements:** REQ-OSAC-010, REQ-OSAC-011, REQ-OSAC-060
+**Related requirements:** REQ-OSAC-010, REQ-OSAC-011, REQ-OSAC-012, REQ-OSAC-060
 
 ---
 
@@ -1077,9 +1062,9 @@ sentence originally attributed to `environment-agent`, now confirmed against
 | Prefix | Topic | Count |
 |--------|-------|-------|
 | REQ-HTTP-NNN | 4.1: HTTP Server | 10 |
-| REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 10 |
-| REQ-HLT-NNN | 4.3: Health Service | 8 |
-| REQ-REG-NNN | 4.4: SP Registration (`control-plane`) | 12 |
+| REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 11 |
+| REQ-HLT-NNN | 4.3: Health Service | 9 |
+| REQ-REG-NNN | 4.4: SP Registration (`control-plane`) | 11 |
 | REQ-XC-LOG-NNN | 5.1: Logging | 2 |
 | REQ-XC-CFG-NNN | 5.2: Configuration Management | 2 |
-| **Total** | | **44** |
+| **Total** | | **45** |
