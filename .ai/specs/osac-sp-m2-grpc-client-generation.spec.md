@@ -16,9 +16,11 @@ default network provisioning (also Milestone 4) land:
 business logic consuming these new clients, and no new HTTP or registration
 wiring are in scope — those land in Milestones 3–5. This milestone's only
 observable output is: (a) new vendored `.proto` files and their generated Go
-stubs, and (b) four new typed accessor methods on the existing
-`internal/osac.Bootstrap` component, each provably reachable over the same
-`ClientConn`/auth path Milestone 1 already established and tested.
+stubs, and (b) one new public accessor — `internal/osac.Bootstrap.Conn()
+*grpc.ClientConn` — provably reachable over the same `ClientConn`/auth path
+Milestone 1 already established and tested. Milestones 3–4's handler code
+constructs each typed client (`publicv1.NewClustersClient(bootstrap.Conn())`,
+etc.) directly at the point of use, matching the pattern established below.
 
 **Version scope (Milestone 2):**
 
@@ -32,9 +34,12 @@ stubs, and (b) four new typed accessor methods on the existing
 - Add `buf.build/bufbuild/protovalidate` as a new `buf.yaml` dependency
   (`metadata_type.proto` imports `buf/validate/validate.proto`, which
   Milestone 1's `buf.yaml` does not yet depend on).
-- Extend `internal/osac.Bootstrap` with four new typed client accessors,
-  reusing the exact `ClientConn` already established in Milestone 1 — no new
-  dial options, no new auth/TLS logic, no new configuration keys.
+- Add one new public accessor, `Bootstrap.Conn() *grpc.ClientConn`, exposing
+  the exact `ClientConn` already established in Milestone 1 — no new dial
+  options, no new auth/TLS logic, no new configuration keys. Milestones 3–4
+  construct `Clusters`/`ComputeInstances`/`Subnets`/`VirtualNetworks` typed
+  clients directly from it at each call site, per DD-020's ecosystem-precedent
+  rationale.
 - Explicitly **not** vendored this milestone: `events_service.proto`/
   `event_type.proto`, `host_types_service.proto`/`host_type_type.proto`,
   `instance_types_service.proto`/`instance_type_type.proto` — see DD-010 for
@@ -57,10 +62,21 @@ component changes. Milestone 1 never exposed a public accessor for its one
 client: the `Capabilities` client is a private `capClient` field, constructed
 once in `Bootstrap.Start()` and used only internally by `Probe()` — there was
 no reason to export it since M1 has no business logic that calls OSAC
-directly. Milestone 2 introduces the **first public typed-accessor methods**
-on `Bootstrap` (future Milestone 3–4 HTTP handlers need to call these
-directly), all four backed by the exact same private `*grpc.ClientConn`
-Milestone 1 already dials — no new connection, no new dial options:
+directly. Milestone 2 introduces exactly one new public method,
+`Bootstrap.Conn() *grpc.ClientConn`, exposing the same private connection
+Milestone 1 already dials and authenticates. Milestone 3–4 handler code then
+constructs each typed client directly at its point of use —
+`publicv1.NewClustersClient(bootstrap.Conn())`, etc. — rather than the
+`Bootstrap` type growing a named wrapper method per OSAC service. This
+mirrors, exhaustively and without exception, how
+`osac-project/fulfillment-service`'s own CLI consumes these same generated
+types (~40 call sites across `create`/`get`/`describe`/`console` commands,
+all `publicv1.NewXClient(conn)` at the call site, none through a per-service
+wrapper) and how the two DCM sibling SPs facing an analogous "one shared
+client, many resource kinds" shape do it too
+(`k8s-container-service-provider` returns the raw `client-go`
+`kubernetes.Interface`; `acm-cluster-service-provider` passes the raw
+`controller-runtime` `client.Client`) — see DD-020.
 
 ```
 +------------------------------------------------------------------+
@@ -70,19 +86,21 @@ Milestone 1 already dials — no new connection, no new dial options:
 |          |                                        |                |
 |          +--------- PerRPCCredentials ------------+                |
 |                                                    |                |
-|                        (private, M1)   +----------+----------+-----+-----+
-|                        capClient       |          |          |           |
-|                     (used by Probe())  v          v          v           v
-|                              ClustersClient()  ComputeInstancesClient()  |
-|                                  (public, M2)      (public, M2)          |
-|                              SubnetsClient()  VirtualNetworksClient()    |
-|                                  (public, M2)      (public, M2)          |
+|                        (private, M1)               |  Conn() (public, M2)
+|                        capClient                   |  -- returns the
+|                     (used by Probe())               \\    same *grpc.ClientConn
+|                                                       v
+|                                    (Milestone 3/4, not this milestone)
+|                     publicv1.NewClustersClient(bootstrap.Conn())
+|                     publicv1.NewComputeInstancesClient(bootstrap.Conn())
+|                     publicv1.NewSubnetsClient(bootstrap.Conn())
+|                     publicv1.NewVirtualNetworksClient(bootstrap.Conn())
 +------------------------------------------------------------------+
 ```
 
 All five client types (`Capabilities` plus the four new ones) are generated
 into the same `internal/osacpb/osac/public/v1` Go package (`publicv1`, per
-M1's `buf.gen.yaml`) — see REQ-GRPC-010's note on package naming.
+M1's `buf.gen.yaml`).
 
 No new inbound wiring (HTTP routes, registration payloads) changes in this
 milestone.
@@ -94,10 +112,10 @@ milestone.
 | # | Topic                          | Prefix | Depends On             |
 |---|----------------------------------|--------|-------------------------|
 | 1 | Proto Vendoring & Codegen         | PROTO  | Milestone 1 (buf pipeline) |
-| 2 | Generated Client Accessors        | GRPC   | Topic 1; Milestone 1 Topic 4.2 (OSAC Client Bootstrap) |
+| 2 | Shared Connection Accessor        | GRPC   | Topic 1; Milestone 1 Topic 4.2 (OSAC Client Bootstrap) |
 
 ```
-Topic 1: Proto Vendoring & Codegen  --->  Topic 2: Generated Client Accessors
+Topic 1: Proto Vendoring & Codegen  --->  Topic 2: Shared Connection Accessor
                                                 (also depends on M1's Bootstrap)
 ```
 
@@ -164,32 +182,36 @@ Depends on Milestone 1's `buf.yaml`/`buf.gen.yaml` pipeline.
 
 ---
 
-### 4.2 Generated Client Accessors
+### 4.2 Shared Connection Accessor
 
 #### Overview
 
-Add four new **public** typed accessor methods to `internal/osac.Bootstrap` —
-`ClustersClient()`, `ComputeInstancesClient()`, `SubnetsClient()`,
-`VirtualNetworksClient()` — the first public accessors `Bootstrap` exposes
-(Milestone 1's `Capabilities` client remains a private field used only by
-`Probe()`; see §2 Architecture). Each new accessor wraps the exact same
-`*grpc.ClientConn` Milestone 1 already dials and authenticates
-(REQ-OSAC-030/040/050/020 in `osac-sp.spec.md`). No new `ClientConn`, no new
-dial options, no new per-RPC credentials logic, no new configuration keys —
-see DD-020.
+Add one new **public** method to `internal/osac.Bootstrap` — `Conn()
+*grpc.ClientConn` — the first public accessor `Bootstrap` exposes (Milestone
+1's `Capabilities` client remains a private field used only by `Probe()`; see
+§2 Architecture). It returns the exact same `*grpc.ClientConn` Milestone 1
+already dials and authenticates (REQ-OSAC-030/040/050/020 in
+`osac-sp.spec.md`). No new `ClientConn`, no new dial options, no new per-RPC
+credentials logic, no new configuration keys — see DD-020.
+
+This milestone deliberately does **not** add per-service wrapper methods
+(e.g. no `ClustersClient()`). DD-020 documents why: it would be inventing a
+pattern with no precedent anywhere in the evidence this project checked,
+including the upstream project that defines these exact generated types.
 
 Out of scope: any HTTP handler, business logic, or REST endpoint consuming
-these clients (Milestones 3–4); pagination/field-mapping/error-translation
-logic for the eventual CRUD handlers; anything involving `Events`,
-`HostTypes`, or `InstanceTypes` (Topic 4.1 out-of-scope note).
+`Conn()` (Milestones 3–4, which construct
+`publicv1.NewClustersClient(bootstrap.Conn())` etc. directly at the call
+site); pagination/field-mapping/error-translation logic for the eventual CRUD
+handlers; anything involving `Events`, `HostTypes`, or `InstanceTypes`
+(Topic 4.1 out-of-scope note).
 
 #### Requirements
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-GRPC-010 | `internal/osac.Bootstrap` MUST expose `ClustersClient() publicv1.ClustersClient`, `ComputeInstancesClient() publicv1.ComputeInstancesClient`, `SubnetsClient() publicv1.SubnetsClient`, and `VirtualNetworksClient() publicv1.VirtualNetworksClient` — verified directly against M1's generated output: every file under `internal/osacpb/osac/public/v1/` declares `package publicv1` (see e.g. `capabilities_service.pb.go`'s `// source: osac/public/v1/capabilities_service.proto` header and its `package publicv1` line), a single flat Go package for the whole proto directory, not one package per service. The four new files land in that same `publicv1` package alongside the existing `Capabilities`/`authn_capabilities` types — there are no per-service sub-packages (e.g. no `clusterspb`) to import separately | MUST | |
-| REQ-GRPC-020 | Each accessor MUST construct its client from the same `*grpc.ClientConn` field already used by the existing `Capabilities` client — no accessor MUST dial a new connection, apply different TLS/insecure credentials, or bypass the existing bearer-token `PerRPCCredentials` | MUST | DD-020 |
-| REQ-GRPC-030 | Each new client type MUST be able to complete a real gRPC call (full marshal/unmarshal round trip) against a running OSAC-compatible server using only the bootstrap already configured in Milestone 1 — no additional setup | MUST | |
+| REQ-GRPC-010 | `internal/osac.Bootstrap` MUST expose `Conn() *grpc.ClientConn`, returning the same connection field already used internally by the `Capabilities` client — MUST NOT dial a new connection, apply different TLS/insecure credentials, or bypass the existing bearer-token `PerRPCCredentials` | MUST | DD-020 |
+| REQ-GRPC-020 | Callers constructing a typed client from `Conn()` (e.g. `publicv1.NewClustersClient(bootstrap.Conn())`) MUST be able to complete a real gRPC call (full marshal/unmarshal round trip) against a running OSAC-compatible server using only the bootstrap already configured in Milestone 1 — no additional setup | MUST | |
 
 #### Configuration Introduced
 
@@ -198,28 +220,28 @@ None — reuses Milestone 1's `osac.fulfillmentAddress`, `osac.tlsEnabled`,
 
 #### Acceptance Criteria
 
-##### AC-GRPC-010: Accessors return correctly-typed, connection-sharing clients
+##### AC-GRPC-010: `Conn()` returns the exact shared, authenticated connection
 
-- **Validates:** REQ-GRPC-010, REQ-GRPC-020
+- **Validates:** REQ-GRPC-010
 - **Given** a `Bootstrap` constructed with a known `*grpc.ClientConn` (e.g. dialed against an in-test `bufconn.Listener`, per Milestone 1's existing test pattern)
-- **When** each of the four new accessor methods is called
-- **Then** each MUST return a non-nil client of the correct generated interface type
-- **And** issuing a call through any of them MUST reach the same `bufconn` server the existing `Capabilities` client reaches (proving no second connection is dialed)
+- **When** `Conn()` is called
+- **Then** it MUST return that exact `*grpc.ClientConn` value (pointer-identity or equivalent-behavior check)
+- **And** issuing a call through a client constructed from it (e.g. `publicv1.NewClustersClient(bootstrap.Conn())`) MUST reach the same `bufconn` server the existing internal `Capabilities` client reaches (proving no second connection is dialed)
 
-##### AC-GRPC-020: New clients round-trip real data, not just "no error"
-
-- **Validates:** REQ-GRPC-030
-- **Given** a fake `bufconn`-backed server implementing `List` for `Clusters`, `ComputeInstances`, `Subnets`, and `VirtualNetworks`, each returning a canned response with specific, known field values (e.g. a cluster with `id="c1"`, `status.state=CLUSTER_STATE_READY` — `status` is the nested `ClusterStatus` message, `state` its `ClusterState` enum field, per `cluster_type.proto`'s `Cluster`/`ClusterStatus` definitions)
-- **When** each new client's `List` method is called
-- **Then** the decoded response's fields MUST equal the canned values exactly (not merely `len(results) > 0` or `err == nil`)
-
-##### AC-GRPC-030: New clients inherit the shared bearer-token interceptor
+##### AC-GRPC-020: Clients built from `Conn()` round-trip real data, not just "no error"
 
 - **Validates:** REQ-GRPC-020
+- **Given** a fake `bufconn`-backed server implementing `List` for `Clusters`, `ComputeInstances`, `Subnets`, and `VirtualNetworks`, each returning a canned response with specific, known field values (e.g. a cluster with `id="c1"`, `status.state=CLUSTER_STATE_READY` — `status` is the nested `ClusterStatus` message, `state` its `ClusterState` enum field, per `cluster_type.proto`'s `Cluster`/`ClusterStatus` definitions)
+- **When** `publicv1.NewClustersClient(bootstrap.Conn())` (and the analogous constructor for each of the other three) is used to call `List`
+- **Then** the decoded response's fields MUST equal the canned values exactly (not merely `len(results) > 0` or `err == nil`)
+
+##### AC-GRPC-030: Clients built from `Conn()` inherit the shared bearer-token interceptor
+
+- **Validates:** REQ-GRPC-010
 - **Given** the bootstrap holds a known cached token value (e.g. `"tok-xyz"`)
 - **And** the fake `bufconn` server records the `authorization` gRPC metadata it receives per call
-- **When** a call is made via `ClustersClient()` (representative of all four)
-- **Then** the recorded metadata MUST equal exactly `"Bearer tok-xyz"` — the same value/format Milestone 1 already proved the `Capabilities` client sends, confirming the new clients are not bypassing it
+- **When** a call is made via `publicv1.NewClustersClient(bootstrap.Conn())` (representative of all four)
+- **Then** the recorded metadata MUST equal exactly `"Bearer tok-xyz"` — the same value/format Milestone 1 already proved the `Capabilities` client sends, confirming clients built from `Conn()` are not bypassing it
 
 #### Dependencies
 
@@ -292,27 +314,54 @@ vendor `events_service.proto`/`event_type.proto`,
 
 **Related requirements:** REQ-PROTO-010
 
-### DD-020: Reuse the single shared `ClientConn` — no per-service dial/auth logic
+### DD-020: Expose the raw shared `ClientConn` via `Conn()` — no per-service wrapper methods
 
-**Decision:** The four new accessor methods construct their generated
-clients from the exact same `*grpc.ClientConn` Milestone 1's `Bootstrap`
-already holds — not new connections, and not new TLS/auth construction.
+**Decision:** `Bootstrap` exposes exactly one new public method, `Conn()
+*grpc.ClientConn`, returning the exact same connection Milestone 1's
+`Bootstrap` already holds. Milestone 3/4 handler code constructs each typed
+client directly at its call site (`publicv1.NewClustersClient(bootstrap.Conn())`,
+etc.) — `Bootstrap` does **not** grow a named wrapper method per OSAC service
+(no `ClustersClient()`, `ComputeInstancesClient()`, and so on).
 
-**Rationale:** gRPC's `ClientConn` is designed to back multiple generated
-service clients against the same server address, and OSAC's fulfillment
-service exposes `Clusters`, `ComputeInstances`, `Subnets`,
+**Rationale — sharing one connection:** gRPC's `ClientConn` is designed to
+back multiple generated service clients against the same server address, and
+OSAC's fulfillment service exposes `Clusters`, `ComputeInstances`, `Subnets`,
 `VirtualNetworks`, and `Capabilities` from a single gRPC endpoint
 (`fulfillmentAddress`) — there is exactly one connection to make regardless
-of how many service clients sit on top of it. Duplicating dial/TLS/backoff
-construction per service would risk a new client silently missing the
-bearer-token interceptor if the duplication drifted from Milestone 1's
-implementation — the same class of hallucination risk this project has
-already hit twice on OIDC discovery (`osac-sp.spec.md` DD-060). Sharing one
-`ClientConn` also means this milestone introduces zero new configuration
-keys: `fulfillmentAddress`, `tlsEnabled`, and `tlsCertFile` are already
-loaded by Milestone 1's `internal/config`.
+of how many service clients sit on top of it. Sharing one `ClientConn` also
+means this milestone introduces zero new configuration keys:
+`fulfillmentAddress`, `tlsEnabled`, and `tlsCertFile` are already loaded by
+Milestone 1's `internal/config`.
 
-**Related requirements:** REQ-GRPC-010, REQ-GRPC-020, REQ-GRPC-030
+**Rationale — no per-service wrapper methods, revised from an earlier draft
+of this spec:** An earlier draft of this decision had `Bootstrap` expose four
+named accessor methods instead. Checking for ecosystem precedent before
+finalizing it turned up a unanimous counter-example. Every one of the ~40
+call sites across `osac-project/fulfillment-service`'s own CLI
+(`internal/cmd/cli/{create,get,describe,console}/...`) that needs a typed
+client from this exact `publicv1` package constructs it inline —
+`publicv1.NewClustersClient(conn)`, `publicv1.NewComputeInstancesClient(conn)`,
+`publicv1.NewSubnetsClient(conn)`, `publicv1.NewVirtualNetworksClient(conn)`,
+and a dozen others — from a connection already held by the calling code, with
+no wrapper type exposing one named method per service anywhere in that
+project. The two DCM sibling SPs facing the same "one shared client, many
+resource kinds" shape agree: `k8s-container-service-provider`'s
+`internal/kubernetes.NewClient` returns the stock `client-go`
+`kubernetes.Interface` untouched, and callers use `client-go`'s own
+`client.AppsV1().Deployments(ns)`-style accessors; `acm-cluster-service-provider`'s
+`internal/cluster/dispatcher.New` takes the raw `sigs.k8s.io/controller-runtime/pkg/client.Client`
+interface directly, with no per-resource wrapper. (The remaining sibling,
+`kubevirt-service-provider`, wraps a single resource type in business-verb
+methods — not directly comparable, since it never faced the "one client,
+many independent service types" question this milestone does.) Building a
+custom per-service wrapper here would have been introducing a pattern with
+no precedent anywhere checked, including the upstream project that defines
+these exact generated types — the same category of unforced, unverified
+invention this project has already corrected twice on OIDC discovery
+(`osac-sp.spec.md` DD-060) and once already in this milestone's own package
+naming (see this spec's commit history).
+
+**Related requirements:** REQ-GRPC-010, REQ-GRPC-020
 
 ---
 
@@ -382,5 +431,5 @@ vendoring rationale.
 | Prefix | Topic | Count |
 |--------|-------|-------|
 | REQ-PROTO-NNN | 4.1: Proto Vendoring & Codegen | 6 |
-| REQ-GRPC-NNN | 4.2: Generated Client Accessors | 3 |
-| **Total** | | **9** |
+| REQ-GRPC-NNN | 4.2: Shared Connection Accessor | 2 |
+| **Total** | | **8** |

@@ -140,17 +140,20 @@ same classification Milestone 1 already used for the equivalent
 No corresponding `osac-sp-integration.test-plan.md` section is needed for
 this milestone.
 
+Milestone 2 exposes one new method, `Bootstrap.Conn() *grpc.ClientConn` — no
+per-service wrapper methods (see DD-020 in the M2 spec for the ecosystem
+precedent behind that choice). Tests construct each typed client directly
+from `Conn()` via `publicv1.NewXClient(...)`, matching how Milestones 3/4's
+handler code will call it.
+
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-100 | `ClustersClient()` shares the existing connection | REQ-GRPC-010, REQ-GRPC-020, AC-GRPC-010 | Construct `Bootstrap` with a known `*grpc.ClientConn` dialed against an in-test `bufconn.Listener` (same pattern as TC-U-019); call `ClustersClient()`; assert it returns a non-nil `Clusters` client and that a call through it reaches the same `bufconn` listener the `Capabilities` client already reaches — no second connection is dialed. |
-| TC-U-101 | `ComputeInstancesClient()` shares the existing connection | REQ-GRPC-010, REQ-GRPC-020, AC-GRPC-010 | Same pattern as TC-U-100 for `ComputeInstancesClient()`. |
-| TC-U-102 | `SubnetsClient()` shares the existing connection | REQ-GRPC-010, REQ-GRPC-020, AC-GRPC-010 | Same pattern as TC-U-100 for `SubnetsClient()`. |
-| TC-U-103 | `VirtualNetworksClient()` shares the existing connection | REQ-GRPC-010, REQ-GRPC-020, AC-GRPC-010 | Same pattern as TC-U-100 for `VirtualNetworksClient()`. |
-| TC-U-104 | `Clusters.List` round-trips real data | REQ-GRPC-030, AC-GRPC-020 | Fake `bufconn` server's `Clusters.List` handler returns a canned response containing a cluster with `id="c1"`, `status.state=CLUSTER_STATE_READY` (`status` is the nested `ClusterStatus` message; `state` its enum field); call `ClustersClient().List(ctx, ...)`; assert the decoded response's entry equals those exact field values, not merely `len(results) > 0`. |
-| TC-U-105 | `ComputeInstances.List` round-trips real data | REQ-GRPC-030, AC-GRPC-020 | Same pattern as TC-U-104 for `ComputeInstancesClient().List`, with a compute instance carrying known `id`/`status` values. |
-| TC-U-106 | `Subnets.List` round-trips real data | REQ-GRPC-030, AC-GRPC-020 | Same pattern as TC-U-104 for `SubnetsClient().List`, with a subnet carrying a known `id`/state. |
-| TC-U-107 | `VirtualNetworks.List` round-trips real data | REQ-GRPC-030, AC-GRPC-020 | Same pattern as TC-U-104 for `VirtualNetworksClient().List`, with a virtual network carrying a known `id`. |
-| TC-U-108 | New clients inherit the shared bearer-token interceptor | REQ-GRPC-020, AC-GRPC-030 | Seed the bootstrap with a known cached token (`"tok-xyz"`); fake `bufconn` server's `Clusters.List` handler records the `authorization` gRPC metadata it receives; call `ClustersClient().List(...)`; assert the recorded metadata equals exactly `"Bearer tok-xyz"` — the same value/format already proved for the `Capabilities` client in Milestone 1. |
+| TC-U-100 | `Conn()` returns the exact shared, authenticated connection | REQ-GRPC-010, AC-GRPC-010 | Construct `Bootstrap` with a known `*grpc.ClientConn` dialed against an in-test `bufconn.Listener` (same pattern as TC-U-019); call `Conn()`; assert it returns that exact connection value and that a call made via `publicv1.NewClustersClient(bootstrap.Conn())` reaches the same `bufconn` listener the existing internal `Capabilities` client already reaches — no second connection is dialed. |
+| TC-U-101 | `Clusters.List` round-trips real data via `Conn()` | REQ-GRPC-020, AC-GRPC-020 | Fake `bufconn` server's `Clusters.List` handler returns a canned response containing a cluster with `id="c1"`, `status.state=CLUSTER_STATE_READY` (`status` is the nested `ClusterStatus` message; `state` its enum field); call `publicv1.NewClustersClient(bootstrap.Conn()).List(ctx, ...)`; assert the decoded response's entry equals those exact field values, not merely `len(results) > 0`. |
+| TC-U-102 | `ComputeInstances.List` round-trips real data via `Conn()` | REQ-GRPC-020, AC-GRPC-020 | Same pattern as TC-U-101 for `publicv1.NewComputeInstancesClient(bootstrap.Conn()).List`, with a compute instance carrying known `id`/`status` values. |
+| TC-U-103 | `Subnets.List` round-trips real data via `Conn()` | REQ-GRPC-020, AC-GRPC-020 | Same pattern as TC-U-101 for `publicv1.NewSubnetsClient(bootstrap.Conn()).List`, with a subnet carrying a known `id`/state. |
+| TC-U-104 | `VirtualNetworks.List` round-trips real data via `Conn()` | REQ-GRPC-020, AC-GRPC-020 | Same pattern as TC-U-101 for `publicv1.NewVirtualNetworksClient(bootstrap.Conn()).List`, with a virtual network carrying a known `id`. |
+| TC-U-105 | Clients built from `Conn()` inherit the shared bearer-token interceptor | REQ-GRPC-010, AC-GRPC-030 | Seed the bootstrap with a known cached token (`"tok-xyz"`); fake `bufconn` server's `Clusters.List` handler records the `authorization` gRPC metadata it receives; call `publicv1.NewClustersClient(bootstrap.Conn()).List(...)`; assert the recorded metadata equals exactly `"Bearer tok-xyz"` — the same value/format already proved for the `Capabilities` client in Milestone 1. |
 
 ---
 
@@ -165,4 +168,4 @@ this milestone.
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |
 | 5.2 Configuration Management | 2 | 2 | 4 (TC-U-001..004) | Full unit coverage. |
 | M2 4.1 Proto Vendoring & Codegen | 6 | 3 | (verified via `make check-generate-proto` in CI + file diff against the pinned commit, not a Ginkgo spec) | See `osac-sp-m2-grpc-client-generation.spec.md`. |
-| M2 4.2 Generated Client Accessors | 3 | 3 | 9 (TC-U-100..108) | Full unit coverage. |
+| M2 4.2 Shared Connection Accessor | 2 | 3 | 6 (TC-U-100..105) | Full unit coverage. |
