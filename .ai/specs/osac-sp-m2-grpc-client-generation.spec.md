@@ -53,8 +53,14 @@ stubs, and (b) four new typed accessor methods on the existing
 ## 2. Architecture
 
 Extends Milestone 1's `internal/osac.Bootstrap` component — no other
-component changes. The single `ClientConn` established in Milestone 1 now
-backs five typed clients instead of one:
+component changes. Milestone 1 never exposed a public accessor for its one
+client: the `Capabilities` client is a private `capClient` field, constructed
+once in `Bootstrap.Start()` and used only internally by `Probe()` — there was
+no reason to export it since M1 has no business logic that calls OSAC
+directly. Milestone 2 introduces the **first public typed-accessor methods**
+on `Bootstrap` (future Milestone 3–4 HTTP handlers need to call these
+directly), all four backed by the exact same private `*grpc.ClientConn`
+Milestone 1 already dials — no new connection, no new dial options:
 
 ```
 +------------------------------------------------------------------+
@@ -64,14 +70,19 @@ backs five typed clients instead of one:
 |          |                                        |                |
 |          +--------- PerRPCCredentials ------------+                |
 |                                                    |                |
-|          +----------------+----------------+------+------+-----+  |
-|          |                |                |             |     |  |
-|          v                v                v             v     v  |
-|   Capabilities()   ClustersClient()  ComputeInstances  Subnets  VirtualNetworks
-|      (M1)               (M2)           Client() (M2)  Client()  Client()
-|                                                          (M2)     (M2)
+|                        (private, M1)   +----------+----------+-----+-----+
+|                        capClient       |          |          |           |
+|                     (used by Probe())  v          v          v           v
+|                              ClustersClient()  ComputeInstancesClient()  |
+|                                  (public, M2)      (public, M2)          |
+|                              SubnetsClient()  VirtualNetworksClient()    |
+|                                  (public, M2)      (public, M2)          |
 +------------------------------------------------------------------+
 ```
+
+All five client types (`Capabilities` plus the four new ones) are generated
+into the same `internal/osacpb/osac/public/v1` Go package (`publicv1`, per
+M1's `buf.gen.yaml`) — see REQ-GRPC-010's note on package naming.
 
 No new inbound wiring (HTTP routes, registration payloads) changes in this
 milestone.
@@ -115,7 +126,7 @@ enhancement's own Node Sizing / VM Sizing resolutions — see DD-010).
 |----|-------------|----------|-------|
 | REQ-PROTO-010 | The SP MUST vendor the following files from `osac-project/fulfillment-service` at commit `73ae26e8cb0a476d4b035b18776603f60a361ed9` (the same commit already pinned for Milestone 1): `clusters_service.proto`, `cluster_type.proto`, `compute_instances_service.proto`, `compute_instance_type.proto`, `subnets_service.proto`, `subnet_type.proto`, `virtual_networks_service.proto`, `virtual_network_type.proto`, `metadata_type.proto`, `condition_status_type.proto` | MUST | DD-010 |
 | REQ-PROTO-020 | Vendored files MUST be copied byte-for-byte verbatim from the pinned commit (same discipline as Milestone 1) | MUST | |
-| REQ-PROTO-030 | `proto/README.md` MUST be updated to list every newly vendored file under the same "pinned to this exact commit" convention established in Milestone 1 | MUST | |
+| REQ-PROTO-030 | `proto/README.md` MUST be updated to list every newly vendored file under the same "pinned to this exact commit" convention established in Milestone 1, and MUST correct (not merely append to) Milestone 1's forward-looking "Milestone 2 replaces this..." paragraph, which is stale in three ways per direct comparison against this spec — see SC-M2-002 | MUST | SC-M2-002 |
 | REQ-PROTO-040 | `buf.yaml`'s `deps` MUST include `buf.build/bufbuild/protovalidate`, required transitively by `metadata_type.proto`'s `buf/validate/validate.proto` import | MUST | SC-M2-001 |
 | REQ-PROTO-050 | `make generate-proto` MUST regenerate Go client and message stubs for `Clusters`, `ComputeInstances`, `Subnets`, and `VirtualNetworks` into `internal/osacpb/osac/public/v1/`, without altering the previously-generated `Capabilities`/`authn_capabilities` output (regeneration MUST be idempotent for unrelated files) | MUST | |
 | REQ-PROTO-060 | `make check-generate-proto` MUST pass in CI after this milestone's vendored files and generated code are committed (extends the existing CI check — no new workflow needed) | MUST | |
@@ -157,12 +168,15 @@ Depends on Milestone 1's `buf.yaml`/`buf.gen.yaml` pipeline.
 
 #### Overview
 
-Extend `internal/osac.Bootstrap` with four new typed accessor methods —
+Add four new **public** typed accessor methods to `internal/osac.Bootstrap` —
 `ClustersClient()`, `ComputeInstancesClient()`, `SubnetsClient()`,
-`VirtualNetworksClient()` — each wrapping the exact same `*grpc.ClientConn`
-Milestone 1 already dials and authenticates (REQ-OSAC-030/040/050/020 in
-`osac-sp.spec.md`). No new `ClientConn`, no new dial options, no new
-per-RPC credentials logic, no new configuration keys — see DD-020.
+`VirtualNetworksClient()` — the first public accessors `Bootstrap` exposes
+(Milestone 1's `Capabilities` client remains a private field used only by
+`Probe()`; see §2 Architecture). Each new accessor wraps the exact same
+`*grpc.ClientConn` Milestone 1 already dials and authenticates
+(REQ-OSAC-030/040/050/020 in `osac-sp.spec.md`). No new `ClientConn`, no new
+dial options, no new per-RPC credentials logic, no new configuration keys —
+see DD-020.
 
 Out of scope: any HTTP handler, business logic, or REST endpoint consuming
 these clients (Milestones 3–4); pagination/field-mapping/error-translation
@@ -173,7 +187,7 @@ logic for the eventual CRUD handlers; anything involving `Events`,
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-GRPC-010 | `internal/osac.Bootstrap` MUST expose `ClustersClient() clusterspb.ClustersClient`, `ComputeInstancesClient() computeinstancespb.ComputeInstancesClient`, `SubnetsClient() subnetspb.SubnetsClient`, and `VirtualNetworksClient() virtualnetworkspb.VirtualNetworksClient` (package names indicative — exact generated package names depend on `buf.gen.yaml`'s `go_package_prefix`, matching the existing `internal/osacpb/osac/public/v1` layout) | MUST | |
+| REQ-GRPC-010 | `internal/osac.Bootstrap` MUST expose `ClustersClient() publicv1.ClustersClient`, `ComputeInstancesClient() publicv1.ComputeInstancesClient`, `SubnetsClient() publicv1.SubnetsClient`, and `VirtualNetworksClient() publicv1.VirtualNetworksClient` — verified directly against M1's generated output: every file under `internal/osacpb/osac/public/v1/` declares `package publicv1` (see e.g. `capabilities_service.pb.go`'s `// source: osac/public/v1/capabilities_service.proto` header and its `package publicv1` line), a single flat Go package for the whole proto directory, not one package per service. The four new files land in that same `publicv1` package alongside the existing `Capabilities`/`authn_capabilities` types — there are no per-service sub-packages (e.g. no `clusterspb`) to import separately | MUST | |
 | REQ-GRPC-020 | Each accessor MUST construct its client from the same `*grpc.ClientConn` field already used by the existing `Capabilities` client — no accessor MUST dial a new connection, apply different TLS/insecure credentials, or bypass the existing bearer-token `PerRPCCredentials` | MUST | DD-020 |
 | REQ-GRPC-030 | Each new client type MUST be able to complete a real gRPC call (full marshal/unmarshal round trip) against a running OSAC-compatible server using only the bootstrap already configured in Milestone 1 — no additional setup | MUST | |
 
@@ -195,7 +209,7 @@ None — reuses Milestone 1's `osac.fulfillmentAddress`, `osac.tlsEnabled`,
 ##### AC-GRPC-020: New clients round-trip real data, not just "no error"
 
 - **Validates:** REQ-GRPC-030
-- **Given** a fake `bufconn`-backed server implementing `List` for `Clusters`, `ComputeInstances`, `Subnets`, and `VirtualNetworks`, each returning a canned response with specific, known field values (e.g. a cluster with `id="c1"`, `status=CLUSTER_STATE_READY`)
+- **Given** a fake `bufconn`-backed server implementing `List` for `Clusters`, `ComputeInstances`, `Subnets`, and `VirtualNetworks`, each returning a canned response with specific, known field values (e.g. a cluster with `id="c1"`, `status.state=CLUSTER_STATE_READY` — `status` is the nested `ClusterStatus` message, `state` its `ClusterState` enum field, per `cluster_type.proto`'s `Cluster`/`ClusterStatus` definitions)
 - **When** each new client's `List` method is called
 - **Then** the decoded response's fields MUST equal the canned values exactly (not merely `len(results) > 0` or `err == nil`)
 
@@ -324,6 +338,42 @@ running `make generate-proto` and checking whether `go build ./...` /
 `go mod tidy` succeed without a `managed.disable` addition before assuming
 one is needed; add the exclusion (mirroring the `googleapis` entry) only if
 generation actually produces a broken import.
+
+### SC-M2-002: Milestone 1's `proto/README.md` forward-reference is stale against this spec in three ways — must be corrected, not appended to
+
+**Related requirements:** REQ-PROTO-030
+
+Milestone 1's `proto/README.md` (in `feat/milestone-1-scaffold`, not yet on
+`main`) ends with a forward-looking paragraph written before this spec
+existed: *"Milestone 2 replaces this with the full proto set
+(`clusters_service.proto`, `compute_instances_service.proto`,
+`subnet_type.proto`, `virtual_network_type.proto`, `events_service.proto`)
+... at that point, re-evaluate whether `fulfillment-service`'s BSR module has
+been published and switch to a real `deps:` reference instead of vendoring."*
+Verified directly against that text while drafting this spec — it is
+inaccurate in three ways an implementer must not just leave in place:
+
+1. **"Replaces" is wrong.** This spec's REQ-PROTO-010 vendors 10 *additional*
+   files; the two Milestone 1 files (`capabilities_service.proto`,
+   `authn_capabilities_type.proto`) stay vendored, since `Capabilities` is
+   still used by the health check's connectivity probe (Milestone 1 DD-020).
+2. **Incomplete file list.** It names the `*_type.proto` files for
+   Subnets/VirtualNetworks but omits the corresponding `*_service.proto`
+   files (`subnets_service.proto`, `virtual_networks_service.proto`) —
+   REQ-PROTO-010 vendors both.
+3. **`events_service.proto` is explicitly out of scope here** (DD-010) — the
+   Milestone 1 author's assumption that M2 would need it did not hold up
+   once the enhancement's own Status Polling section was checked directly.
+
+The "re-evaluate BSR/`deps:`" idea is a legitimate open question this spec
+does **not** resolve — REQ-PROTO-020 continues Milestone 1's byte-for-byte
+vendoring discipline without re-checking whether
+`buf.build/osac-project/public-api` has since had commits pushed. Whoever
+implements Milestone 2 should do that check (`buf build
+buf.build/osac-project/public-api` or equivalent) before writing the updated
+`proto/README.md`, and note the outcome either way — don't silently
+perpetuate an unverified assumption from Milestone 1 into Milestone 2's own
+vendoring rationale.
 
 ---
 
