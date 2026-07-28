@@ -39,6 +39,7 @@ bin/
 .ai/*
 !.ai/specs/
 !.ai/test-plans/
+!.ai/decisions/
 
 # Cursor MCP config contains machine-specific absolute paths; keep rules/skills shared
 .cursor/*
