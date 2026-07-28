@@ -136,6 +136,6 @@ TC-I scope).
 | 4.1 HTTP Server | 10 | 10 | 4 (TC-U-070..073) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
 | 4.2 OSAC Client Bootstrap | 11 | 14 | 16 (TC-U-010..025) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
 | 4.3 Health Service | 9 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
-| 4.4 SP Registration (`control-plane`) | 11 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
+| 4.4 SP Registration (`control-plane`) | 10 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |
 | 5.2 Configuration Management | 2 | 2 | 4 (TC-U-001..004) | Full unit coverage. |

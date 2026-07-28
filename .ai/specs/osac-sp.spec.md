@@ -546,7 +546,6 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 | REQ-REG-070 | Registration MUST retry with exponential backoff on retryable failures (connection errors, 5xx) | MUST | |
 | REQ-REG-090 | Non-retryable 4xx responses, including `409 Conflict` (name or provider ID already in use — no per-service-type carve-out under `control-plane`), MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-050 |
 | REQ-REG-100 | Registration MUST be idempotent: periodic re-registration updates/refreshes the entry (by `name`) rather than duplicating it. Unlike `environment-agent`, `control-plane`'s `Provider` row has no lease/TTL to expire, so periodic re-registration is not required to retain the slot — it remains valuable only to keep capability metadata (REQ-REG-040) fresh across restarts/upgrades | MUST | DD-050 |
-| REQ-REG-110 | The SP MUST use `control-plane`'s generated client library (`github.com/dcm-project/control-plane/pkg/sp/client/provider`) for registration, depended on via a pinned Go module commit SHA (pseudo-version) rather than a tagged release, since `control-plane` has none either | MUST | DD-050 |
 | REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential. `control-plane`'s provider API declares `security: bearerAuth` as of [`control-plane#24`](https://github.com/dcm-project/control-plane/pull/24), but that check is currently a no-op (`AUTH_DISABLED=true` by default) and `control-plane` sends no bearer token to SPs either — sending none here remains correct behavior today, but is a known, tracked production-auth gap rather than a permanent guarantee (see DD-050's Authentication Gap paragraph) | MUST | DD-050 |
 
 #### Configuration Introduced
@@ -637,13 +636,6 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 - **Given** the SP was previously registered for both service types
 - **When** the SP restarts and re-registers
 - **Then** the existing registrations MUST be updated (not duplicated)
-
-##### AC-REG-090: Registration client library
-
-- **Validates:** REQ-REG-110
-- **Given** the registration subsystem is implemented
-- **When** a registration request is sent
-- **Then** it MUST use `github.com/dcm-project/control-plane/pkg/sp/client/provider`, imported via a `go.mod` entry pinned to a specific commit SHA (pseudo-version)
 
 ##### AC-REG-095: No authentication on registration requests
 
@@ -965,8 +957,7 @@ philosophy (a fake was always the plan; only what it fakes has changed).
 which flattens to sibling JSON keys alongside `region_code`/`zone`/`status`/
 `resources` on marshal). See REQ-REG-040.
 
-**Related requirements:** REQ-REG-040, REQ-REG-090, REQ-REG-100, REQ-REG-110,
-REQ-REG-115
+**Related requirements:** REQ-REG-040, REQ-REG-090, REQ-REG-100, REQ-REG-115
 
 ### DD-060: Resolve the OIDC token endpoint via discovery, not by treating the issuer URL as the token endpoint
 
@@ -1064,7 +1055,7 @@ sentence originally attributed to `environment-agent`, now confirmed against
 | REQ-HTTP-NNN | 4.1: HTTP Server | 10 |
 | REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 11 |
 | REQ-HLT-NNN | 4.3: Health Service | 9 |
-| REQ-REG-NNN | 4.4: SP Registration (`control-plane`) | 11 |
+| REQ-REG-NNN | 4.4: SP Registration (`control-plane`) | 10 |
 | REQ-XC-LOG-NNN | 5.1: Logging | 2 |
 | REQ-XC-CFG-NNN | 5.2: Configuration Management | 2 |
-| **Total** | | **45** |
+| **Total** | | **44** |

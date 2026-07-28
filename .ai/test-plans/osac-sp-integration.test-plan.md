@@ -106,5 +106,5 @@ see DD-050) rather than faking a live instance.
 | 4.1 HTTP Server | 10 | 10 | 6 (TC-I-001..006) | Lifecycle/signal-handling ACs not practical to unit test are covered here. |
 | 4.2 OSAC Client Bootstrap | 11 | 14 | 2 dedicated (TC-I-015, TC-I-017) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). |
 | 4.3 Health Service | 9 | 10 | 8 (TC-I-010..017) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement. |
-| 4.4 SP Registration (`control-plane`) | 11 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake HTTP server implementing `control-plane`'s current (implemented server-side) SP API contract. |
+| 4.4 SP Registration (`control-plane`) | 10 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake HTTP server implementing `control-plane`'s current (implemented server-side) SP API contract. |
 | Full-stack | - | - | 1 (TC-I-030) | Cross-cutting cold-start smoke test. |
