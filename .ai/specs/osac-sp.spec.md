@@ -20,8 +20,8 @@ own spec additions.
 
 **Version scope (Milestone 1):**
 
-- HTTP server foundation (chi-based), following the same middleware chain
-  pattern as sibling SPs (recovery → request logging → request timeout)
+- HTTP server foundation, following the same middleware chain pattern as
+  sibling SPs (recovery → request logging → request timeout)
 - OIDC client-credentials bootstrap against OSAC's Keycloak and a gRPC
   connection to OSAC's fulfillment service, sufficient to back a real health
   check (full CRUD-service gRPC stub generation is Milestone 2)
@@ -68,7 +68,7 @@ own spec additions.
 |                                                                          |
 |  +-------------+  +----------------+  +------------------------------+  |
 |  | HTTP Server |--| Health Handler |--| OSAC Client Bootstrap         |  |
-|  | (chi)       |  | (cluster + vm  |  | - OIDC token source (OAuth2   |  |
+|  | (router)    |  | (cluster + vm  |  | - OIDC token source (OAuth2   |  |
 |  |             |  | health, DD-010)|  |   client-credentials, issuer   |  |
 |  +------+------+  +----------------+  |   discovery + token endpoint) |  |
 |         |                             | - gRPC ClientConn + auth      |  |
@@ -121,10 +121,10 @@ respective prerequisites.
 
 #### Overview
 
-Foundation layer: chi-based HTTP server with graceful shutdown, signal
-handling, configuration loading from environment variables. Route
-registration for this milestone is limited to the health endpoint; later
-milestones add cluster/VM routes generated from the OpenAPI spec.
+Foundation layer: HTTP server with graceful shutdown, signal handling,
+configuration loading from environment variables. Route registration for
+this milestone is limited to the health endpoint; later milestones add
+cluster/VM routes generated from the OpenAPI spec.
 
 Out of scope: TLS termination (handled by infrastructure/ingress),
 authentication/authorization middleware on the DCM-facing API, rate limiting.
