@@ -67,8 +67,8 @@ own spec additions.
 |                                                                          |
 |  +-------------+  +----------------+  +------------------------------+  |
 |  | HTTP Server |--| Health Handler |--| OSAC Client Bootstrap         |  |
-|  | (chi)       |  | (clusters/vms  |  | - OIDC token source (OAuth2   |  |
-|  |             |  |  /health)      |  |   client-credentials, issuer   |  |
+|  | (chi)       |  | (cluster + vm  |  | - OIDC token source (OAuth2   |  |
+|  |             |  | health, DD-010)|  |   client-credentials, issuer   |  |
 |  +------+------+  +----------------+  |   discovery + token endpoint) |  |
 |         |                             | - gRPC ClientConn + auth      |  |
 |  +------+------+                      |   interceptor (bearer token)  |  |
