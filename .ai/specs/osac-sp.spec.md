@@ -133,7 +133,8 @@ authentication/authorization middleware on the DCM-facing API, rate limiting.
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-HTTP-010 | The SP MUST start an HTTP server on the configured address | MUST | |
-| REQ-HTTP-020 | The SP MUST register `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health` | MUST | DD-010 |
+| REQ-HTTP-020 | The SP MUST register `GET /api/v1alpha1/clusters/health` | MUST | DD-010 |
+| REQ-HTTP-025 | The SP MUST register `GET /api/v1alpha1/vms/health` | MUST | DD-010 |
 | REQ-HTTP-030 | The SP MUST initiate graceful shutdown on SIGTERM: stop new connections, drain in-flight requests within configured timeout, exit cleanly | MUST | |
 | REQ-HTTP-040 | The SP MUST initiate graceful shutdown on SIGINT, behaving identically to REQ-HTTP-030 | MUST | |
 | REQ-HTTP-050 | The SP MUST load configuration values from environment variables | MUST | |
@@ -159,11 +160,18 @@ authentication/authorization middleware on the DCM-facing API, rate limiting.
 - **When** the SP starts
 - **Then** the HTTP server MUST begin listening on the configured address
 
-##### AC-HTTP-020: Health route registration
+##### AC-HTTP-020: Cluster health route registration
 
 - **Validates:** REQ-HTTP-020
 - **Given** the HTTP server has started
-- **When** a GET request is made to `/api/v1alpha1/clusters/health` or `/api/v1alpha1/vms/health`
+- **When** a GET request is made to `/api/v1alpha1/clusters/health`
+- **Then** the request MUST be routed to the health handler
+
+##### AC-HTTP-025: VM health route registration
+
+- **Validates:** REQ-HTTP-025
+- **Given** the HTTP server has started
+- **When** a GET request is made to `/api/v1alpha1/vms/health`
 - **Then** the request MUST be routed to the health handler
 
 ##### AC-HTTP-030: Graceful shutdown on SIGTERM
@@ -776,7 +784,7 @@ running code, and confirms the identical convention directly:
 This decision needed no change for the Phase 1 pivot (DD-050); if anything,
 it is now verified against running code rather than an unimplemented spec.
 
-**Related requirements:** REQ-HTTP-020, REQ-HLT-010, REQ-HLT-015
+**Related requirements:** REQ-HTTP-020, REQ-HTTP-025, REQ-HLT-010, REQ-HLT-015
 
 ### DD-020: Minimal `Capabilities`-only gRPC client for Milestone 1
 
@@ -1068,10 +1076,10 @@ sentence originally attributed to `environment-agent`, now confirmed against
 
 | Prefix | Topic | Count |
 |--------|-------|-------|
-| REQ-HTTP-NNN | 4.1: HTTP Server | 9 |
+| REQ-HTTP-NNN | 4.1: HTTP Server | 10 |
 | REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 10 |
 | REQ-HLT-NNN | 4.3: Health Service | 8 |
 | REQ-REG-NNN | 4.4: SP Registration (`control-plane`) | 12 |
 | REQ-XC-LOG-NNN | 5.1: Logging | 2 |
 | REQ-XC-CFG-NNN | 5.2: Configuration Management | 2 |
-| **Total** | | **43** |
+| **Total** | | **44** |
