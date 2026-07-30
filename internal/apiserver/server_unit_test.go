@@ -78,8 +78,8 @@ func startServer(cfg *config.Config, logger *slog.Logger, handler oapigen.Server
 var _ = Describe("Server middleware", func() {
 	discardLogger := slog.New(slog.DiscardHandler)
 
-	// TC-U-070: panic in a handler returns an RFC 7807 INTERNAL response.
-	It("converts a handler panic into an RFC 7807 INTERNAL response (TC-U-070)", func() {
+	// TC-U-070: panic in a handler returns an RFC 9457 INTERNAL response.
+	It("converts a handler panic into an RFC 9457 INTERNAL response (TC-U-070)", func() {
 		handler := &fakeServerInterface{getHealth: func(_ http.ResponseWriter, _ *http.Request) {
 			panic("boom")
 		}}
@@ -96,6 +96,8 @@ var _ = Describe("Server middleware", func() {
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 		Expect(body.Type).To(Equal(v1alpha1.INTERNAL))
+		Expect(string(body.Type)).To(Equal("https://dcm-project.github.io/problems/internal"),
+			"type must be the RFC 9457 project-controlled URI, not a bare code")
 
 		// TC-U-073 (adapted): recovery is outermost / robust — the server
 		// keeps serving normally after recovering from a panic.
@@ -198,6 +200,8 @@ var _ = Describe("Server middleware", func() {
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 		Expect(body.Type).To(Equal(v1alpha1.INTERNAL))
+		Expect(string(body.Type)).To(Equal("https://dcm-project.github.io/problems/internal"),
+			"type must be the RFC 9457 project-controlled URI, not a bare code")
 
 		// If recovery were not outermost, the panic could instead be
 		// observed by requestLoggingMiddleware's post-ServeHTTP Info()

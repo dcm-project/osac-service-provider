@@ -80,7 +80,7 @@ There are two health endpoints (not one) because `control-plane`'s
 `healthcheck.Monitor` health-checks each independently-registered provider at
 `{provider.endpoint}/health` (see DD-010 in `.ai/specs/osac-sp.spec.md`).
 
-All error responses use RFC 7807 Problem Details (`application/problem+json`).
+All error responses use RFC 9457 Problem Details (`application/problem+json`).
 
 ## Architecture
 
@@ -126,7 +126,7 @@ Generated files (do not edit manually):
 | `internal/osac/` | `Bootstrap` — OIDC client-credentials token source + gRPC `ClientConn` to the fulfillment service; exposes `TokenStatus()` and `Probe()` for the health check |
 | `internal/health/` | Health check handler implementing `StrictServerInterface` |
 | `internal/registration/` | `Registrar` — async self-registration with `control-plane` (two independent service types: cluster, vm); exponential backoff on retryable failures, immediate stop on non-retryable 4xx (including 409), periodic re-registration to refresh capability metadata on success |
-| `internal/httperror/` | RFC 7807 `application/problem+json` response writing |
+| `internal/httperror/` | RFC 9457 `application/problem+json` response writing |
 | `internal/util/` | Generic helpers (e.g., `Ptr[T]`) |
 | `internal/osacpb/` | **Generated** — OSAC `Capabilities` gRPC client (DD-020) |
 | `internal/api/server/` | **Generated** — Chi router and `StrictServerInterface` |
@@ -134,7 +134,7 @@ Generated files (do not edit manually):
 ### Key patterns
 
 - **Strict server interface**: oapi-codegen generates a `StrictServerInterface` with typed request/response objects. Handlers implement this interface — no manual HTTP parsing.
-- **RFC 7807 errors**: all error responses use Problem Details format. `type` is declared as `format: uri-reference` per RFC 7807, but — matching the established convention in `k8s-container-service-provider` and `acm-cluster-service-provider` — its enum values are bare short codes (e.g. `INTERNAL`, `INVALID_ARGUMENT`), not real URIs.
+- **RFC 9457 errors**: all error responses use Problem Details format (RFC 9457 obsoletes RFC 7807). `type` values are project-controlled URIs under `https://dcm-project.github.io/problems/*` (e.g. `.../internal`, `.../invalid-argument`), matching the ecosystem-wide RFC 9457 migration ([FLPATH-4719](https://redhat.atlassian.net/browse/FLPATH-4719), see DD-070 in `.ai/decisions/osac-sp.decisions.md`) — not the bare short codes (`INTERNAL`, `INVALID_ARGUMENT`) this repo originally used.
 - **Fail-fast config**: `internal/config.Load()` returns an error immediately if any required env var is missing/empty, before any subsystem starts.
 - **Non-blocking bootstrap**: neither the OIDC token loop nor gRPC dial ever block HTTP server startup or crash the process on failure — both retry indefinitely with backoff.
 - **Independent registration loops**: cluster and vm registration succeed/fail/retry completely independently of each other.

@@ -9,7 +9,7 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/util"
 )
 
-// WriteResponse writes an RFC 7807 application/problem+json error response.
+// WriteResponse writes an RFC 9457 application/problem+json error response.
 //
 // Implements REQ-HTTP-070.
 func WriteResponse(w http.ResponseWriter, logger *slog.Logger, statusCode int, errType v1alpha1.ErrorType, title, detail string, instance *string) {

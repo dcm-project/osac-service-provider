@@ -1,4 +1,4 @@
-// Package httperror provides constants for RFC 7807 Problem Details error responses.
+// Package httperror provides constants for RFC 9457 Problem Details error responses.
 package httperror
 
 const (
