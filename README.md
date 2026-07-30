@@ -7,9 +7,11 @@ clusters and VMs by translating agent-routed requests into OSAC fulfillment
 service gRPC API calls, and reports status changes back via the messaging
 system.
 
-**Status:** repo scaffolded, implementation not started. See
+**Status:** Milestone 1 (scaffold + registration + health) implemented,
+pending review. See
 [#1](https://github.com/dcm-project/osac-service-provider/issues/1) for the
-full implementation plan before writing any code.
+full implementation plan and milestone breakdown, and `CLAUDE.md` for the
+current architecture.
 
 ## Design
 
