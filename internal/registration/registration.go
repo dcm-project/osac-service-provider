@@ -110,6 +110,15 @@ func NewRegistrar(cfg *config.Config, logger *slog.Logger, opts ...Option) (*Reg
 		opt(r)
 	}
 
+	// Coverage exception (documented, not tested): as of this client's
+	// current generated implementation, NewClient stores cfg.DCM.RegistrationURL
+	// as-is (no parsing) and WithHTTPClient never returns an error, so no
+	// input reachable from this codebase can make this branch fire today.
+	// Kept as defensive error handling against a future client-generation
+	// change (e.g. base-URL validation) rather than fabricating a failing
+	// fake purely to hit it, per this suite's "test real production
+	// types" convention (see .ai/test-plans/osac-sp-unit.test-plan.md,
+	// section 4's coverage note).
 	client, err := cpclient.NewClientWithResponses(cfg.DCM.RegistrationURL, cpclient.WithHTTPClient(r.httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating control-plane client: %w", err)

@@ -115,6 +115,9 @@ TC-I scope).
 | TC-U-057 | Cluster failure does not affect VM registration | REQ-REG-060, AC-REG-040 | Fake round-tripper returns `500` for every `cluster` call and `201` for the first `vm` call; assert `vm`'s state reaches `registered` regardless of `cluster`'s ongoing retries. |
 | TC-U-058 | Idempotent re-registration reuses same name | REQ-REG-100, AC-REG-080 | Call the registration path twice (simulating a restart); assert both calls send the same `name`/`service_type` pair (no suffix/uniqueness token appended) so `control-plane`'s idempotency-on-`name` behavior is preserved. |
 | TC-U-059 | No Authorization header on registration requests | REQ-REG-115, AC-REG-095 | Trigger both registration calls; inspect the requests recorded by the fake round-tripper; assert neither request has an `Authorization` header set. |
+| TC-U-060 | Backoff growth is capped at `maxBackoff` | REQ-REG-070 | Configure a small `initialBackoff`/`maxBackoff` (e.g. 1ms/4ms); fake round-tripper fails 8 consecutive times then succeeds; assert total elapsed time until success is bounded consistently with a *capped* geometric sum (well under what an uncapped doubling sequence over 8 retries would require), proving the cap actually bounds retry growth rather than merely being computed and discarded. |
+
+**Coverage note:** `NewRegistrar`'s `cpclient.NewClientWithResponses` error-wrap branch ([registration.go:113-116](../../internal/registration/registration.go)) is not exercised by any TC here — it is currently unreachable given `control-plane`'s generated client: `NewClient` stores the server string as-is (no parsing) and `WithHTTPClient` never returns an error, so no input this code can construct causes that branch to fire. Documented as an accepted coverage exception in the client code rather than tested with a fabricated failing fake, consistent with this suite's "test real production types" convention.
 
 ---
 
@@ -126,6 +129,88 @@ TC-I scope).
 | TC-U-071 | Request logging captures method/path/status/duration | REQ-HTTP-060, AC-HTTP-060 | Inject a test log handler capturing structured attributes; send a `GET /api/v1alpha1/clusters/health` request; assert the captured log record has `method == "GET"`, `path == "/api/v1alpha1/clusters/health"`, `status` equal to the actual response status code, and a `duration` attribute present with a non-negative value. |
 | TC-U-072 | Request timeout cancels context | REQ-HTTP-090, AC-HTTP-090 | Configure `requestTimeout=10ms`; register a handler that sleeps 100ms and then checks `ctx.Err()`; assert the handler observes `context.DeadlineExceeded` (not nil). |
 | TC-U-073 | Recovery middleware is outermost | REQ-HTTP-070 | Register a second middleware that also panics; assert the outer recovery middleware still produces the RFC 9457 INTERNAL response rather than an unhandled panic escaping the test. |
+| TC-U-074 | `WithOnReady`'s callback fires exactly once, after real readiness | REQ-REG-050, AC-REG-030 | Register an `onReady` spy via `WithOnReady`; call `Run`; assert the spy was invoked exactly once, only after the readiness probe's first successful response. |
+| TC-U-075 | A panicking `onReady` callback is recovered; the server keeps serving | REQ-HTTP-070 (defensive robustness, same principle applied to internal callbacks) | `onReady` panics; assert `Run` does not crash/return early and a subsequent request against the running server still succeeds normally. |
+| TC-U-076 | A failed readiness probe skips `onReady` without stopping the server | REQ-REG-050 (negative case) | Cancel the context passed to `Run` immediately so `waitForReady` fails fast; assert the `onReady` spy was never invoked and `Run` returns without hanging. |
+| TC-U-077 | `waitForReady` succeeds once the server starts accepting connections | REQ-HTTP-030 | Real loopback listener with a running `Serve` goroutine; call `waitForReady` directly; assert it returns `nil` promptly. |
+| TC-U-078 | `waitForReady` returns an error when the server never becomes reachable | REQ-HTTP-030 (negative case) | Use `WithReadinessTiming` to shrink the timeout/interval to milliseconds; call `waitForReady` against an address nothing is listening on; assert it returns a non-nil timeout error. |
+| TC-U-079 | `waitForReady` returns the context's error when cancelled mid-poll | REQ-HTTP-030 (negative case) | Cancel the context shortly after calling `waitForReady` against an unreachable address; assert the returned error is (or wraps) `context.Canceled`. |
+| TC-U-080 | A genuine `Serve` error is surfaced as `Run`'s return error | REQ-HTTP-030 | Pass an already-closed `net.Listener` to `Run`; assert it returns a non-nil error (not silently swallowed like the expected `http.ErrServerClosed` case). |
+| TC-U-081 | A `Shutdown` that exceeds `ShutdownTimeout` is surfaced as `Run`'s return error | REQ-HTTP-040 | Configure a 1ms `ShutdownTimeout` with a handler still sleeping when `ctx` is cancelled; assert `Run` returns a non-nil error wrapping the shutdown deadline error. |
+| TC-U-082 | `newBadRequestHandler`/`NewRequestErrorHandler` writes an RFC 9457 `INVALID_ARGUMENT` response | REQ-HTTP-070 | Call the returned handler directly against an `httptest.ResponseRecorder`; assert status `400`, `Content-Type: application/problem+json`, decoded `type == v1alpha1.INVALIDARGUMENT`, and `instance` equals the request's exact URI. |
+| TC-U-083 | `NewResponseErrorHandler` writes an RFC 9457 `INTERNAL` response without leaking the error | REQ-HTTP-070 | Call the returned handler directly with a deliberately sensitive error value; assert the decoded body's `detail` equals the generic `httperror.InternalDetail` constant, never the raw error string. |
+| TC-U-084 | `requestInstance` returns `nil` for a `nil` request | REQ-HTTP-070 (defensive/nil-safety) | Call `requestInstance(nil)` directly; assert the result is `nil`. |
+| TC-U-085 | `statusRecordingResponseWriter.Unwrap` returns the original writer | REQ-HTTP-070 (net/http `http.ResponseController` compatibility) | Wrap a recorder, call `Unwrap()`; assert the returned value is the exact same recorder instance. |
+| TC-U-086 | `statusRecordingResponseWriter.Write` records status 200 when called without a preceding `WriteHeader` | REQ-HTTP-070 (net/http's documented implicit-200 behavior) | Call `Write` directly on a freshly constructed wrapper (no `WriteHeader` call first); assert the recorded `statusCode` is `200`. |
+| TC-U-087 | `http.ErrAbortHandler` is re-panicked, not converted into an RFC 9457 response | REQ-HTTP-070 (net/http `ErrAbortHandler` convention) | Handler panics with `http.ErrAbortHandler`; assert the client observes an aborted connection (not a well-formed response) and the server keeps serving subsequent requests normally. |
+| TC-U-088 | A panic after headers were already sent logs a warning instead of double-writing | REQ-HTTP-070 (negative case) | Handler calls `WriteHeader(200)` then panics; assert the client still receives the already-sent `200` (not rewritten to `500`) and a warning log records "headers already sent". |
+| TC-U-089 | `waitForReady` returns an error if the probe request itself cannot be constructed | REQ-HTTP-030 (negative case) | Call `waitForReady` with a deliberately malformed address (a raw control character, rejected by `net/url`); assert it returns a non-nil error mentioning "creating readiness probe request", rather than looping forever. |
+
+---
+
+## 6. `internal/httperror`
+
+Collaborator faked: an `http.ResponseWriter` whose `Write` deliberately
+returns an error, for TC-U-092 only — everything else uses a real
+`httptest.NewRecorder()`. This package's `WriteResponse` is already
+exercised indirectly through `internal/apiserver`'s TC-U-070/073 (a real
+panic response); the cases below test it directly and in isolation,
+including branches those indirect paths never reach (e.g. a `nil` instance,
+an encode failure).
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-U-090 | Writes exact status/headers/body fields | REQ-HTTP-070 | Call `WriteResponse` with concrete `errType`/`title`/`detail`/`instance` values; assert the recorder's status code, `Content-Type: application/problem+json` header, and every decoded body field equal those exact values. |
+| TC-U-091 | A `nil` instance is omitted from the encoded body | REQ-HTTP-070 | Call `WriteResponse` with `instance == nil`; assert the decoded body's `instance` field is absent/null, not an empty string. |
+| TC-U-092 | An encode failure is logged, not panicked | REQ-HTTP-070 (defensive robustness) | Inject a fake `http.ResponseWriter` whose `Write` always errors; call `WriteResponse`; assert it returns normally (no panic) and the injected logger recorded an error-level entry. |
+
+---
+
+## 7. `internal/util`
+
+`Ptr[T]` has no independent business requirement of its own — it exists so
+OpenAPI-generated pointer-typed struct fields (used throughout
+`internal/httperror` and the generated `api/v1alpha1` types to distinguish
+"absent" from "zero value") have one tested, safe way to take an address.
+Covered here once, directly, rather than re-verified indirectly everywhere
+it's called.
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-U-093 | Returns a pointer that dereferences to the input, for multiple types | N/A (generic language-level helper, no REQ) | Call `Ptr(v)` for a `string`, an `int`, and a struct value; assert `*Ptr(v) == v` in each case, and that two separate calls with equal values return distinct addresses (a real pointer, not a shared/cached one). |
+
+---
+
+## 8. `cmd/osac-service-provider`
+
+Prior to this addition, this package had unit-level coverage only for
+`run`'s happy-path wiring indirectly via `main_integration_test.go` (see
+`osac-sp-integration.test-plan.md`); its top-level error-wrapping branches
+and `mainRun`'s exit-code mapping were untested. Cases below call `run`/
+`mainRun` directly and in-process — no real OSAC/Keycloak/control-plane
+fakes needed, since each case fails before reaching those collaborators.
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-U-094 | `run` wraps and returns a config-load failure | REQ-XC-CFG-020 | Leave a required env var unset; call `run` directly; assert it returns a non-nil error mentioning "initializing" and does not attempt to bind a listener. |
+| TC-U-095 | `run` wraps and returns a listener-bind failure | REQ-HTTP-030 (negative case) | Set `SP_SERVER_ADDRESS` to an address already bound by a test-held listener; call `run`; assert it returns a non-nil error mentioning "listening". |
+| TC-U-096 | `run` wraps and returns an OSAC bootstrap construction failure | REQ-OSAC-040 (negative case) | Set `SP_OSAC_TLS_ENABLED=true` and `SP_OSAC_TLS_CERT_FILE` to a nonexistent path; call `run`; assert it returns a non-nil error mentioning "creating OSAC client bootstrap". |
+| TC-U-097 | `mainRun` returns exit code `1` when `run` fails | REQ-XC-CFG-020 | Leave a required env var unset (same trigger as TC-U-094); call `mainRun` directly; assert it returns exactly `1`, in-process, without invoking `os.Exit`. |
+
+**Coverage exceptions (documented in-code, not tested):**
+- `main()`'s single `os.Exit(mainRun())` statement — observing it would
+  require a subprocess/exec harness this repo doesn't have, since calling it
+  in-process terminates the test binary itself.
+- `mainRun`'s happy path — the `signal.NotifyContext(...)` call through its
+  final `return 0` — whose effect (graceful shutdown on cancellation) is
+  already fully proven by `main_integration_test.go`'s TC-I-003/004 via
+  direct `ctx` cancellation against `run` directly; unit-testing `mainRun`
+  itself reaching `return 0` would require delivering a real OS signal to
+  the test process, precisely what that design avoids.
+- `run`'s `registration.NewRegistrar` error-wrap branch — transitively
+  unreachable for the same reason as `NewRegistrar`'s own documented
+  exception (section 4's coverage note): no input reachable from this
+  codebase can make `NewRegistrar` return a non-nil error today.
 
 ---
 
@@ -161,11 +246,14 @@ handler code will call it.
 
 | Spec Section | REQ Count | AC Count | TC Count (this file) | Notes |
 |---|---|---|---|---|
-| 4.1 HTTP Server | 9 | 9 | 4 (TC-U-070..073) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
-| 4.2 OSAC Client Bootstrap | 10 | 14 | 16 (TC-U-010..025) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
-| 4.3 Health Service | 8 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
-| 4.4 SP Registration (`control-plane`) | 10 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
+| 4.1 HTTP Server | 10 | 10 | 20 (TC-U-070..089) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
+| 4.2 OSAC Client Bootstrap | 11 | 14 | 16 (TC-U-010..025) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
+| 4.3 Health Service | 9 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
+| 4.4 SP Registration (`control-plane`) | 10 | 10 | 11 (TC-U-050..060) | Full unit coverage of payload/backoff/independence logic (one branch documented as currently unreachable given `control-plane`'s client — see section 4's coverage note); live-server wiring is TC-I scope. |
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |
 | 5.2 Configuration Management | 2 | 2 | 4 (TC-U-001..004) | Full unit coverage. |
 | M2 4.1 Proto Vendoring & Codegen | 6 | 3 | (verified via `make check-generate-proto` in CI + file diff against the pinned commit, not a Ginkgo spec) | See `osac-sp-m2-grpc-client-generation.spec.md`. |
 | M2 4.2 Shared Connection Accessor | 2 | 3 | 6 (TC-U-100..105) | Full unit coverage. |
+| N/A `internal/httperror` (cross-cutting, REQ-HTTP-070) | 0 (no dedicated section; implements REQ-HTTP-070) | 0 | 3 (TC-U-090..092) | Direct/isolated coverage of the RFC 9457 response writer shared by all error paths above. |
+| N/A `internal/util` (generic helper, no REQ) | 0 | 0 | 1 (TC-U-093) | Coverage-completeness only. |
+| N/A `cmd/osac-service-provider` unit-level (REQ-XC-CFG-020, REQ-HTTP-030, REQ-OSAC-040) | 0 (no dedicated section; covers existing REQs at a new layer) | 0 | 4 (TC-U-094..097) | `run`/`mainRun`'s own error-wrapping branches, not previously unit-tested (only integration-tested via the happy path). Two lines remain a documented, in-code exception — see section 8. |
