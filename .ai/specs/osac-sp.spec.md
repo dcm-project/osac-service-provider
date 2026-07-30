@@ -140,7 +140,7 @@ authentication/authorization middleware on the DCM-facing API, rate limiting.
 | REQ-HTTP-040 | The SP MUST initiate graceful shutdown on SIGINT, behaving identically to REQ-HTTP-030 | MUST | |
 | REQ-HTTP-050 | The SP MUST load configuration values from environment variables | MUST | |
 | REQ-HTTP-060 | The SP MUST log each HTTP request at INFO level including method, path, response status code, and duration | MUST | |
-| REQ-HTTP-070 | The SP MUST catch panics in HTTP handlers and return an RFC 7807 INTERNAL error response. Recovery middleware MUST be applied as the outermost middleware layer | MUST | |
+| REQ-HTTP-070 | The SP MUST catch panics in HTTP handlers and return an RFC 9457 error response with `type=https://dcm-project.github.io/problems/internal`. Recovery middleware MUST be applied as the outermost middleware layer | MUST | DD-070 |
 | REQ-HTTP-080 | The SP MUST log server lifecycle events including listen address on startup | MUST | |
 | REQ-HTTP-090 | The SP SHOULD enforce a configurable per-request timeout, cancelling the request context after the deadline | SHOULD | |
 
@@ -210,7 +210,7 @@ authentication/authorization middleware on the DCM-facing API, rate limiting.
 - **Validates:** REQ-HTTP-070
 - **Given** a handler panics during request processing
 - **When** the panic is caught
-- **Then** the response MUST be HTTP 500 with RFC 7807 body (type=INTERNAL)
+- **Then** the response MUST be HTTP 500 with RFC 9457 body (`type=https://dcm-project.github.io/problems/internal`)
 - **And** the panic and stack trace MUST be logged at ERROR level
 
 ##### AC-HTTP-080: Lifecycle logging

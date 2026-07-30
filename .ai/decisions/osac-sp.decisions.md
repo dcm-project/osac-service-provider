@@ -305,3 +305,50 @@ must attempt both well-known paths, in order, before treating discovery as
 failed for that attempt.
 
 **Related requirements:** REQ-OSAC-010, REQ-OSAC-011, REQ-OSAC-012, REQ-OSAC-060
+
+---
+
+## DD-070: Error `type` URIs use RFC 9457 with project-controlled URIs, not bare short codes
+
+**Decision:** `Error.type` values are full, project-controlled URIs under
+`https://dcm-project.github.io/problems/*` (e.g.
+`https://dcm-project.github.io/problems/internal`), per RFC 9457 (*Problem
+Details for HTTP APIs*, which obsoletes RFC 7807). This replaces the bare
+short-code convention (`INTERNAL`, `INVALID_ARGUMENT`, etc.) this spec
+originally adopted to match `k8s-container-service-provider` and
+`acm-cluster-service-provider`.
+
+**Rationale:** this is a tracked, org-wide initiative, not a one-off ask —
+Jira epic [FLPATH-4719](https://redhat.atlassian.net/browse/FLPATH-4719)
+("Align existing repositories to use RFC 9457 instead of the now obsolete
+RFC 7807") was opened off audit
+[FLPATH-4722](https://redhat.atlassian.net/browse/FLPATH-4722), which found
+both sibling SPs cited above still on RFC 7807. Migration tasks exist for
+`k8s-container-service-provider`
+([FLPATH-4720](https://redhat.atlassian.net/browse/FLPATH-4720), in
+progress), `acm-cluster-service-provider`
+([FLPATH-4721](https://redhat.atlassian.net/browse/FLPATH-4721), in code
+review as
+[acm-cluster-service-provider#33](https://github.com/dcm-project/acm-cluster-service-provider/pull/33)),
+and `control-plane` / `kubevirt-service-provider` /
+`k8s-network-service-provider` / `cnpg-database-service-provider`
+(FLPATH-4728..4731, not started). No OSAC SP-specific ticket exists yet, but
+since this milestone hasn't merged, there's no reason to ship on the
+now-superseded convention and immediately need a follow-up migration.
+
+`acm-cluster-service-provider#33` (open, unmerged as of this decision) is
+the concrete technical reference for the target shape:
+`https://dcm-project.github.io/problems/{slug}` — a real, project-owned
+GitHub Pages domain — replacing both this SP's bare-code convention and the
+placeholder `dcm.example.com` domain ACM/k8s-container used as an
+intermediate step (an IANA-reserved example domain per RFC 2606, never
+project-controlled).
+
+**Consequence:** this SP has no CRUD endpoints yet (Milestone 1), so the
+blast radius is small — only `REQ-HTTP-070`/`AC-HTTP-070` (panic recovery)
+reference a concrete `type` value today. Handlers reference the generated Go
+constants (`v1alpha1.INTERNAL`, etc.) symbolically rather than the
+underlying string literal, so only `api/v1alpha1/openapi.yaml`'s enum
+values (and regenerated code) change — no handler logic changes.
+
+**Related requirements:** REQ-HTTP-070

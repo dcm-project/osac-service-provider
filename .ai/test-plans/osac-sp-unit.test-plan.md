@@ -122,10 +122,10 @@ TC-I scope).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-070 | Panic in handler returns RFC 7807 INTERNAL | REQ-HTTP-070, AC-HTTP-070 | Register a handler that panics with a string value; send a request via `httptest`; assert response status `== 500`, `Content-Type == "application/problem+json"`, and the decoded body's `type` field equals exactly `"INTERNAL"`. |
+| TC-U-070 | Panic in handler returns RFC 9457 INTERNAL | REQ-HTTP-070, AC-HTTP-070 | Register a handler that panics with a string value; send a request via `httptest`; assert response status `== 500`, `Content-Type == "application/problem+json"`, and the decoded body's `type` field equals exactly `"https://dcm-project.github.io/problems/internal"`. |
 | TC-U-071 | Request logging captures method/path/status/duration | REQ-HTTP-060, AC-HTTP-060 | Inject a test log handler capturing structured attributes; send a `GET /api/v1alpha1/clusters/health` request; assert the captured log record has `method == "GET"`, `path == "/api/v1alpha1/clusters/health"`, `status` equal to the actual response status code, and a `duration` attribute present with a non-negative value. |
 | TC-U-072 | Request timeout cancels context | REQ-HTTP-090, AC-HTTP-090 | Configure `requestTimeout=10ms`; register a handler that sleeps 100ms and then checks `ctx.Err()`; assert the handler observes `context.DeadlineExceeded` (not nil). |
-| TC-U-073 | Recovery middleware is outermost | REQ-HTTP-070 | Register a second middleware that also panics; assert the outer recovery middleware still produces the RFC 7807 INTERNAL response rather than an unhandled panic escaping the test. |
+| TC-U-073 | Recovery middleware is outermost | REQ-HTTP-070 | Register a second middleware that also panics; assert the outer recovery middleware still produces the RFC 9457 INTERNAL response rather than an unhandled panic escaping the test. |
 
 ---
 
