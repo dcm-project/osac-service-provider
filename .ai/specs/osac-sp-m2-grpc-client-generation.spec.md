@@ -145,7 +145,7 @@ enhancement's own Node Sizing / VM Sizing resolutions — see DD-010).
 | REQ-PROTO-010 | The SP MUST vendor the following files from `osac-project/fulfillment-service` at commit `73ae26e8cb0a476d4b035b18776603f60a361ed9` (the same commit already pinned for Milestone 1): `clusters_service.proto`, `cluster_type.proto`, `compute_instances_service.proto`, `compute_instance_type.proto`, `subnets_service.proto`, `subnet_type.proto`, `virtual_networks_service.proto`, `virtual_network_type.proto`, `metadata_type.proto`, `condition_status_type.proto` | MUST | DD-010 |
 | REQ-PROTO-020 | Vendored files MUST be copied byte-for-byte verbatim from the pinned commit (same discipline as Milestone 1) | MUST | |
 | REQ-PROTO-030 | `proto/README.md` MUST be updated to list every newly vendored file under the same "pinned to this exact commit" convention established in Milestone 1, and MUST correct (not merely append to) Milestone 1's forward-looking "Milestone 2 replaces this..." paragraph, which is stale in three ways per direct comparison against this spec — see SC-M2-002 | MUST | SC-M2-002 |
-| REQ-PROTO-040 | `buf.yaml`'s `deps` MUST include `buf.build/bufbuild/protovalidate`, required transitively by `metadata_type.proto`'s `buf/validate/validate.proto` import | MUST | SC-M2-001 |
+| REQ-PROTO-040 | `buf.yaml`'s `deps` MUST include `buf.build/bufbuild/protovalidate`, required transitively by `metadata_type.proto`'s `buf/validate/validate.proto` import; `buf.gen.yaml`'s `managed.disable` MUST also exclude this module, confirmed necessary (not conditional) by SC-M2-001 | MUST | SC-M2-001 |
 | REQ-PROTO-050 | `make generate-proto` MUST regenerate Go client and message stubs for `Clusters`, `ComputeInstances`, `Subnets`, and `VirtualNetworks` into `internal/osacpb/osac/public/v1/`, without altering the previously-generated `Capabilities`/`authn_capabilities` output (regeneration MUST be idempotent for unrelated files) | MUST | |
 | REQ-PROTO-060 | `make check-generate-proto` MUST pass in CI after this milestone's vendored files and generated code are committed (extends the existing CI check — no new workflow needed) | MUST | |
 
@@ -367,26 +367,38 @@ package naming (see this spec's commit history).
 
 ## 8. Spec Clarifications
 
-### SC-M2-001: `protovalidate`'s effect on `buf.gen.yaml`'s `managed.disable` list is unverified — confirm at implementation time
+### SC-M2-001: `protovalidate` requires a `managed.disable` entry — confirmed via spike
 
 **Related requirements:** REQ-PROTO-040
 
-Milestone 1 needed a `managed.disable` entry for `buf.build/googleapis/googleapis`
-in `buf.gen.yaml` to stop the `go_package_prefix` override from rewriting
-`google/api/*.proto`'s Go package to one this repo never generates (see the
-`go mod tidy` failure documented in Milestone 1's implementation notes).
-`metadata_type.proto` (newly vendored here) imports
-`buf/validate/validate.proto`, which requires adding
-`buf.build/bufbuild/protovalidate` as a `buf.yaml` dependency (REQ-PROTO-040)
-— but whether that dependency's generated/resolved Go package needs the same
-`managed.disable` treatment is **not yet verified**, since `protovalidate`'s
-file is consumed primarily as message-option extensions (field constraints)
-rather than as a service with its own generated client, and buf's handling
-of option-only imports may differ from `googleapis`'s handling. Confirm by
-running `make generate-proto` and checking whether `go build ./...` /
-`go mod tidy` succeed without a `managed.disable` addition before assuming
-one is needed; add the exclusion (mirroring the `googleapis` entry) only if
-generation actually produces a broken import.
+Confirmed by spike (2026-07-30): vendored the real 10 files from the pinned
+commit into a scratch `buf.yaml`/`buf.gen.yaml` mirroring this repo's exact
+config, added `buf.build/bufbuild/protovalidate` to `deps:`, and ran
+`buf generate`. Without a `managed.disable` entry for it,
+`metadata_type.pb.go`'s import for `buf/validate/validate.proto` is rewritten
+to the broken, self-referential
+`github.com/dcm-project/osac-service-provider/internal/osacpb/buf/validate` (a
+package this repo never generates) — the same failure mode Milestone 1's
+`googleapis` entry already exists to prevent. Adding
+`- module: buf.build/bufbuild/protovalidate` to `buf.gen.yaml`'s
+`managed.disable` list fixes it: the import resolves to
+`buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate`,
+independently confirmed correct against protovalidate's own [Go
+quickstart](https://protovalidate.com/quickstart-go/) and
+`protovalidate-go`'s published `go.mod` (both cite this exact package), and
+verified resolvable via `go get`. Both the bare `module:` form (matching this
+repo's existing `googleapis` entry) and the quickstart's more explicit
+`file_option: go_package` + `module:` form were spiked and produce identical
+output — either is correct; use the bare form for consistency with the
+existing entry. **REQ-PROTO-040 updated to require this unconditionally, not
+conditionally.**
+
+Note: M2 only needs the generated message-option *types* to compile (the
+`buf.validate.field` annotations baked into descriptors) — it does **not**
+need `go get buf.build/go/protovalidate` (the runtime validator library),
+since no code in this milestone's scope calls `protovalidate.Validate()`.
+That only becomes relevant once a future milestone validates incoming
+resource specs.
 
 ### SC-M2-002: Milestone 1's `proto/README.md` forward-reference is stale against this spec in three ways — must be corrected, not appended to
 
@@ -414,15 +426,41 @@ inaccurate in three ways an implementer must not just leave in place:
    Milestone 1 author's assumption that M2 would need it did not hold up
    once the enhancement's own Status Polling section was checked directly.
 
-The "re-evaluate BSR/`deps:`" idea is a legitimate open question this spec
-does **not** resolve — REQ-PROTO-020 continues Milestone 1's byte-for-byte
-vendoring discipline without re-checking whether
-`buf.build/osac-project/public-api` has since had commits pushed. Whoever
-implements Milestone 2 should do that check (`buf build
-buf.build/osac-project/public-api` or equivalent) before writing the updated
-`proto/README.md`, and note the outcome either way — don't silently
-perpetuate an unverified assumption from Milestone 1 into Milestone 2's own
-vendoring rationale.
+**Vendoring vs. `deps:` (resolved):** `buf build buf.build/osac-project/public-api`
+(no label) returns `repository has no commits in the default label main` —
+but that only checks the `main` label. `fulfillment-service`'s
+`publish-proto.yaml` workflow pushes on every tagged release
+(`buf push --label "${{ github.ref_name }}"`), never to `main`. Checking a
+real tag label instead (`buf build buf.build/osac-project/public-api:v0.0.79`)
+succeeds, and `buf ls-files` at that label lists all of this milestone's
+target files. The module is also confirmed publicly readable with zero
+authentication (verified in a clean environment with no `buf login`/token).
+Byte-for-byte vendoring (REQ-PROTO-020) is kept anyway, deliberately: pinning
+to an explicit commit gives this SP controlled, reviewed adoption of upstream
+interface changes rather than exposure to unreviewed regressions from a
+floating live dependency. Revisit if vendoring's manual-sync cost grows.
+
+### SC-M2-003: no new test seam needed — build the connection via the real `dialOptions` + grpc-go's dialer-injection pattern, assign directly
+
+**Related requirements:** REQ-GRPC-010, REQ-GRPC-020, REQ-GRPC-030
+
+`bootstrap_unit_test.go` is `package osac` (white-box), so no public `Option`
+is needed to inject a test connection — `Conn()` is the only new production
+code this milestone adds. `Conn()` returns a concrete `*grpc.ClientConn`, so
+neither of Milestone 1's two existing unit-test patterns applies directly:
+the `Capabilities` fake satisfies an interface (no wire), and the
+integration test deliberately avoids `bufconn` to keep `osac.New()`'s dial
+path injection-free. Resolution, confirmed by a passing spike (10/10 runs,
+`-race`, 2026-07-31): TC-U-100..105 call the real, unexported
+`dialOptions(cfg, &bearerCreds{b: b})` directly — genuinely exercising the
+bearer-token interceptor per REQ-GRPC-030, not stubbing it out — then append
+`grpc.WithContextDialer(...)` pointing at a `bufconn.Listener` (the standard
+grpc-go pattern, per `grpc-go/test/bufconn`'s own documented usage), dial via
+`grpc.NewClient("passthrough:///bufnet", opts...)`, and assign the result
+directly to a `newBootstrap(...)`-constructed `Bootstrap`'s unexported `conn`
+field. The spike proved a real fake server behind this exact chain received
+`authorization: Bearer <token>` with an exact match, confirming the
+mechanism end-to-end before any `TC-U-100..105` implementation exists.
 
 ---
 
