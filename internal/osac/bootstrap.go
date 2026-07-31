@@ -414,6 +414,16 @@ func (b *Bootstrap) Probe(ctx context.Context) ProbeResult {
 	return ProbeResult{Connected: true}
 }
 
+// Conn returns the shared, authenticated gRPC connection to OSAC's
+// fulfillment service. Callers construct typed clients directly from it
+// (e.g. publicv1.NewClustersClient(bootstrap.Conn())) — see DD-020. This is
+// the exact same connection the internal Capabilities client already uses;
+// Conn() does not dial a second connection or apply different credentials
+// (REQ-GRPC-010).
+func (b *Bootstrap) Conn() *grpc.ClientConn {
+	return b.conn
+}
+
 // Close releases the underlying gRPC connection.
 func (b *Bootstrap) Close() error {
 	if b.conn != nil {
