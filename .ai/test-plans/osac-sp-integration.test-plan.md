@@ -29,7 +29,7 @@ registration server, real signal-triggered shutdown timing) — not just
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-I-001 | Server starts and listens on configured address | REQ-HTTP-010, AC-HTTP-010 | Start the SP with `SP_SERVER_ADDRESS=127.0.0.1:0` (OS-assigned port) and all other required config pointed at fakes; assert a TCP dial to the resolved address succeeds within a short deadline. |
-| TC-I-002 | Both health routes are reachable end-to-end | REQ-HTTP-020, AC-HTTP-020 | With the server running, issue a real `GET /api/v1alpha1/clusters/health` and a real `GET /api/v1alpha1/vms/health` over HTTP; assert response status `200` for both. |
+| TC-I-002 | Both health routes are reachable end-to-end | REQ-HTTP-020, REQ-HTTP-025, AC-HTTP-020, AC-HTTP-025 | With the server running, issue a real `GET /api/v1alpha1/clusters/health` and a real `GET /api/v1alpha1/vms/health` over HTTP; assert response status `200` for both. |
 | TC-I-003 | Graceful shutdown on SIGTERM drains in-flight request | REQ-HTTP-030, AC-HTTP-030 | Start the server with `shutdownTimeout=2s`; begin a request to a handler that sleeps 500ms; send SIGTERM to the process/goroutine group immediately after; assert the in-flight request still completes with its original response, and the server's listener is closed within `shutdownTimeout` of the signal. |
 | TC-I-004 | Graceful shutdown on SIGINT behaves identically | REQ-HTTP-040, AC-HTTP-040 | Same as TC-I-003 but sending SIGINT; assert identical drain/exit behavior. |
 | TC-I-005 | New connections rejected after shutdown begins | REQ-HTTP-030 | After triggering shutdown, attempt a new `GET /api/v1alpha1/clusters/health`; assert the connection is refused or the request fails (server no longer accepting new connections). |
@@ -41,7 +41,7 @@ registration server, real signal-triggered shutdown timing) — not just
 
 Test harness: an `httptest.Server` serving a real
 `.well-known/oauth-authorization-server` discovery document (RFC 8414 — the
-primary discovery path per REQ-OSAC-011/DD-060) plus a canned OAuth2
+primary discovery path per REQ-OSAC-011/REQ-OSAC-012/DD-060) plus a canned OAuth2
 token-endpoint response at the URL that document advertises (token requests
 sent directly to the issuer URL, bypassing discovery, MUST NOT succeed
 against this fake). The RFC 8414 -> OpenID Connect Discovery fallback
@@ -60,10 +60,10 @@ health/token-caching behavior below, and a real gRPC server bound via
 | TC-I-011 | Health reports unhealthy when Keycloak is down at startup | REQ-HLT-030, AC-HLT-025 | Fake Keycloak server is closed/unreachable from the start; fake `Capabilities/Get` succeeds; `GET /api/v1alpha1/clusters/health`; assert `status == "unhealthy"` while the HTTP status code is still `200`. |
 | TC-I-012 | Health reports unhealthy when OSAC gRPC is unreachable | REQ-HLT-030, AC-HLT-026 | Fake Keycloak succeeds; the `bufconn` gRPC server is not started (or closed); `GET /api/v1alpha1/clusters/health`; assert `status == "unhealthy"` with HTTP `200`. |
 | TC-I-013 | Health recovers after OSAC becomes reachable | REQ-HLT-060, AC-HLT-050 | Start with the gRPC server down (unhealthy, per TC-I-012); start the gRPC server; `GET /api/v1alpha1/clusters/health` again; assert `status == "healthy"` on this subsequent call, proving the probe is re-evaluated per request rather than cached. |
-| TC-I-014 | Health does not re-fetch token once cached, even under repeated polling | REQ-HLT-050, AC-HLT-040 | Fake Keycloak counts hits to its token endpoint (not its discovery endpoint); issue 10 consecutive `GET /api/v1alpha1/clusters/health` calls within the token's validity window; assert the token-endpoint hit counter equals exactly `1` (the initial fetch only). |
+| TC-I-014 | Health does not re-fetch token once cached, even under repeated polling | REQ-HLT-050, REQ-HLT-055, AC-HLT-040 | Fake Keycloak counts hits to its token endpoint (not its discovery endpoint); issue 10 consecutive `GET /api/v1alpha1/clusters/health` calls within the token's validity window; assert the token-endpoint hit counter equals exactly `1` (the initial fetch only). |
 | TC-I-015 | Health probe respects configured timeout | REQ-OSAC-080, AC-OSAC-081 | Configure `SP_OSAC_PROBE_TIMEOUT=200ms`; `bufconn` `Capabilities/Get` handler sleeps 1s before responding; `GET /api/v1alpha1/clusters/health`; assert the HTTP response returns within ~200-400ms (not ~1s+) and reports `status == "unhealthy"`. |
 | TC-I-016 | Both health paths agree end-to-end | REQ-HLT-015, AC-HLT-011 | With the SP in a fixed healthy or unhealthy state (fakes configured either way), call `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health`; assert both return the same `status` and HTTP code. |
-| TC-I-017 | Token fetch uses the discovered endpoint, not the configured issuer URL | REQ-OSAC-011, AC-OSAC-011 | Fake Keycloak's `oauth-authorization-server` discovery document advertises a token endpoint at a *different path* than the issuer URL itself; assert the recorded requests show the token POST landing on the discovered path, zero POSTs landing on the bare issuer URL, and zero requests to `.well-known/openid-configuration` (RFC 8414 succeeded, so the fallback was never exercised). |
+| TC-I-017 | Token fetch uses the discovered endpoint, not the configured issuer URL | REQ-OSAC-011, REQ-OSAC-012, AC-OSAC-011 | Fake Keycloak's `oauth-authorization-server` discovery document advertises a token endpoint at a *different path* than the issuer URL itself; assert the recorded requests show the token POST landing on the discovered path, zero POSTs landing on the bare issuer URL, and zero requests to `.well-known/openid-configuration` (RFC 8414 succeeded, so the fallback was never exercised). |
 
 ---
 
@@ -103,8 +103,8 @@ see DD-050) rather than faking a live instance.
 
 | Spec Section | REQ Count | AC Count | TC Count (this file) | Notes |
 |---|---|---|---|---|
-| 4.1 HTTP Server | 9 | 9 | 6 (TC-I-001..006) | Lifecycle/signal-handling ACs not practical to unit test are covered here. |
-| 4.2 OSAC Client Bootstrap | 10 | 14 | 2 dedicated (TC-I-015, TC-I-017) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). |
-| 4.3 Health Service | 8 | 10 | 8 (TC-I-010..017) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement. |
-| 4.4 SP Registration (`control-plane`) | 12 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake HTTP server implementing `control-plane`'s current (implemented server-side) SP API contract. |
+| 4.1 HTTP Server | 10 | 10 | 6 (TC-I-001..006) | Lifecycle/signal-handling ACs not practical to unit test are covered here. |
+| 4.2 OSAC Client Bootstrap | 11 | 14 | 2 dedicated (TC-I-015, TC-I-017) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). |
+| 4.3 Health Service | 9 | 10 | 8 (TC-I-010..017) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement. |
+| 4.4 SP Registration (`control-plane`) | 10 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake HTTP server implementing `control-plane`'s current (implemented server-side) SP API contract. |
 | Full-stack | - | - | 1 (TC-I-030) | Cross-cutting cold-start smoke test. |

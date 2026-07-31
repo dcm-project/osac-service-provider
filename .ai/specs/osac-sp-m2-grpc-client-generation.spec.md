@@ -5,7 +5,7 @@
 Milestone 2 per [issue #1](https://github.com/dcm-project/osac-service-provider/issues/1)'s
 suggested delivery milestones: extend the `buf`/`protoc` pipeline introduced
 in Milestone 1 (DD-020 in
-[`osac-sp.spec.md`](./osac-sp.spec.md#dd-020-minimal-capabilities-only-grpc-client-for-milestone-1))
+[`osac-sp.decisions.md`](../decisions/osac-sp.decisions.md#dd-020-minimal-capabilities-only-grpc-client-for-milestone-1))
 to vendor and generate Go client stubs for the OSAC services the SP will
 actually call once Cluster CRUD (Milestone 3), VM CRUD (Milestone 4), and
 default network provisioning (also Milestone 4) land:
@@ -48,7 +48,7 @@ etc.) directly at the point of use, matching the pattern established below.
 **Reference documents:**
 
 - [OSAC SP Enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md) — [Integration Points](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#integration-points), [Node Sizing](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#node-sizing), [VM Sizing](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#vm-sizing) (both cited in DD-010 below)
-- [Milestone 1 spec](./osac-sp.spec.md), specifically DD-020 (why only `Capabilities` was generated in M1) and the `internal/osac.Bootstrap` component it defines
+- [Milestone 1 spec](./osac-sp.spec.md) for the `internal/osac.Bootstrap` component this milestone extends, and its [Design Decisions](../decisions/osac-sp.decisions.md), specifically DD-020 (why only `Capabilities` was generated in M1)
 - [Implementation plan (issue #1)](https://github.com/dcm-project/osac-service-provider/issues/1)
 - OSAC public protos: [`osac-project/fulfillment-service/proto/public/osac/public/v1/`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1) — the specific service/RPC/import listings in this spec were read directly from this commit
 - `proto/README.md` (Milestone 1) — vendoring convention and pinned-commit rationale this milestone extends, not replaces
@@ -358,8 +358,8 @@ custom per-service wrapper here would have been introducing a pattern with
 no precedent anywhere checked, including the upstream project that defines
 these exact generated types — the same category of unforced, unverified
 invention this project has already corrected twice on OIDC discovery
-(`osac-sp.spec.md` DD-060) and once already in this milestone's own package
-naming (see this spec's commit history).
+(`osac-sp.decisions.md` DD-060) and once already in this milestone's own
+package naming (see this spec's commit history).
 
 **Related requirements:** REQ-GRPC-010, REQ-GRPC-020
 

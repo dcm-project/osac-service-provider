@@ -1,0 +1,48 @@
+name: Check Generated Files
+
+on:
+  pull_request:
+    branches: [main, 'release/v*']
+
+jobs:
+  check-api:
+    uses: dcm-project/shared-workflows/.github/workflows/check-generate.yaml@main
+
+  # buf-generated proto code isn't covered by the shared workflow yet — this
+  # repo is the first DCM service provider to consume a gRPC-generated
+  # client (DD-020), so check it locally until shared-workflows grows
+  # support (e.g. a configurable make target input like go-ci.yaml's
+  # post-test-targets).
+  check-proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check for relevant changes
+        uses: tj-actions/changed-files@v47
+        id: filter
+        with:
+          files: |
+            proto/**
+            buf.yaml
+            buf.gen.yaml
+
+      - name: Set up Go
+        if: steps.filter.outputs.any_changed == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install buf
+        if: steps.filter.outputs.any_changed == 'true'
+        uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      - name: Check generated proto files
+        if: steps.filter.outputs.any_changed == 'true'
+        run: make check-generate-proto
+
+      - name: Skip
+        if: steps.filter.outputs.any_changed == 'false'
+        run: echo "No proto changes, skipping generation check"
