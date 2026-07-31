@@ -213,8 +213,8 @@ var _ = Describe("Conn (shared gRPC connection accessor, Milestone 2 DD-020)", f
 		client := publicv1.NewClustersClient(fixture.bootstrap.Conn())
 		resp, err := client.List(context.Background(), &publicv1.ClustersListRequest{})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.Items).To(HaveLen(1))
-		Expect(resp.Items[0].Id).To(Equal("c1"))
+		Expect(resp.GetItems()).To(HaveLen(1))
+		Expect(resp.GetItems()[0].GetId()).To(Equal("c1"))
 	})
 
 	// TC-U-101 (AC-GRPC-020): Clusters.List round-trips real data via
@@ -229,11 +229,11 @@ var _ = Describe("Conn (shared gRPC connection accessor, Milestone 2 DD-020)", f
 		resp, err := client.List(context.Background(), &publicv1.ClustersListRequest{})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(resp.Size).To(Equal(int32(1)))
-		Expect(resp.Total).To(Equal(int32(1)))
-		Expect(resp.Items).To(HaveLen(1))
-		Expect(resp.Items[0].Id).To(Equal("c1"))
-		Expect(resp.Items[0].Status.State).To(Equal(publicv1.ClusterState_CLUSTER_STATE_READY))
+		Expect(resp.GetSize()).To(Equal(int32(1)))
+		Expect(resp.GetTotal()).To(Equal(int32(1)))
+		Expect(resp.GetItems()).To(HaveLen(1))
+		Expect(resp.GetItems()[0].GetId()).To(Equal("c1"))
+		Expect(resp.GetItems()[0].GetStatus().GetState()).To(Equal(publicv1.ClusterState_CLUSTER_STATE_READY))
 	})
 
 	// TC-U-102 (AC-GRPC-020): ComputeInstances.List round-trips real data
@@ -248,9 +248,9 @@ var _ = Describe("Conn (shared gRPC connection accessor, Milestone 2 DD-020)", f
 		resp, err := client.List(context.Background(), &publicv1.ComputeInstancesListRequest{})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(resp.Items).To(HaveLen(1))
-		Expect(resp.Items[0].Id).To(Equal("ci1"))
-		Expect(resp.Items[0].Status.State).To(Equal(publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING))
+		Expect(resp.GetItems()).To(HaveLen(1))
+		Expect(resp.GetItems()[0].GetId()).To(Equal("ci1"))
+		Expect(resp.GetItems()[0].GetStatus().GetState()).To(Equal(publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING))
 	})
 
 	// TC-U-103 (AC-GRPC-020): Subnets.List round-trips real data via
@@ -265,9 +265,9 @@ var _ = Describe("Conn (shared gRPC connection accessor, Milestone 2 DD-020)", f
 		resp, err := client.List(context.Background(), &publicv1.SubnetsListRequest{})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(resp.Items).To(HaveLen(1))
-		Expect(resp.Items[0].Id).To(Equal("sn1"))
-		Expect(resp.Items[0].Status.State).To(Equal(publicv1.SubnetState_SUBNET_STATE_READY))
+		Expect(resp.GetItems()).To(HaveLen(1))
+		Expect(resp.GetItems()[0].GetId()).To(Equal("sn1"))
+		Expect(resp.GetItems()[0].GetStatus().GetState()).To(Equal(publicv1.SubnetState_SUBNET_STATE_READY))
 	})
 
 	// TC-U-104 (AC-GRPC-020): VirtualNetworks.List round-trips real data
@@ -282,9 +282,9 @@ var _ = Describe("Conn (shared gRPC connection accessor, Milestone 2 DD-020)", f
 		resp, err := client.List(context.Background(), &publicv1.VirtualNetworksListRequest{})
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(resp.Items).To(HaveLen(1))
-		Expect(resp.Items[0].Id).To(Equal("vn1"))
-		Expect(resp.Items[0].Status.State).To(Equal(publicv1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY))
+		Expect(resp.GetItems()).To(HaveLen(1))
+		Expect(resp.GetItems()[0].GetId()).To(Equal("vn1"))
+		Expect(resp.GetItems()[0].GetStatus().GetState()).To(Equal(publicv1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY))
 	})
 
 	// TC-U-105 (AC-GRPC-030): a client built from Conn() inherits the

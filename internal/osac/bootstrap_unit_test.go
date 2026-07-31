@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -569,6 +570,112 @@ var _ = Describe("Bootstrap", func() {
 			Expect(issuer.OAuthASCalls()).To(Equal(1))
 			Expect(issuer.DiscoveryCalls()).To(Equal(1))
 			Expect(issuer.TokenCalls()).To(Equal(1))
+		})
+	})
+
+	// Milestone 2 coverage remediation: fetchWellKnownTokenEndpoint's four
+	// error branches beyond the already-covered "non-200 status" case
+	// (TC-U-024). Called directly (white-box) rather than through the full
+	// Start()/discovery loop, since these are request/response-shape
+	// failures unrelated to the retry/backoff behavior TC-U-023..025
+	// already cover.
+	Describe("fetchWellKnownTokenEndpoint error branches (REQ-OSAC-011)", func() {
+		// TC-U-106: a malformed issuer URL fails at request-construction
+		// time, before any network call is attempted.
+		It("fails when the discovery request cannot be constructed (TC-U-106)", func() {
+			_, err := fetchWellKnownTokenEndpoint(context.Background(), http.DefaultClient, "http://example.com/\x7f", "oauth-authorization-server")
+			Expect(err).To(MatchError(ContainSubstring("building discovery request")))
+		})
+
+		// TC-U-107: the HTTP client itself fails (connection refused),
+		// distinct from TC-U-024's "server responds with 500" case.
+		It("fails when the discovery document cannot be fetched (TC-U-107)", func() {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			Expect(err).NotTo(HaveOccurred())
+			deadAddr := ln.Addr().String()
+			Expect(ln.Close()).To(Succeed())
+
+			_, err = fetchWellKnownTokenEndpoint(context.Background(), http.DefaultClient, "http://"+deadAddr, "oauth-authorization-server")
+			Expect(err).To(MatchError(ContainSubstring("fetching discovery document")))
+		})
+
+		// TC-U-108: a 200 response with a non-JSON body fails to decode.
+		It("fails when the discovery document is not valid JSON (TC-U-108)", func() {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("not json"))
+			}))
+			defer srv.Close()
+
+			_, err := fetchWellKnownTokenEndpoint(context.Background(), http.DefaultClient, srv.URL, "oauth-authorization-server")
+			Expect(err).To(MatchError(ContainSubstring("decoding discovery document")))
+		})
+
+		// TC-U-109: a 200 response with valid JSON but no token_endpoint
+		// field fails distinctly from a decode error.
+		It("fails when the discovery document has no token_endpoint (TC-U-109)", func() {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{})
+			}))
+			defer srv.Close()
+
+			_, err := fetchWellKnownTokenEndpoint(context.Background(), http.DefaultClient, srv.URL, "oauth-authorization-server")
+			Expect(err).To(MatchError(ContainSubstring("has no token_endpoint")))
+		})
+	})
+
+	// Milestone 2 coverage remediation: dialOptions' and New's own
+	// error-wrapping branches, distinct from transportCredentials' error
+	// paths already proven directly by TC-U-013's error cases.
+	Describe("dialOptions and New error branches (REQ-OSAC-030/040)", func() {
+		// TC-U-110: dialOptions itself (not just transportCredentials)
+		// propagates a TLS credential construction failure.
+		It("propagates a TLS credential construction failure (TC-U-110)", func() {
+			cfg := testCfg()
+			cfg.TLSEnabled = true
+			cfg.TLSCertFile = "/nonexistent/osac-sp-test-ca.pem"
+
+			opts, err := dialOptions(cfg, &bearerCreds{})
+			Expect(err).To(HaveOccurred())
+			Expect(opts).To(BeNil())
+		})
+
+		// TC-U-111: New surfaces a dial-options construction failure with
+		// its own wrapping message, returning a nil Bootstrap.
+		It("surfaces a dial-options construction failure (TC-U-111)", func() {
+			cfg := testCfg()
+			cfg.TLSEnabled = true
+			cfg.TLSCertFile = "/nonexistent/osac-sp-test-ca.pem"
+
+			b, err := New(cfg, discardLogger)
+			Expect(err).To(MatchError(ContainSubstring("building gRPC dial options")))
+			Expect(b).To(BeNil())
+		})
+
+		// TC-U-112: New surfaces a synchronous gRPC client construction
+		// failure. Per the preflight spike, most malformed
+		// FulfillmentAddress values (bad scheme, unresolvable host, bad
+		// port) do NOT error synchronously in grpc.NewClient (lazy
+		// dialing) — a target containing an invalid control character
+		// does, via the same net/url parse failure mode as TC-U-106.
+		It("surfaces a gRPC client construction failure (TC-U-112)", func() {
+			cfg := testCfg()
+			cfg.FulfillmentAddress = "osac.example.com:443\x7f"
+
+			b, err := New(cfg, discardLogger)
+			Expect(err).To(MatchError(ContainSubstring("creating gRPC client")))
+			Expect(b).To(BeNil())
+		})
+	})
+
+	// TC-U-113: Close is a no-op, not a nil-pointer panic, when no
+	// connection was ever dialed — the newBootstrap constructor path used
+	// throughout this file's unit tests never assigns conn (only New does).
+	Describe("Close", func() {
+		It("is a no-op when no connection was ever dialed (TC-U-113)", func() {
+			b := newBootstrap(testCfg(), discardLogger, &fakeTokenSource{}, &fakeCapabilitiesClient{})
+			Expect(b.Close()).To(Succeed())
 		})
 	})
 })

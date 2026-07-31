@@ -65,6 +65,14 @@ cases).
 | TC-U-020 | Connectivity probe failure — unreachable | REQ-OSAC-080, AC-OSAC-081 | Fake `Capabilities` client returns a gRPC `Unavailable` error; call `Probe(ctx)`; assert `connected == false` and the returned error wraps a gRPC status with code `Unavailable`. |
 | TC-U-021 | Connectivity probe failure — timeout | REQ-OSAC-080, AC-OSAC-081 | Fake `Capabilities` client blocks longer than `osac.probeTimeout`; call `Probe(ctx)` with that timeout; assert `connected == false` and the error is (or wraps) `context.DeadlineExceeded`. |
 | TC-U-022 | Connectivity probe does not trigger token refresh | REQ-OSAC-090, AC-OSAC-090 | Seed a token fetch call counter; call `Probe(ctx)` several times; assert the token-fetch call counter is unchanged (still its pre-probe value) after all calls. |
+| TC-U-106 | Discovery request construction failure | REQ-OSAC-011 | Call `fetchWellKnownTokenEndpoint` directly (white-box) with an issuer URL containing an invalid control character, making `http.NewRequestWithContext` fail; assert the returned error wraps a message containing `"building discovery request"`. |
+| TC-U-107 | Discovery document fetch transport failure | REQ-OSAC-011, AC-OSAC-012 | Call `fetchWellKnownTokenEndpoint` directly with an `http.Client` pointed at a closed (never-listening) loopback address, so `httpClient.Do` fails with a connection error rather than returning any HTTP status; assert the returned error wraps a message containing `"fetching discovery document"`. |
+| TC-U-108 | Discovery document decode failure | REQ-OSAC-011 | Fake discovery endpoint returns `200` with a non-JSON body; call `fetchWellKnownTokenEndpoint` directly; assert the returned error wraps a message containing `"decoding discovery document"`. |
+| TC-U-109 | Discovery document missing `token_endpoint` | REQ-OSAC-011 | Fake discovery endpoint returns `200` with valid JSON but an empty/absent `token_endpoint` field; call `fetchWellKnownTokenEndpoint` directly; assert the returned error wraps a message containing `"has no token_endpoint"`. |
+| TC-U-110 | `dialOptions` propagates TLS credential construction failure | REQ-OSAC-040 | `osac.tlsEnabled=true`, `tlsCertFile` points at a nonexistent file; call `dialOptions` directly; assert it returns a non-nil error and a nil dial-option slice (the same underlying failure TC-U-013 already proves for `transportCredentials`, now proven not swallowed one level up). |
+| TC-U-111 | `New` surfaces dial-options construction failure | REQ-OSAC-040, AC-OSAC-040 | Same broken TLS config as TC-U-110, fed to `New(cfg, logger)`; assert `New` returns a non-nil error wrapping `"building gRPC dial options"` and a nil `*Bootstrap`. |
+| TC-U-112 | `New` surfaces gRPC client construction failure | REQ-OSAC-030, AC-OSAC-030 | `osac.fulfillmentAddress` contains an invalid control character, making `grpc.NewClient` fail synchronously (confirmed by spike: most malformed targets dial lazily and don't error here, but an invalid-character target does); call `New(cfg, logger)`; assert it returns a non-nil error wrapping `"creating gRPC client"` and a nil `*Bootstrap`. |
+| TC-U-113 | `Close` is a no-op when no connection was ever dialed | REQ-OSAC-030 | Construct a `Bootstrap` via `newBootstrap` (which never assigns `conn`, unlike `New`); call `Close()`; assert it returns `nil` without panicking. |
 
 ---
 
@@ -161,9 +169,9 @@ handler code will call it.
 
 | Spec Section | REQ Count | AC Count | TC Count (this file) | Notes |
 |---|---|---|---|---|
-| 4.1 HTTP Server | 9 | 9 | 4 (TC-U-070..073) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
-| 4.2 OSAC Client Bootstrap | 10 | 14 | 16 (TC-U-010..025) | Full unit coverage; real-dial-over-the-wire cases are TC-I scope. |
-| 4.3 Health Service | 8 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
+| 4.1 HTTP Server | 10 | 10 | 4 (TC-U-070..073) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
+| 4.2 OSAC Client Bootstrap | 11 | 14 | 24 (TC-U-010..025, TC-U-106..113) | Full unit coverage, including error-branch closure (TC-U-106..113, Milestone 2); real-dial-over-the-wire cases are TC-I scope. |
+| 4.3 Health Service | 9 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
 | 4.4 SP Registration (`control-plane`) | 10 | 10 | 10 (TC-U-050..059) | Full unit coverage of payload/backoff/independence logic; live-server wiring is TC-I scope. |
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |
 | 5.2 Configuration Management | 2 | 2 | 4 (TC-U-001..004) | Full unit coverage. |
