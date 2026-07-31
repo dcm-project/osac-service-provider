@@ -3,6 +3,7 @@ module github.com/dcm-project/osac-service-provider
 go 1.25.5
 
 require (
+	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260709200747-435963d16310.1
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/dcm-project/control-plane v0.0.0-20260629133201-6c16c0654018
 	github.com/getkin/kin-openapi v0.145.0
