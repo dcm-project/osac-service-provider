@@ -2,13 +2,19 @@
 
 DCM Service Provider that integrates the
 [Open Sovereign AI Cloud (OSAC)](https://github.com/osac-project/) platform
-with DCM through the environment agent model. It provisions OpenShift
-clusters and VMs by translating agent-routed requests into OSAC fulfillment
-service gRPC API calls, and reports status changes back via the messaging
-system.
+with DCM. It provisions OpenShift clusters and VMs by translating
+agent-routed requests into OSAC fulfillment service gRPC API calls, and
+reports status changes back via the messaging system.
 
-**Status:** Milestone 1 (scaffold + registration + health) implemented,
-pending review. See
+Registration and dispatch are against `control-plane`'s Service Provider API
+for this first release (Phase 1); the environment agent model originally
+targeted by the enhancement doc is deferred to a future phase once that
+component reaches a defined maturity bar — see DD-050 in
+`.ai/specs/osac-sp.spec.md` and
+[dcm-project/enhancements#95](https://github.com/dcm-project/enhancements/issues/95).
+
+**Status:** Milestone 1 (scaffold + registration + health) merged. Milestone
+2 (gRPC client generation) spec merged, implementation in review. See
 [#1](https://github.com/dcm-project/osac-service-provider/issues/1) for the
 full implementation plan and milestone breakdown, and `CLAUDE.md` for the
 current architecture.
