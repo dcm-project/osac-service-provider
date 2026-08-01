@@ -352,3 +352,127 @@ underlying string literal, so only `api/v1alpha1/openapi.yaml`'s enum
 values (and regenerated code) change — no handler logic changes.
 
 **Related requirements:** REQ-HTTP-070
+
+---
+
+## DD-080: Cluster CRUD dispatches via `control-plane`'s synchronous direct-REST contract, not gRPC/CloudEvents — and only Create/Delete are actually invoked by `control-plane`
+
+**Decision:** Milestone 3's four Cluster REST handlers are built as a full
+CRUDL surface (matching the AEP/OpenAPI-first convention every sibling SP
+follows), but the spec explicitly documents that `control-plane` (Phase 1,
+DD-050) only ever calls **Create** and **Delete** on this SP's registered
+endpoint — `Get`/`List`/`Update` are served entirely from `control-plane`'s
+own Postgres store and never reach this SP. Create's request/response shape
+and Delete's `NotFound`-tolerance are dictated by `control-plane`'s actual
+outbound dispatch code, not by a generic REST-resource assumption.
+
+**Rationale:** Verified directly against
+[`internal/sp/service/resource_manager/service_type_instance.go`](https://github.com/dcm-project/control-plane/blob/f243dfaa2e2752c63202432409e78cc2a4ad7d85/internal/sp/service/resource_manager/service_type_instance.go)
+(commit `f243dfa`) rather than any OpenAPI document — `control-plane`'s own
+`api/sp/v1alpha1/resource_manager/openapi.yaml` describes a *different*,
+catalog-facing API (`/service-type-instances`) than what it sends outbound
+to a registered provider's `Endpoint`, so reading that spec alone would have
+been a category error (the same mistake DD-060 already corrected once for
+OIDC discovery — citing superficially-similar-but-wrong code). The actual
+outbound contract:
+
+- `GetInstance`/`ListInstances` read only `s.store` — zero calls to
+  `provider.Endpoint` for either. `UpdateInstance` doesn't exist as a
+  provider-dispatch path at all.
+- `createInstanceWithProvider`: `POST {endpoint}?id={id}` (query parameter,
+  not a body field), body `{"spec": request.Spec}`, response unmarshaled
+  into `ProviderResponse{ID string `json:"id"`; Status string
+  `json:"status"`}` (`convert.go`) — extra fields in the SP's response are
+  silently ignored, not rejected, so returning the full `Cluster` resource
+  (id/status top-level) is compatible.
+- `deleteInstanceWithProvider`: `DELETE {endpoint}/{id}` (path segment).
+  `if resp.IsError() && resp.StatusCode() != 404` — a `404` from the SP is
+  explicitly excluded from the error branch, i.e. treated as a successful
+  delete, not surfaced as a `ProviderError`.
+- `control-plane` does not parse RFC 7807/9457 bodies from the SP — any
+  `>=400` becomes a generic `ProviderError` string. RFC 9457 compliance
+  (DD-070) is still correct for API-contract consistency and any direct/
+  non-`control-plane` caller, just not something `control-plane` itself
+  interprets structurally today.
+
+Enhancement [PR #96](https://github.com/dcm-project/enhancements/pull/96)
+(open, unmerged) already reflects this corrected contract for Cluster/VM —
+used as this milestone's interim source of truth per issue #1's own note.
+
+**Related requirements:** REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-050, REQ-DELETE-010, REQ-DELETE-020
+
+---
+
+## DD-090: `Cluster.status` uses DCM's full 7-value canonical vocabulary, not the 5-value subset in the enhancement doc's own table
+
+**Decision:** The status mapper (M3 spec §4.5) returns one of DCM's full
+canonical 7 values — `PROGRESSING | ACTIVE | DEGRADED | UNAVAILABLE | FAILED
+| DELETING | DELETED` — including `UNAVAILABLE` and `DELETING`, even though
+only `UNAVAILABLE` has a real driving signal from OSAC today.
+
+**Rationale:** Read
+[`service-provider-status-reporting.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#L266-281)
+directly rather than trusting enhancement PR #96's own Status Mapping
+table, which only lists 5 values (`PROGRESSING`/`ACTIVE`/`DEGRADED`/
+`FAILED`/`DELETED`) — that table documents which *signals OSAC currently
+sends*, not the full *contract DCM requires the SP to speak*. The primary
+doc is unambiguous that the target vocabulary is the full 7 values, with
+distinct semantics for each (e.g. `UNAVAILABLE` = "previously available but
+now unreachable and not progressing toward recovery", distinct from
+`DEGRADED` = "reachable but critical components unhealthy"). This is a
+different, DCM-wide vocabulary from the ad-hoc per-SP enums other sibling
+SPs invented before any `control-plane` dispatch integration existed (e.g.
+`acm-cluster-sp`'s `PENDING|PROVISIONING|READY|FAILED|DELETING|DELETED|
+UNAVAILABLE` — close but not identical wording, and not the authoritative
+source). `UNAVAILABLE` is legitimately SP-detectable today (an OSAC gRPC
+connectivity failure while polling, distinct from a real `NotFound`);
+`DELETING`/`DELETE_FAILED` are proto-defined but currently unreachable in
+practice (SC-M3-001) — both are still required enum values for forward
+compatibility and DCM-wide consistency, not values the SP can skip because
+nothing exercises them yet.
+
+**Related requirements:** REQ-STATUS-010, REQ-STATUS-020
+
+---
+
+## DD-100: SP-side idempotent Create-on-`AlreadyExists`→`Get` is a hard requirement, not a best-effort nicety
+
+**Decision:** REQ-CREATE-040 (Create's `AlreadyExists`→`Get` fallback) is
+specified as a `MUST` with dedicated, mandatory test coverage
+(AC-CREATE-030), not an optional robustness improvement that could be
+deferred or left partially tested.
+
+**Rationale:** Traced the full call chain above `control-plane`'s SP
+dispatch and found upstream retry-safety is weaker than the enhancement
+docs assume, making the SP the *only* reliable backstop:
+`internal/catalog/service/catalog_item_instance.go`'s `Create` (and the
+duplicated pattern one layer down in `internal/placement/service/placement.go`)
+performs an **unconditional rollback on any error** — deleting the local DB
+row keyed on the caller's `id` — with no branch distinguishing "definitely
+rejected" from "ambiguous/timeout." A subsequent retry with the *same*
+caller-facing `id` therefore mints a **new internal `resourceID`** and
+dispatches a second, differently-IDed Create to the SP — silently defeating
+the `id`-based idempotency the catalog API explicitly promises
+(`api/catalog/v1alpha1/openapi.yaml`: "user-specified IDs... for
+idempotency"). No orphan-reconciliation exists anywhere in that stack, and
+the one path that could surface an orphaned SP-side resource
+(`internal/sp/consumer/consumer.go`'s NATS status ingestion) silently
+`Warn`-logs and ACKs unmatched IDs rather than alerting. Separately,
+`control-plane`'s outbound HTTP client to the SP is configured with
+`resty.SetRetryCount(3)` (network-failure retries), so the SP can
+legitimately receive the *same* `id` twice from a connection-level hiccup
+alone, independent of the rollback bug above. Filed as
+[`control-plane#38`](https://github.com/dcm-project/control-plane/issues/38)
+(new bug, confirmed via `gh issue list`/`gh pr list` to not duplicate any
+existing tracked risk) — not fixable from within `osac-service-provider`,
+and not expected to be fixed by the in-flight, architecture-changing
+[`control-plane#37`](https://github.com/dcm-project/control-plane/pull/37)
+either (flagged there directly). Both the general
+[`sp-resource-manager.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/sp-resource-manager/sp-resource-manager.md#L487-L502)
+and OSAC-specific
+[`osac-sp.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#idempotent-creation)
+enhancement docs already push the final idempotency guarantee down to the
+SP — this decision makes that guarantee an enforced, tested contract rather
+than an assumed one.
+
+**Related requirements:** REQ-CREATE-040
