@@ -17,7 +17,7 @@ func (h *Handler) CreateCluster(ctx context.Context, req oapigen.CreateClusterRe
 		return h.mapError(err), nil
 	}
 
-	result, err := h.svc.Create(ctx, req.Params.Id, req.Body.Spec)
+	result, err := h.svc.Create(ctx, *req.Params.Id, *req.Body.Spec)
 	if err != nil {
 		return h.mapError(err), nil
 	}
@@ -27,15 +27,20 @@ func (h *Handler) CreateCluster(ctx context.Context, req oapigen.CreateClusterRe
 // validateCreateRequest implements REQ-CREATE-060's request validation,
 // returning a synthetic gRPC InvalidArgument error — mapped to 400 by the
 // same shared mapError as any OSAC-originated error (REQ-ERR-030) — before
-// ever dispatching to OSAC. The router's generated ServerInterfaceWrapper
-// already rejects a wholly-absent "id" query parameter (and a JSON body
-// that fails to decode) ahead of this handler ever running; the id check
-// here is a defensive backstop against an id present-but-empty
-// (`?id=`), which the router's own required-parameter check does not catch.
+// ever dispatching to OSAC. Both req.Params.Id and req.Body.Spec are
+// pointers that can genuinely be nil: the "id" query parameter and the
+// body's "spec" property are schema-optional (AEP-133 compliance, DD-110),
+// so — unlike before DD-110 — the router's generated ServerInterfaceWrapper
+// no longer rejects a wholly-absent "id" (or an empty JSON object body)
+// ahead of this handler ever running. This is now the sole enforcement
+// point for REQ-CREATE-010/060's "control-plane always supplies both"
+// requirement.
 func validateCreateRequest(req oapigen.CreateClusterRequestObject) error {
 	switch {
-	case req.Params.Id == "":
+	case req.Params.Id == nil || *req.Params.Id == "":
 		return grpcstatus.Error(codes.InvalidArgument, "id query parameter must not be empty")
+	case req.Body.Spec == nil:
+		return grpcstatus.Error(codes.InvalidArgument, "spec is required")
 	case req.Body.Spec.Version == "":
 		return grpcstatus.Error(codes.InvalidArgument, "spec.version is required")
 	case req.Body.Spec.Nodes.Worker.Count <= 0:

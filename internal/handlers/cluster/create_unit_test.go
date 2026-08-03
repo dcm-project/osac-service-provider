@@ -13,14 +13,17 @@ import (
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	oapigen "github.com/dcm-project/osac-service-provider/internal/api/server"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/util"
 )
 
 // validCreateBody is a fully-populated, valid CreateClusterJSONRequestBody
 // satisfying every REQ-CREATE-060 required field. Individual tests mutate a
-// copy to omit exactly one field.
+// copy to omit exactly one field. Spec is a pointer (DD-110: the body's
+// "spec" property is schema-optional per AEP-133, even though this SP
+// treats an absent one as a validation failure, not silent success).
 func validCreateBody() v1alpha1.CreateClusterJSONRequestBody {
 	return v1alpha1.CreateClusterJSONRequestBody{
-		Spec: v1alpha1.ClusterSpec{
+		Spec: &v1alpha1.ClusterSpec{
 			Version: "1.29",
 			Nodes: v1alpha1.ClusterNodes{
 				Worker: v1alpha1.ClusterWorkerNodes{Count: 3},
@@ -42,15 +45,49 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 	})
 
 	// TC-U-205 (REQ-CREATE-060, AC-CREATE-040): a missing id query
-	// parameter is rejected before calling OSAC. The router itself already
-	// rejects a fully-absent "id" (empty CreateClusterParams.Id here
-	// stands in for that, at the StrictServerInterface layer this package
-	// owns) — this proves the handler's own validation path additionally
-	// guards against it reaching internal/cluster.
-	It("rejects an empty id before calling OSAC (TC-U-205)", func() {
+	// parameter (nil — DD-110's AEP-133 fix made this genuinely
+	// representable, since the router no longer rejects it upstream) is
+	// rejected before calling OSAC.
+	It("rejects a wholly-absent id before calling OSAC (TC-U-205)", func() {
 		req := oapigen.CreateClusterRequestObject{
-			Params: v1alpha1.CreateClusterParams{Id: ""},
+			Params: v1alpha1.CreateClusterParams{Id: nil},
 			Body:   ptrBody(validCreateBody()),
+		}
+
+		resp, err := f.handler.CreateCluster(context.Background(), req)
+		Expect(err).NotTo(HaveOccurred())
+
+		rec := httptest.NewRecorder()
+		Expect(resp.VisitCreateClusterResponse(rec)).To(Succeed())
+		Expect(rec.Code).To(Equal(http.StatusBadRequest))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// Supplementary to TC-U-205: an id present but empty (`?id=`) is a
+	// distinct wire shape from a wholly-absent one and must be rejected
+	// identically.
+	It("rejects a present-but-empty id before calling OSAC", func() {
+		req := oapigen.CreateClusterRequestObject{
+			Params: v1alpha1.CreateClusterParams{Id: util.Ptr("")},
+			Body:   ptrBody(validCreateBody()),
+		}
+
+		resp, err := f.handler.CreateCluster(context.Background(), req)
+		Expect(err).NotTo(HaveOccurred())
+
+		rec := httptest.NewRecorder()
+		Expect(resp.VisitCreateClusterResponse(rec)).To(Succeed())
+		Expect(rec.Code).To(Equal(http.StatusBadRequest))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// Supplementary to TC-U-206: a wholly-absent spec (nil — also newly
+	// representable per DD-110) is rejected the same as any other missing
+	// required field, not a nil-pointer panic.
+	It("rejects a wholly-absent spec before calling OSAC", func() {
+		req := oapigen.CreateClusterRequestObject{
+			Params: v1alpha1.CreateClusterParams{Id: util.Ptr("X")},
+			Body:   &v1alpha1.CreateClusterJSONRequestBody{Spec: nil},
 		}
 
 		resp, err := f.handler.CreateCluster(context.Background(), req)
@@ -71,7 +108,7 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 			mutate(&body)
 
 			req := oapigen.CreateClusterRequestObject{
-				Params: v1alpha1.CreateClusterParams{Id: "X"},
+				Params: v1alpha1.CreateClusterParams{Id: util.Ptr("X")},
 				Body:   &body,
 			}
 
@@ -99,7 +136,7 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 		}
 
 		req := oapigen.CreateClusterRequestObject{
-			Params: v1alpha1.CreateClusterParams{Id: "X"},
+			Params: v1alpha1.CreateClusterParams{Id: util.Ptr("X")},
 			Body:   ptrBody(validCreateBody()),
 		}
 		resp, err := f.handler.CreateCluster(context.Background(), req)

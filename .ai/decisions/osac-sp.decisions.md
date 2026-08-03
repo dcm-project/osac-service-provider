@@ -476,3 +476,54 @@ SP — this decision makes that guarantee an enforced, tested contract rather
 than an assumed one.
 
 **Related requirements:** REQ-CREATE-040
+
+## DD-110: `POST /clusters` is schema-optional on `id` and its body is the `Cluster` resource itself, to satisfy AEP-133
+
+**Decision:** The `id` query parameter on `POST /api/v1alpha1/clusters` is
+`required: false` in the OpenAPI schema, and the request body schema is
+`$ref: '#/components/schemas/Cluster'` (with a new optional `spec` property
+added to that shared resource schema) rather than the previous
+`ClusterCreateRequest` wrapper. REQ-CREATE-010/060's actual runtime
+contract — `id` and `spec` are both effectively required, and their absence
+is a `400` — is unchanged; it is now enforced entirely by
+`internal/handlers/cluster`'s own `validateCreateRequest`, not by the
+OpenAPI `required` keyword.
+
+**Rationale:** CI's `check-aep` job (`spectral` against
+[aep-dev/aep-openapi-linter](https://github.com/aep-dev/aep-openapi-linter))
+failed PR #13 with two `aep-133` errors once the first `POST` was added to
+this repo's schema (Milestones 1-2 had no create operations, so this never
+triggered before): `aep-133-required-params` ("a create operation must not
+have any required parameters other than path parameters") on the `id`
+query param, and `aep-133-request-body` ("the request body is not an AEP
+resource") on `ClusterCreateRequest`. Confirmed both are structural,
+schema-level lint rules with no bearing on actual wire behavior — nothing
+in `control-plane`'s real dispatch envelope (DD-080: `?id=` query param,
+`{"spec": {...}}` body) requires `required: true`/a separate wrapper type
+specifically; both are this repo's own prior schema choices, not an
+external constraint. Cross-checked the two sibling SPs this project's own
+conventions point to
+([`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider),
+[`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider))
+and found both already use exactly this shape for their own `Create`
+operations (schema-optional `id`, request body `$ref`s the resource type
+directly) — this is the established, already-precedented fix, not a new
+pattern invented for this repo.
+
+Deliberately did **not** copy the sibling SPs' further behavior of having
+the server generate a UUID when `id` is omitted (their docs: "If omitted,
+the server generates a UUID"): REQ-CREATE-010 is explicit that
+`control-plane` always supplies `id` and this SP does not mint its own —
+introducing auto-generation would be new, spec-first-gated behavior with no
+driving requirement, not a compliance fix. Also deliberately kept `Cluster`'s
+existing `required: [id, status]` unchanged (rather than dropping to
+`required: [spec]`, `status`'s treatment in the sibling SPs) specifically to
+avoid `Status` becoming a pointer — an invasive, unjustified-for-this-fix
+blast radius across every already-tested `internal/cluster`/
+`internal/handlers/cluster` file that constructs or compares `.Status`
+directly. The new `spec` property was added as non-required (a pointer,
+`*ClusterSpec`) instead — satisfying `aep-133-request-body` (verified
+locally with `spectral lint`, 0 errors) while touching only
+`internal/handlers/cluster/create.go` and its own tests.
+
+**Related requirements:** REQ-CREATE-010, REQ-CREATE-060

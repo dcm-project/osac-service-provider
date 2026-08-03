@@ -22,6 +22,7 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/cluster"
 	clusterhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/cluster"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/util"
 )
 
 // setValidEnv sets every required/commonly-used env var to a
@@ -153,8 +154,8 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		Expect(fake.listCalls).To(Equal(1))
 
 		_, err = h.CreateCluster(ctx, oapigen.CreateClusterRequestObject{
-			Params: v1alpha1.CreateClusterParams{Id: "X"},
-			Body: &v1alpha1.CreateClusterJSONRequestBody{Spec: v1alpha1.ClusterSpec{
+			Params: v1alpha1.CreateClusterParams{Id: util.Ptr("X")},
+			Body: &v1alpha1.CreateClusterJSONRequestBody{Spec: &v1alpha1.ClusterSpec{
 				Version:       "1.29",
 				Nodes:         v1alpha1.ClusterNodes{Worker: v1alpha1.ClusterWorkerNodes{Count: 1}},
 				Metadata:      v1alpha1.ClusterMetadata{Name: "foo"},

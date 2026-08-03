@@ -84,9 +84,11 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 	})
 
 	// TC-I-202 (REQ-CREATE-060, AC-CREATE-040/050): request validation is
-	// enforced at the real HTTP boundary, both for the missing id query
-	// parameter (caught by the generated router wrapper) and a missing
-	// required spec field (caught by this package's own validation).
+	// enforced at the real HTTP boundary. Both the id query parameter and
+	// the body's spec property are schema-optional (AEP-133, DD-110), so
+	// the generated router wrapper accepts a request missing either one —
+	// this package's own validateCreateRequest is the sole enforcement
+	// point for both cases.
 	It("rejects a missing id query parameter at the real HTTP boundary (TC-I-202a)", func() {
 		resp, err := http.Post(f.URL("/api/v1alpha1/clusters"), "application/json", strings.NewReader(validCreateJSON)) //nolint:noctx,gosec // test helper
 		Expect(err).NotTo(HaveOccurred())

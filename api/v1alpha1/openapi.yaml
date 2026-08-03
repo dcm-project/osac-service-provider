@@ -47,10 +47,14 @@ paths:
       description: |
         Creates a new OSAC-backed OpenShift cluster. `control-plane`
         dispatches this with the resource `id` as a query parameter (its
-        own generated identifier) and a body containing only `spec` — not a
-        generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-        with the same `id` returns the existing cluster's current state
-        rather than an error (REQ-CREATE-040/DD-100).
+        own generated identifier) and a body containing only `spec`
+        (DD-080) — the request body schema is this same `Cluster` resource
+        type (AEP-133-compliant, DD-110), but `spec` is its only field
+        `control-plane` ever actually populates on the wire; every other
+        `Cluster` field is absent from that request and simply unmarshals
+        to its zero value, which this handler ignores. Idempotent on `id`:
+        a retry with the same `id` returns the existing cluster's current
+        state rather than an error (REQ-CREATE-040/DD-100).
       operationId: createCluster
       tags:
         - Clusters
@@ -59,9 +63,14 @@ paths:
           in: query
           description: >-
             Caller-assigned resource identifier, set as OSAC's own
-            `Cluster.id` (REQ-CREATE-020). Required — control-plane always
-            supplies it.
-          required: true
+            `Cluster.id` (REQ-CREATE-020). Schema-optional per AEP-133 ("a
+            create operation must not have any required parameters other
+            than path parameters" — DD-110); REQ-CREATE-010/060 still make
+            it a hard runtime requirement, enforced by request validation
+            (400 if absent/empty) rather than this field's own `required`
+            flag, since control-plane always supplies it and this SP does
+            not auto-generate ids.
+          required: false
           schema:
             type: string
       requestBody:
@@ -69,7 +78,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ClusterCreateRequest'
+              $ref: '#/components/schemas/Cluster'
       responses:
         '201':
           description: Cluster created (or, if `id` already existed, its current state — REQ-CREATE-040).
@@ -326,18 +335,6 @@ components:
         type: string
 
   schemas:
-    ClusterCreateRequest:
-      type: object
-      description: >-
-        Create request body. Matches control-plane's actual outbound
-        dispatch shape — `{"spec": {...}}` only, not a generic
-        REST-resource envelope (DD-080).
-      required:
-        - spec
-      properties:
-        spec:
-          $ref: '#/components/schemas/ClusterSpec'
-
     ClusterSpec:
       type: object
       description: Service-type-specific input specification for a cluster (Kubernetes Cluster generic schema).
@@ -472,6 +469,16 @@ components:
           type: string
           readOnly: true
           description: Human-readable message about the current status
+        spec:
+          description: >-
+            Request-only (DD-110): present when this schema is used as the
+            Create request body (`POST /clusters`'s AEP-133-compliant
+            request body, which is this same `Cluster` resource type).
+            Never populated in a Get/List response — control-plane's own
+            actual wire dispatch still sends only `{"spec": {...}}` in the
+            body, so this remains the only body field it ever sets.
+          allOf:
+            - $ref: '#/components/schemas/ClusterSpec'
         version:
           type: string
           readOnly: true

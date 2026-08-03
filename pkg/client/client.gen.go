@@ -104,10 +104,14 @@ type ClientInterface interface {
 	//
 	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec` — not a
-	// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-	// with the same `id` returns the existing cluster's current state
-	// rather than an error (REQ-CREATE-040/DD-100).
+	// own generated identifier) and a body containing only `spec`
+	// (DD-080) — the request body schema is this same `Cluster` resource
+	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// `control-plane` ever actually populates on the wire; every other
+	// `Cluster` field is absent from that request and simply unmarshals
+	// to its zero value, which this handler ignores. Idempotent on `id`:
+	// a retry with the same `id` returns the existing cluster's current
+	// state rather than an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -118,10 +122,14 @@ type ClientInterface interface {
 	//
 	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec` — not a
-	// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-	// with the same `id` returns the existing cluster's current state
-	// rather than an error (REQ-CREATE-040/DD-100).
+	// own generated identifier) and a body containing only `spec`
+	// (DD-080) — the request body schema is this same `Cluster` resource
+	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// `control-plane` ever actually populates on the wire; every other
+	// `Cluster` field is absent from that request and simply unmarshals
+	// to its zero value, which this handler ignores. Idempotent on `id`:
+	// a retry with the same `id` returns the existing cluster's current
+	// state rather than an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -194,10 +202,14 @@ func (c *Client) ListClusters(ctx context.Context, params *ListClustersParams, r
 //
 // Creates a new OSAC-backed OpenShift cluster. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec` — not a
-// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-// with the same `id` returns the existing cluster's current state
-// rather than an error (REQ-CREATE-040/DD-100).
+// own generated identifier) and a body containing only `spec`
+// (DD-080) — the request body schema is this same `Cluster` resource
+// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// `control-plane` ever actually populates on the wire; every other
+// `Cluster` field is absent from that request and simply unmarshals
+// to its zero value, which this handler ignores. Idempotent on `id`:
+// a retry with the same `id` returns the existing cluster's current
+// state rather than an error (REQ-CREATE-040/DD-100).
 //
 // Takes any type of body and a specified content type.
 //
@@ -218,10 +230,14 @@ func (c *Client) CreateClusterWithBody(ctx context.Context, params *CreateCluste
 //
 // Creates a new OSAC-backed OpenShift cluster. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec` — not a
-// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-// with the same `id` returns the existing cluster's current state
-// rather than an error (REQ-CREATE-040/DD-100).
+// own generated identifier) and a body containing only `spec`
+// (DD-080) — the request body schema is this same `Cluster` resource
+// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// `control-plane` ever actually populates on the wire; every other
+// `Cluster` field is absent from that request and simply unmarshals
+// to its zero value, which this handler ignores. Idempotent on `id`:
+// a retry with the same `id` returns the existing cluster's current
+// state rather than an error (REQ-CREATE-040/DD-100).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -425,12 +441,16 @@ func NewCreateClusterRequestWithBody(server string, params *CreateClusterParams,
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Id != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", *params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -630,10 +650,14 @@ type ClientWithResponsesInterface interface {
 	//
 	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec` — not a
-	// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-	// with the same `id` returns the existing cluster's current state
-	// rather than an error (REQ-CREATE-040/DD-100).
+	// own generated identifier) and a body containing only `spec`
+	// (DD-080) — the request body schema is this same `Cluster` resource
+	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// `control-plane` ever actually populates on the wire; every other
+	// `Cluster` field is absent from that request and simply unmarshals
+	// to its zero value, which this handler ignores. Idempotent on `id`:
+	// a retry with the same `id` returns the existing cluster's current
+	// state rather than an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -644,10 +668,14 @@ type ClientWithResponsesInterface interface {
 	//
 	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec` — not a
-	// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-	// with the same `id` returns the existing cluster's current state
-	// rather than an error (REQ-CREATE-040/DD-100).
+	// own generated identifier) and a body containing only `spec`
+	// (DD-080) — the request body schema is this same `Cluster` resource
+	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// `control-plane` ever actually populates on the wire; every other
+	// `Cluster` field is absent from that request and simply unmarshals
+	// to its zero value, which this handler ignores. Idempotent on `id`:
+	// a retry with the same `id` returns the existing cluster's current
+	// state rather than an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1105,10 +1133,14 @@ func (c *ClientWithResponses) ListClustersWithResponse(ctx context.Context, para
 //
 // Creates a new OSAC-backed OpenShift cluster. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec` — not a
-// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-// with the same `id` returns the existing cluster's current state
-// rather than an error (REQ-CREATE-040/DD-100).
+// own generated identifier) and a body containing only `spec`
+// (DD-080) — the request body schema is this same `Cluster` resource
+// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// `control-plane` ever actually populates on the wire; every other
+// `Cluster` field is absent from that request and simply unmarshals
+// to its zero value, which this handler ignores. Idempotent on `id`:
+// a retry with the same `id` returns the existing cluster's current
+// state rather than an error (REQ-CREATE-040/DD-100).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1125,10 +1157,14 @@ func (c *ClientWithResponses) CreateClusterWithBodyWithResponse(ctx context.Cont
 //
 // Creates a new OSAC-backed OpenShift cluster. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec` — not a
-// generic REST-resource shape (DD-080). Idempotent on `id`: a retry
-// with the same `id` returns the existing cluster's current state
-// rather than an error (REQ-CREATE-040/DD-100).
+// own generated identifier) and a body containing only `spec`
+// (DD-080) — the request body schema is this same `Cluster` resource
+// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// `control-plane` ever actually populates on the wire; every other
+// `Cluster` field is absent from that request and simply unmarshals
+// to its zero value, which this handler ignores. Idempotent on `id`:
+// a retry with the same `id` returns the existing cluster's current
+// state rather than an error (REQ-CREATE-040/DD-100).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
