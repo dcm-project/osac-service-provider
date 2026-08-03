@@ -26,8 +26,12 @@ import (
 // fakeServerInterface satisfies oapigen.ServerInterface with a swappable
 // health implementation shared by both routes (DD-010/REQ-HLT-015), per the
 // unit test plan's convention of registering handlers directly rather than
-// going through the strict adapter/business logic.
+// going through the strict adapter/business logic. oapigen.Unimplemented is
+// embedded so the non-health routes (VM CRUD, added Milestone 4) are
+// satisfied without this package needing to know anything about them —
+// this package's tests exercise only health.
 type fakeServerInterface struct {
+	oapigen.Unimplemented
 	getHealth func(w http.ResponseWriter, r *http.Request)
 }
 

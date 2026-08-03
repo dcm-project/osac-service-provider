@@ -18,6 +18,7 @@ package apiserver_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -55,10 +56,42 @@ var healthyOSACStatus = &fakeOSACStatus{tokenStatus: osac.TokenStatus{Valid: tru
 
 var integrationDiscardLogger = slog.New(slog.DiscardHandler)
 
+// stubVM stands in for internal/handlers/vm.Handler's 4
+// StrictServerInterface methods (VM CRUD, added Milestone 4) so
+// realStrictHandler below satisfies the full oapigen.StrictServerInterface
+// without pulling in internal/handlers/vm or internal/vm — this package's
+// own tests exercise only health, never VM CRUD (that's
+// internal/handlers/vm's own scope).
+type stubVM struct{}
+
+func (stubVM) ListVMs(context.Context, oapigen.ListVMsRequestObject) (oapigen.ListVMsResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubVM) CreateVM(context.Context, oapigen.CreateVMRequestObject) (oapigen.CreateVMResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubVM) GetVM(context.Context, oapigen.GetVMRequestObject) (oapigen.GetVMResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubVM) DeleteVM(context.Context, oapigen.DeleteVMRequestObject) (oapigen.DeleteVMResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+// combinedStrictHandler combines the real health.Handler with stubVM so
+// the result satisfies the full oapigen.StrictServerInterface, exactly as
+// cmd/osac-service-provider/main.go's own apiHandler does.
+type combinedStrictHandler struct {
+	*health.Handler
+	stubVM
+}
+
 // realStrictHandler wires the real health.Handler through the real strict
 // adapter, exactly as cmd/osac-service-provider/main.go does.
 func realStrictHandler(osacStatus health.OSACStatus, logger *slog.Logger) oapigen.ServerInterface {
-	h := health.NewHandler(osacStatus, time.Now(), "test-version")
+	h := &combinedStrictHandler{Handler: health.NewHandler(osacStatus, time.Now(), "test-version")}
 	return oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(logger),
 		ResponseErrorHandlerFunc: apiserver.NewResponseErrorHandler(logger),
