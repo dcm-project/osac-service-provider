@@ -352,3 +352,255 @@ underlying string literal, so only `api/v1alpha1/openapi.yaml`'s enum
 values (and regenerated code) change — no handler logic changes.
 
 **Related requirements:** REQ-HTTP-070
+
+---
+
+## DD-080: VM CRUD dispatch contract mirrors Cluster's; `ComputeInstances/Delete` is fully implemented today, not gated on OSAC
+
+**Decision:** Milestone 4 (VM CRUD) reuses Milestone 3's dispatch contract
+verbatim — `control-plane` calls `POST /api/v1alpha1/vms?id=X`,
+`DELETE /api/v1alpha1/vms/{vmId}`, and never calls `GET`/`List` (it serves
+those from its own store) — with `osac.public.v1.ComputeInstances` standing
+in for `osac.public.v1.Clusters`. No new dispatch envelope is introduced.
+
+**Rationale:** verified directly against OSAC's actual backend source
+(`osac-project/fulfillment-service` at
+[`c4110b2`](https://github.com/osac-project/fulfillment-service/blob/c4110b28a14d4a3b3926ae5360e2cd59c15430d5)),
+not inferred from the proto alone, in response to the user's question of
+whether `ComputeInstances/Delete` might still be unimplemented pending OSAC:
+it is **not**. Both the public
+[`compute_instances_server.go#L327-L342`](https://github.com/osac-project/fulfillment-service/blob/c4110b28a14d4a3b3926ae5360e2cd59c15430d5/internal/servers/compute_instances_server.go#L327-L342)
+and private
+[`private_compute_instances_server.go#L305-L309`](https://github.com/osac-project/fulfillment-service/blob/c4110b28a14d4a3b3926ae5360e2cd59c15430d5/internal/servers/private_compute_instances_server.go#L305-L309)
+`Delete` methods are implemented today via the same generic,
+type-parameterized DAO server (`GenericServer[*privatev1.ComputeInstance]`)
+that backs `Clusters/Delete` — no `TODO`, no stub, no feature flag. VM
+deletion has **no** analog of Cluster's tracked teardown-ambiguity gap
+(`OSAC-1586`/`OSAC-1391`): the `computeinstance` reconciler's `delete()`
+waits for the underlying Kubernetes object to be confirmed gone before
+clearing its finalizer, so a VM's `404` reliably means it is actually torn
+down — VM delete is, if anything, more reliable than Cluster's today, not
+less.
+
+**Consequence:** VM Delete needs no gating, feature-flag, or "wait for OSAC"
+caveat — REQ-VMDELETE-* below is implemented unconditionally, same as
+Cluster's REQ-DELETE-*.
+
+**Related requirements:** REQ-VMDELETE-010, REQ-VMDELETE-020
+
+---
+
+## DD-081: VM status uses its own 8-value DCM vocabulary with a direct, condition-free state mapping
+
+**Decision:** The VM status mapper returns one of DCM's VM-specific
+lifecycle phases — `PROVISIONING | RUNNING | STOPPED | FAILED | DELETING |
+STOPPING | PAUSED | DELETED` — per
+[`service-provider-status-reporting.md#vm-status`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#vm-status).
+This is a **different** enum from Cluster's 7-value vocabulary (DD-090) —
+reusing Cluster's enum for VMs, or vice versa, would be wrong for either
+resource type. Mapping is a direct 1:1 translation of
+`ComputeInstanceState` (`STARTING`→`PROVISIONING`, `RUNNING`→`RUNNING`,
+`FAILED`→`FAILED`, `DELETING`→`DELETING`, `STOPPING`→`STOPPING`,
+`STOPPED`→`STOPPED`, `PAUSED`→`PAUSED`), plus the same `NotFound`→`DELETED`
+API-response rule Cluster uses.
+
+**Rationale:** verified directly against `ComputeInstanceCondition`/
+`ComputeInstanceConditionType` in the vendored `compute_instance_type.proto`
+— unlike Cluster's `CLUSTER_CONDITION_TYPE_DEGRADED`, none of VM's six
+condition types (`CONFIGURATION_APPLIED`, `READY`, `RESTART_IN_PROGRESS`,
+`RESTART_FAILED`, `PROVISIONED`, `RESTART_REQUIRED`) correspond to a
+`DEGRADED`-like concept, and DCM's VM vocabulary has no `DEGRADED` value to
+map one to even if it existed. The VM mapper therefore has no
+condition-precedence step at all — a meaningful simplification versus
+Cluster's mapper (DD-090), not an oversight.
+
+Also unlike Cluster's vocabulary, VM's has no `UNAVAILABLE` value. When the
+gRPC call itself fails with `Unavailable`/`DeadlineExceeded` (OSAC
+unreachable), the mapper returns `FAILED` — the closest fit per
+`service-provider-status-reporting.md`'s own guidance ("if a provider has a
+state that is ambiguous, they should default to... `FAILED` if
+functionality is impaired"). This is a real, deliberate divergence from
+Cluster's precedent (which has a dedicated `UNAVAILABLE` bucket to use
+instead) — not an inconsistency to reconcile later.
+
+**Consequence:** `internal/vm`'s status mapper is a separate implementation
+from `internal/cluster`'s (different input enum, different output
+vocabulary, no shared logic to extract) — no code-sharing attempt is made
+between the two, and none is warranted.
+
+**Related requirements:** REQ-VMSTATUS-010, REQ-VMSTATUS-020
+
+---
+
+## DD-082: `provider_hints.osac.instance_type` is required on every VM Create — no direct `cores`/`memory_gib` fallback exists
+
+**Decision:** VM Create requires `spec.provider_hints.osac.instance_type`
+on every request; a request omitting it is rejected `400 Bad Request`
+before any OSAC call is made. `spec.vcpu.count`/`spec.memory.size` are
+accepted (DCM's generic `VMSpec` schema requires them) but are
+**informational only** on this SP — never translated to any OSAC field.
+Best-fit resolution of an `instance_type` from raw `vcpu`/`memory` via
+`InstanceTypes/List` was considered and explicitly rejected for v1.
+
+**Rationale:** the enhancement doc's original "VM Sizing" resolution (keep
+`vcpu.count`/`memory.size` mapped directly to OSAC's `cores`/`memory_gib`,
+accepting a deprecation warning) turned out to be based on a stale
+understanding of OSAC's contract. Verified directly against the vendored
+`compute_instance_type.proto` and confirmed identical on
+`fulfillment-service`'s current `main`
+([`c4110b2`](https://github.com/osac-project/fulfillment-service/blob/c4110b28a14d4a3b3926ae5360e2cd59c15430d5/proto/public/osac/public/v1/compute_instance_type.proto#L134-L136)):
+`cores`/`memory_gib` are `reserved` (removed) fields, not merely
+deprecated-with-warning — there is no code path left that accepts them.
+Pushed a corrective PR against the enhancement
+([dcm-project/enhancements#100](https://github.com/dcm-project/enhancements/pull/100))
+before drafting this spec, per this project's existing precedent
+(`OSAC-1586` correction landed the same way ahead of Milestone 3) and per
+`CLAUDE.md`'s "open a PR against the enhancement first" rule. Presented two
+options to the user (best-fit `InstanceTypes` matching vs. requiring the
+hint explicitly) — the user chose the latter: simpler, and pushes the
+sizing decision to the DCM caller rather than the SP guessing a catalog
+entry on their behalf.
+
+**Consequence:** no `InstanceTypes` client is needed in Milestone 4 (no
+`InstanceTypes/List` call, no best-fit matching logic, no GPU-exclusion
+logic that best-fit matching would have required). `provider_hints.osac`
+for VMs now has two required fields (`template_id`, `instance_type`), not
+one.
+
+**Related requirements:** REQ-VMCREATE-020, REQ-VMCREATE-060
+
+---
+
+## DD-083: Disk capacity strings are parsed as GiB-colloquial, not strict SI/IEC units
+
+**Decision:** `spec.storage.disks[*].capacity` (DCM strings like `"100GB"`,
+`"2TB"`) are parsed into OSAC's `size_gib` (`int32`) by treating the numeric
+prefix as already being in GiB when the unit is `GB`/`GiB` (i.e. `"100GB"`
+→ `100`, not `100 × 10^9 / 2^30 ≈ 93`), multiplying by 1024 for `TB`/`TiB`,
+and dividing by 1024 (rounding up) for `MB`/`MiB`. Units are matched
+case-insensitively; anything else (unparseable string, unrecognized unit,
+non-positive value) is rejected as `400 Bad Request` before calling OSAC.
+
+**Rationale:** OSAC's own field is explicitly named `size_gib` (binary
+GiB), and colloquial infrastructure/VM sizing usage (this SP's own
+`ComputeInstanceDisk.size_gib` field comment, cloud VM catalog listings,
+etc.) treats "100GB of disk" as meaning 100 GiB in practice, not a
+decimal-SI 100×10⁹-byte quantity that would need lossy conversion to a
+GiB integer. Treating DCM's `GB` unit as GiB directly avoids inventing an
+unrequested decimal-to-binary rounding policy for a distinction no caller
+in this schema is likely to intend precisely.
+
+**Consequence:** this parser is the only unit-conversion logic Milestone 4
+needs — `spec.memory.size` needs no parsing at all per DD-082 (never sent to
+OSAC).
+
+**Related requirements:** REQ-VMCREATE-030, REQ-VMCREATE-040
+
+---
+
+## DD-084: Default Network Provisioning is stateless (List-then-create-on-miss every Create), not a cached per-tenant mapping store
+
+**Decision:** On every VM Create, the SP calls `Subnets/List` filtered by
+`this.metadata.labels["dcm.io/managed-by"] == "dcm"`. If a matching subnet
+exists, its `id` is reused. If not, the SP creates a `VirtualNetwork`
+(fixed CIDR `10.200.0.0/16`, IPv4-only, `network_class` omitted so the
+platform default is used) and a `Subnet` under it (fixed CIDR
+`10.200.0.0/20`), both tagged with the same ownership labels as
+Cluster/ComputeInstance resources, then polls both (`Get`, 500ms interval,
+15s total timeout) until `READY` before using the new subnet's `id`. No
+local ID-mapping/cache store is introduced.
+
+**Rationale:** the enhancement doc's "Default Network Provisioning"
+section describes caching the resolved subnet ID in "the SP's local mapping
+store" per tenant. This SP has been deliberately stateless through
+Milestones 1-3 (no ID-mapping store exists — DCM's identifier and OSAC's
+`id` are always the same value, per the enhancement's own "ID Mapping"
+section, and SC-M3-002 explicitly chose not to introduce a store for a
+related VM-sizing/versioning concern). Introducing the SP's first-ever
+persistence layer solely to cache one subnet ID — which the enhancement
+doc itself admits resolves to exactly one shared subnet for all tenants in
+v1, since `metadata.tenant` resolves to the SP's single assigned
+Organization (see the enhancement's Non-Goals) — is not a good trade:
+persistence adds a new failure mode (store unavailable, stale/orphaned
+entries after a subnet is manually deleted in OSAC) to solve a problem an
+extra `List` RPC already solves adequately at v1's scale.
+
+**Known limitation (accepted for v1, not solved here):** two concurrent
+first-ever VM Create calls can both observe "no subnet exists" and both
+provision a `VirtualNetwork`/`Subnet` pair — there is no OSAC-side
+uniqueness constraint on "the default one" to arbitrate this, unlike
+`Cluster`/`ComputeInstance`'s `id`-based `AlreadyExists` idempotency (DD-100),
+because no DCM-issued identifier is available to key a default network on.
+A cached-mapping-store design has the identical race on its very first
+write, so this is not a limitation caching would have actually avoided —
+see [SC-M4-001](../specs/osac-sp-m4-vm-crud.spec.md#sc-m4-001) for the full
+analysis. Acceptable for v1's expected low VM-creation concurrency; revisit
+if it proves not to be.
+
+**Consequence:** every VM Create makes at least one extra `Subnets/List`
+RPC (and, only on the very first Create ever, two `Create` + polling
+round-trips) versus the enhancement doc's cached design. No new
+configuration keys are introduced for the poll interval/timeout — both are
+hardcoded constants, consistent with `Bootstrap`'s existing
+`initialBackoff`/`maxBackoff` pattern (DD-* not assigned — see
+`internal/osac/bootstrap.go`).
+
+**Related requirements:** REQ-VMNET-010 through REQ-VMNET-050
+
+---
+
+## DD-085: `POST /api/v1alpha1/vms` is AEP-133-compliant from the start
+
+**Decision:** the `id` query parameter is schema-optional (`required:
+false`) and the request body is the `VirtualMachine` resource itself
+(`{"spec": {...}}`) rather than a dedicated `*CreateRequest` wrapper schema
+— applying Milestone 3's DD-110 fix pattern proactively, on day one, rather
+than discovering the same `aep-133-required-params`/`aep-133-request-body`
+violations in CI a second time.
+
+**Rationale:** DD-111 root-caused Milestone 3's PR #13 CI failure to
+`check-aep` never having been run locally before that PR (no `POST`
+endpoint existed before it to trigger AEP-133's create-specific rules) —
+that process gap is now fixed (`check-aep` is part of `make check`,
+`internal/handlers`/`internal/vm` implementation ordering below always runs
+`make check` before opening the PR), but there is no reason to also
+re-litigate the *design* question DD-110 already answered for Cluster.
+"Required" `id`/`spec` semantics remain enforced at the runtime/behavioral
+level (REQ-VMCREATE-060), exactly as DD-110 established for Cluster.
+
+**Consequence:** `CreateVMParams.Id` and `CreateVMJSONRequestBody.Spec`
+generate as pointer types (`*string`, `*v1alpha1.VMSpec`), same as
+Cluster's equivalents — handler code must nil-check both before use, same
+as `internal/handlers/cluster/create.go` already does.
+
+**Related requirements:** REQ-VMCREATE-010, REQ-VMCREATE-070
+
+---
+
+## DD-086: gRPC-to-HTTP error classification is extracted into a shared `internal/grpcerror` package
+
+**Decision:** the gRPC-code → HTTP-status/`v1alpha1.ErrorType`/title
+mapping table (REQ-VMERR-010) lives in a new `internal/grpcerror` package
+(`Classify(err error) (status int, errType v1alpha1.ErrorType, title
+string)`), used by `internal/handlers/vm`. It is not duplicated
+package-locally the way `internal/handlers/cluster/error.go` (Milestone 3,
+PR #13, not yet merged at the time of this decision) implements the
+identical table.
+
+**Rationale:** this is the second time this exact mapping table needs to
+exist. Extracting it now costs nothing and creates zero conflict risk with
+PR #13 (`internal/grpcerror` is a new file `internal/handlers/cluster`
+never touches), unlike attempting to retrofit `internal/handlers/cluster`
+itself from this branch, which does not have that package's code to modify
+(Milestone 4 branched from `main`, before Milestone 3 merged — see the M4
+kickoff discussion). `internal/handlers/cluster/error.go` should adopt
+`internal/grpcerror.Classify` in a follow-up cleanup once both Milestone 3
+and 4 have landed on `main` — tracked informally here, not as a new `REQ-*`,
+since it's a refactor with no behavioral effect.
+
+**Consequence:** `internal/handlers/vm/error.go` is a thin adapter that
+calls `internal/grpcerror.Classify` and constructs the operation-specific
+`StrictServerInterface` response type — it does not reimplement the
+switch statement.
+
+**Related requirements:** REQ-VMERR-010, REQ-VMERR-020, REQ-VMERR-030
