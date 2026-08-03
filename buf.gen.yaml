@@ -12,6 +12,12 @@ managed:
     # rewriting it under our own prefix, which would produce an import to a
     # package we never generate.
     - module: buf.build/googleapis/googleapis
+    # Same rationale, confirmed by spike (Milestone 2 SC-M2-001): without this,
+    # metadata_type.proto's buf/validate/validate.proto import gets rewritten
+    # to a broken self-reference under our own prefix instead of resolving to
+    # its real, published package
+    # (buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate).
+    - module: buf.build/bufbuild/protovalidate
 
 plugins:
   - remote: buf.build/protocolbuffers/go:v1.36.5
