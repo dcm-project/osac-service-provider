@@ -42,11 +42,30 @@ type Server struct {
 	logger  *slog.Logger
 	srv     *http.Server
 	onReady func(context.Context)
+
+	readinessTimeout  time.Duration
+	readinessInterval time.Duration
+}
+
+// Option configures a Server. Exported for tests (e.g. WithReadinessTiming)
+// — mirrors the same test-seam convention as internal/osac.Bootstrap's
+// WithNow/WithMaxBackoff.
+type Option func(*Server)
+
+// WithReadinessTiming overrides the timeout/interval waitForReady uses to
+// poll the server's own health endpoint before firing onReady. Intended for
+// tests that need to exercise waitForReady's timeout/cancellation branches
+// without waiting the real (5s) production timeout.
+func WithReadinessTiming(timeout, interval time.Duration) Option {
+	return func(s *Server) {
+		s.readinessTimeout = timeout
+		s.readinessInterval = interval
+	}
 }
 
 // New creates a new Server with the given config, logger, and generated
 // ServerInterface implementation.
-func New(cfg *config.Config, logger *slog.Logger, handler oapigen.ServerInterface) *Server {
+func New(cfg *config.Config, logger *slog.Logger, handler oapigen.ServerInterface, opts ...Option) *Server {
 	badReq := newBadRequestHandler(logger)
 
 	r := chi.NewRouter()
@@ -59,13 +78,19 @@ func New(cfg *config.Config, logger *slog.Logger, handler oapigen.ServerInterfac
 		ErrorHandlerFunc: badReq,
 	})
 
-	return &Server{
+	s := &Server{
 		cfg:    cfg,
 		logger: logger,
 		srv: &http.Server{
 			Handler: httpHandler,
 		},
+		readinessTimeout:  readinessProbeTimeout,
+		readinessInterval: readinessProbeInterval,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // WithOnReady registers a callback invoked once the server is confirmed to
@@ -207,10 +232,10 @@ func (s *Server) waitForReady(ctx context.Context, addr string) error {
 	url := fmt.Sprintf("http://%s%s", addr, healthPath)
 	client := &http.Client{Timeout: 1 * time.Second}
 
-	deadline := time.NewTimer(readinessProbeTimeout)
+	deadline := time.NewTimer(s.readinessTimeout)
 	defer deadline.Stop()
 
-	ticker := time.NewTicker(readinessProbeInterval)
+	ticker := time.NewTicker(s.readinessInterval)
 	defer ticker.Stop()
 
 	for {
@@ -228,7 +253,7 @@ func (s *Server) waitForReady(ctx context.Context, addr string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("server readiness probe timed out after %s", readinessProbeTimeout)
+			return fmt.Errorf("server readiness probe timed out after %s", s.readinessTimeout)
 		case <-ticker.C:
 		}
 	}
