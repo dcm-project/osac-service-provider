@@ -527,3 +527,48 @@ locally with `spectral lint`, 0 errors) while touching only
 `internal/handlers/cluster/create.go` and its own tests.
 
 **Related requirements:** REQ-CREATE-010, REQ-CREATE-060
+
+---
+
+## DD-111: `check-aep` is now part of `make check`, invoked via `npx` instead of requiring a global `spectral` install
+
+**Decision:** `make check`'s prerequisite list is now `fmt vet lint check-aep
+test` (previously omitted `check-aep`), and the `check-aep` target itself now
+runs `npx --yes @stoplight/spectral-cli lint ...` instead of assuming a
+bare `spectral` binary is already on `PATH`.
+
+**Rationale:** Root-caused PR #13's `check-aep` CI failure (DD-110) after the
+user asked whether it reflected a missed spec change or an un-preflighted
+`control-plane` change — it was neither. Three compounding facts made the
+AEP-133 violation reach CI undetected instead of being caught during local
+development:
+
+1. `check-aep` has been a CI gate since Milestone 1 (`.github/workflows/
+   check-aep.yaml`, added in the M1 scaffold PR), but was never a prerequisite
+   of `make check` — the one local command this project's own workflow
+   (`CLAUDE.md`) documents as the pre-push gate. It was a same-repo `Makefile`
+   target that the standard local check simply never ran.
+2. Its only local invocation path assumed a bare `spectral` binary already on
+   `PATH` — nothing this repo provisions — versus CI, which self-installs it
+   fresh every run (`npm install -g @stoplight/spectral-cli`, unpinned, per
+   `dcm-project/shared-workflows`' reusable `check-aep.yaml`). Confirmed via
+   the GitHub API that this is CI's actual install step, not a documented
+   local setup requirement anywhere in this repo.
+3. Milestones 1-2 defined zero `POST`/create operations (only `GET /health`),
+   so AEP-133's create-specific rules (`aep-133-required-params`,
+   `aep-133-request-body`) had never had a chance to fire in this repo before
+   PR #13's Create endpoint — this was a dormant gap, not a regression of
+   something that previously worked.
+
+None of DD-080's contract-shape research (reading `control-plane`'s actual
+dispatch code) was wrong or stale; it simply was never cross-checked against
+the AEP linter, because no step in the spec-first workflow calls that out and
+the local tooling to do so had friction (missing binary) even for someone who
+remembered to try. Switching to `npx` removes the friction (zero-setup, and
+version-drifts alongside CI's own unpinned install rather than a
+locally-frozen version); adding it to `check: fmt vet lint check-aep test`
+removes the "have to remember a separate target" failure mode. Verified
+`make check-aep` and the full `make check` both pass locally post-fix.
+
+**Related requirements:** REQ-CREATE-010, REQ-CREATE-060 (DD-110); process
+fix has no REQ-* of its own — it is tooling/workflow, not product behavior.
