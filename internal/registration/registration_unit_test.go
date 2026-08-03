@@ -317,6 +317,45 @@ var _ = Describe("Registrar", func() {
 		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "300ms", "5ms").Should(BeNumerically(">=", 2))
 	})
 
+	// TC-U-060: backoff growth is capped at maxBackoff, not left to grow
+	// unbounded. A capped sequence over 8 retries (5+10+20+20+20+20+20+20
+	// = 135ms) comfortably finishes within this test's bound; an uncapped
+	// doubling sequence over the same 8 retries (5+10+20+40+80+160+320+
+	// 640 = 1275ms) could not — a generous-but-decisive gap that
+	// distinguishes "cap works" from "cap is computed and discarded"
+	// without asserting exact scheduler-jitter-prone timings.
+	It("caps backoff growth at maxBackoff instead of growing unbounded (TC-U-060)", func() {
+		var mu sync.Mutex
+		failuresLeft := 8
+		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+			if p.ServiceType != "cluster" {
+				// vm registers immediately; only cluster's own retry
+				// sequence is under test here, kept independent of the
+				// concurrently-running vm loop per this suite's
+				// independence convention (TC-U-057).
+				return http.StatusCreated, p, "application/json"
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if failuresLeft > 0 {
+				failuresLeft--
+				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, "application/problem+json"
+			}
+			return http.StatusCreated, p, "application/json"
+		}}
+		r := newTestRegistrar(transport,
+			registration.WithInitialBackoff(5*time.Millisecond),
+			registration.WithMaxBackoff(20*time.Millisecond),
+			registration.WithReRegistrationInterval(5*time.Second),
+		)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		r.Start(ctx)
+
+		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "700ms", "5ms").Should(BeNumerically(">=", 9))
+	})
+
 	// TC-U-053: a 409 Conflict is non-retryable, exactly like any other 4xx
 	// — control-plane has no per-service-type exclusivity to contend over
 	// (unlike the superseded environment-agent design, where a vm 409 meant
