@@ -10,6 +10,7 @@ import (
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/util"
 )
 
 // baseSpec returns a fully-populated, valid VMSpec satisfying every
@@ -118,7 +119,7 @@ var _ = Describe("Service.Create (Topic 4.1 VM Create)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(*result.Id).To(Equal("X"))
-		Expect(result.Status).To(Equal(v1alpha1.VMStatusPROVISIONING))
+		Expect(result.Status).To(Equal(v1alpha1.PROVISIONING))
 		Expect(f.fake.GetCallCount()).To(Equal(1))
 	})
 
@@ -181,6 +182,21 @@ var _ = Describe("Service.Create (Topic 4.1 VM Create)", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// Supplementary (Field Mapping table, §4.1): access.ssh_public_key and
+	// provider_hints.osac.windows both pass through untranslated when set.
+	It("passes through ssh_public_key and windows when set", func() {
+		spec := baseSpec()
+		spec.Access = &v1alpha1.VMAccess{SshPublicKey: util.Ptr("ssh-ed25519 AAAA...")}
+		spec.ProviderHints.Osac.Windows = util.Ptr(true)
+
+		_, err := f.svc.Create(context.Background(), "X", spec)
+		Expect(err).NotTo(HaveOccurred())
+
+		osacSpec := f.fake.LastCreateCall().GetObject().GetSpec()
+		Expect(osacSpec.GetSshPublicKey()).To(Equal("ssh-ed25519 AAAA..."))
+		Expect(osacSpec.GetIsWindows()).To(BeTrue())
 	})
 
 	// Supplementary (REQ-VMCREATE-040/060): an unparseable disk capacity

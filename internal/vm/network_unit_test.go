@@ -6,6 +6,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/vm"
@@ -100,6 +102,94 @@ var _ = Describe("Default Network Provisioning (Topic 4.5)", func() {
 		}
 
 		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).To(HaveOccurred())
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// Supplementary (REQ-VMERR-010/030 precondition): every RPC error in
+	// the §4.5 chain is propagated raw, without calling
+	// ComputeInstances/Create, for the shared error-mapping topic to
+	// translate.
+	It("propagates a Subnets/List error raw without calling ComputeInstances/Create", func() {
+		f := newFixtureNoSubnet()
+		DeferCleanup(f.Close)
+		f.subnets.listFunc = func(*publicv1.SubnetsListRequest) (*publicv1.SubnetsListResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "osac unreachable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).To(HaveOccurred())
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	It("propagates a VirtualNetworks/Create error raw without calling ComputeInstances/Create", func() {
+		f := newFixtureNoSubnet()
+		DeferCleanup(f.Close)
+		f.vnets.createFunc = func(*publicv1.VirtualNetworksCreateRequest) (*publicv1.VirtualNetworksCreateResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "osac unreachable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).To(HaveOccurred())
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	It("propagates a VirtualNetworks/Get (poll) error raw without calling ComputeInstances/Create", func() {
+		f := newFixtureNoSubnet()
+		DeferCleanup(f.Close)
+		f.vnets.getFunc = func(*publicv1.VirtualNetworksGetRequest) (*publicv1.VirtualNetworksGetResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "osac unreachable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).To(HaveOccurred())
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	It("propagates a Subnets/Create error raw without calling ComputeInstances/Create", func() {
+		f := newFixtureNoSubnet()
+		DeferCleanup(f.Close)
+		f.subnets.createFunc = func(*publicv1.SubnetsCreateRequest) (*publicv1.SubnetsCreateResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "osac unreachable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).To(HaveOccurred())
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	It("propagates a Subnets/Get (poll) error raw without calling ComputeInstances/Create", func() {
+		f := newFixtureNoSubnet()
+		DeferCleanup(f.Close)
+		f.subnets.getFunc = func(*publicv1.SubnetsGetRequest) (*publicv1.SubnetsGetResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "osac unreachable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).To(HaveOccurred())
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// Supplementary (REQ-VMNET-040's "bounded by the request's context"
+	// clause): cancelling the caller's context while polling stops the
+	// wait immediately, without waiting out the full poll timeout.
+	It("stops polling immediately when the request's context is cancelled", func() {
+		f := newFixtureNoSubnet(vm.WithNetworkPollInterval(time.Hour), vm.WithNetworkPollTimeout(time.Hour))
+		DeferCleanup(f.Close)
+		f.vnets.getFunc = func(req *publicv1.VirtualNetworksGetRequest) (*publicv1.VirtualNetworksGetResponse, error) {
+			return &publicv1.VirtualNetworksGetResponse{Object: &publicv1.VirtualNetwork{
+				Id:     req.GetId(),
+				Status: &publicv1.VirtualNetworkStatus{State: publicv1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_PENDING},
+			}}, nil
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			cancel()
+		}()
+
+		_, err := f.svc.Create(ctx, "X", baseSpec())
 		Expect(err).To(HaveOccurred())
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})

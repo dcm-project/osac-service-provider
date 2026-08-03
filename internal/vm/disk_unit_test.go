@@ -1,6 +1,8 @@
 package vm_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -37,5 +39,6 @@ var _ = Describe("ParseDiskCapacityGiB (Topic 4.1 disk capacity parsing, DD-083)
 		Entry("zero", "0GB"),
 		Entry("empty string", ""),
 		Entry("non-numeric prefix", "abcGB"),
+		Entry("numeric value too large to represent as a float64", strings.Repeat("9", 400)+"GB"),
 	)
 })

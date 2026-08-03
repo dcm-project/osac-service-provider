@@ -46,10 +46,10 @@ var _ = Describe("Service.List (Topic 4.3 VM List)", func() {
 
 		Expect(result.Results).To(HaveLen(2))
 		Expect(*result.Results[0].Id).To(Equal("v1"))
-		Expect(result.Results[0].Status).To(Equal(v1alpha1.VMStatusRUNNING))
+		Expect(result.Results[0].Status).To(Equal(v1alpha1.RUNNING))
 		Expect(*result.Results[0].InternalIpAddress).To(Equal("10.0.0.1"))
 		Expect(*result.Results[1].Id).To(Equal("v2"))
-		Expect(result.Results[1].Status).To(Equal(v1alpha1.VMStatusPROVISIONING))
+		Expect(result.Results[1].Status).To(Equal(v1alpha1.PROVISIONING))
 	})
 
 	// TC-U-321 (REQ-VMLIST-020/040, AC-VMLIST-020): page_token round-trips
