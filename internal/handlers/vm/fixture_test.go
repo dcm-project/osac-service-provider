@@ -134,6 +134,8 @@ type fakeSubnetsServer struct {
 	listFunc   func(*publicv1.SubnetsListRequest) (*publicv1.SubnetsListResponse, error)
 	createFunc func(*publicv1.SubnetsCreateRequest) (*publicv1.SubnetsCreateResponse, error)
 	getFunc    func(*publicv1.SubnetsGetRequest) (*publicv1.SubnetsGetResponse, error)
+
+	createCalls []*publicv1.SubnetsCreateRequest
 }
 
 func (s *fakeSubnetsServer) List(_ context.Context, req *publicv1.SubnetsListRequest) (*publicv1.SubnetsListResponse, error) {
@@ -154,6 +156,7 @@ func (s *fakeSubnetsServer) List(_ context.Context, req *publicv1.SubnetsListReq
 
 func (s *fakeSubnetsServer) Create(_ context.Context, req *publicv1.SubnetsCreateRequest) (*publicv1.SubnetsCreateResponse, error) {
 	s.mu.Lock()
+	s.createCalls = append(s.createCalls, req)
 	fn := s.createFunc
 	s.mu.Unlock()
 	if fn != nil {
@@ -163,6 +166,15 @@ func (s *fakeSubnetsServer) Create(_ context.Context, req *publicv1.SubnetsCreat
 	created.Id = "subnet-new"
 	created.Status = &publicv1.SubnetStatus{State: publicv1.SubnetState_SUBNET_STATE_READY}
 	return &publicv1.SubnetsCreateResponse{Object: created}, nil
+}
+
+// CreateCallCount reports how many times Create has been invoked — used to
+// assert the AC-VMNET-010 "no new network is created" negative outcome
+// (TC-I-342), not just the positive "which subnet got attached" outcome.
+func (s *fakeSubnetsServer) CreateCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.createCalls)
 }
 
 func (s *fakeSubnetsServer) Get(_ context.Context, req *publicv1.SubnetsGetRequest) (*publicv1.SubnetsGetResponse, error) {
@@ -187,10 +199,13 @@ type fakeVirtualNetworksServer struct {
 
 	createFunc func(*publicv1.VirtualNetworksCreateRequest) (*publicv1.VirtualNetworksCreateResponse, error)
 	getFunc    func(*publicv1.VirtualNetworksGetRequest) (*publicv1.VirtualNetworksGetResponse, error)
+
+	createCalls []*publicv1.VirtualNetworksCreateRequest
 }
 
 func (s *fakeVirtualNetworksServer) Create(_ context.Context, req *publicv1.VirtualNetworksCreateRequest) (*publicv1.VirtualNetworksCreateResponse, error) {
 	s.mu.Lock()
+	s.createCalls = append(s.createCalls, req)
 	fn := s.createFunc
 	s.mu.Unlock()
 	if fn != nil {
@@ -200,6 +215,15 @@ func (s *fakeVirtualNetworksServer) Create(_ context.Context, req *publicv1.Virt
 	created.Id = "vnet-new"
 	created.Status = &publicv1.VirtualNetworkStatus{State: publicv1.VirtualNetworkState_VIRTUAL_NETWORK_STATE_READY}
 	return &publicv1.VirtualNetworksCreateResponse{Object: created}, nil
+}
+
+// CreateCallCount reports how many times Create has been invoked — used to
+// assert the AC-VMNET-010 "no new network is created" negative outcome
+// (TC-I-342), not just the positive "which subnet got attached" outcome.
+func (s *fakeVirtualNetworksServer) CreateCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.createCalls)
 }
 
 func (s *fakeVirtualNetworksServer) Get(_ context.Context, req *publicv1.VirtualNetworksGetRequest) (*publicv1.VirtualNetworksGetResponse, error) {

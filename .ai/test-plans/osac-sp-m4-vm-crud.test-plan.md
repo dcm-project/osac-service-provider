@@ -167,6 +167,7 @@ Identical to Milestone 3's rules — binding, not advisory:
 |-------|-----------|-----------|-------------|
 | TC-I-340 | A new default network is provisioned end-to-end over real HTTP on the very first VM Create | REQ-VMNET-020, REQ-VMNET-030, REQ-VMNET-040, AC-VMNET-020, AC-VMNET-030 | Fake `Subnets/List` returns zero results initially; fake `VirtualNetworks/Get`/`Subnets/Get` report `READY` immediately after their respective `Create` calls; issue a real `POST /api/v1alpha1/vms?id=X`; assert `201`, and the fake's `ComputeInstances/Create` call's `network_attachments[0].subnet` equals the newly-created Subnet's `id` exactly. |
 | TC-I-341 | Network provisioning timeout is surfaced as 502 over real HTTP | REQ-VMNET-040, AC-VMNET-040 | Fake `Subnets/Get` always returns `PENDING` (poll timeout overridden to a short test value via server construction option); real `POST /api/v1alpha1/vms?id=X`; assert `502` and zero fake `ComputeInstances/Create` calls. |
+| TC-I-342 | An existing default subnet is reused over real HTTP — no new network is created | REQ-VMNET-010, AC-VMNET-010 | Fake `Subnets/List` returns one `READY` subnet `id="subnet-existing"` (the fixture default); real `POST /api/v1alpha1/vms?id=X`; assert `201`, the fake's `VirtualNetworks/Create` and `Subnets/Create` call counters are both exactly `0`, and the recorded `ComputeInstances/Create` call's `network_attachments[0].subnet` is exactly `"subnet-existing"`. |
 | TC-I-350 | Status precedence is observable over real HTTP | REQ-VMSTATUS-020, AC-VMSTATUS-020 | Fake OSAC `Get` returns gRPC `Unavailable` on one real `GET` call and `NotFound` on another; assert the first real response is `502`/mapped-`FAILED`-equivalent status per §4.7 and the second is `404`. |
 | TC-I-360 | Each gRPC error code maps to its documented HTTP status over real HTTP, identically across handlers | REQ-VMERR-010, REQ-VMERR-020, REQ-VMERR-030, AC-VMERR-010, AC-VMERR-020 | Table-driven over real HTTP: fake OSAC returns each of the 7 codes from `ComputeInstances/Get`, and `PermissionDenied` additionally from `ComputeInstances/List` and `ComputeInstances/Delete`; assert each real response's HTTP status/`type` matches the documented mapping exactly, and the `PermissionDenied` case is identical across all three handlers. |
 
@@ -180,7 +181,7 @@ Identical to Milestone 3's rules — binding, not advisory:
 | 4.2 VM Get | 3 | 2 | 2 (TC-U-310..311) | 2 (TC-I-310..311) | Yes |
 | 4.3 VM List | 4 | 2 | 2 (TC-U-320..321) | 2 (TC-I-320..321) | Yes |
 | 4.4 VM Delete | 4 | 3 | 3 (TC-U-330..332) | 3 (TC-I-330..332) | Yes — AC-VMDELETE-020 covered by TC-U-331 (unit) + TC-I-331 (2 real sequential HTTP requests, per rule 3) |
-| 4.5 Default Network Provisioning | 5 | 4 | 4 (TC-U-340..343) | 2 dedicated (TC-I-340..341) | Yes |
+| 4.5 Default Network Provisioning | 5 | 4 | 4 (TC-U-340..343) | 3 dedicated (TC-I-340..342) | Yes — AC-VMNET-010 covered by TC-U-340 (unit) + TC-I-342 (integration, explicit zero-call-count assertion, not merely incidental reuse via other Create tests) |
 | 4.6 Status Mapping | 3 | 2 | 2 (TC-U-350..351) | 1 dedicated (TC-I-350) + incidentally via TC-I-310/311/300 | Yes |
 | 4.7 Error Mapping | 3 | 2 | 2 (TC-U-360..361) | 1 dedicated (TC-I-360) + incidentally via TC-I-302/311/332 | Yes |
-| **Total** | **31** | **23** | **24** | **15** | |
+| **Total** | **31** | **23** | **24** | **16** | |

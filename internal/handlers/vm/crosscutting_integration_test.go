@@ -63,6 +63,29 @@ var _ = Describe("Default Network Provisioning, Status, and Error mapping (integ
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
+	// TC-I-342 (REQ-VMNET-010, AC-VMNET-010): an existing default subnet
+	// is reused over real HTTP — proven by the *absence* of any
+	// VirtualNetworks/Subnets Create call, not merely by which subnet id
+	// ends up attached (that positive assertion alone is already made
+	// incidentally by every other Create test using this fixture's
+	// default "subnet-existing" behavior — TC-I-303, for instance — but
+	// none of them assert the negative "no new network" half of the AC
+	// until now).
+	It("reuses an existing default subnet without creating a new network, over real HTTP (TC-I-342)", func() {
+		f := newIntegrationFixture()
+		defer f.Close()
+
+		resp := postCreate(f, validCreateJSON)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+		Expect(f.vnets.CreateCallCount()).To(Equal(0))
+		Expect(f.subnets.CreateCallCount()).To(Equal(0))
+		attachments := f.fake.LastCreateCall().GetObject().GetSpec().GetNetworkAttachments()
+		Expect(attachments).To(HaveLen(1))
+		Expect(attachments[0].GetSubnet()).To(Equal("subnet-existing"))
+	})
+
 	// TC-I-350 (REQ-VMSTATUS-020, AC-VMSTATUS-020): status precedence —
 	// a connectivity failure and a real 404 are never conflated, over
 	// real HTTP.
