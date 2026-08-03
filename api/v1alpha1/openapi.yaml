@@ -6,9 +6,14 @@ info:
     platform with DCM, provisioning OpenShift clusters and VMs via OSAC's
     fulfillment service gRPC API.
 
-    **Milestone 1 scope:** this spec currently defines only the health
-    endpoints. Cluster and VM CRUD paths are added in later milestones per
-    issue #1's suggested delivery milestones.
+    **Milestone 4 scope:** VM CRUD (Create/Get/List/Delete) is now defined.
+    Cluster CRUD is added independently by Milestone 3 (branched separately —
+    see DD-086 in the decisions log). Per Milestone 4's DD-080,
+    `control-plane` (Phase 1) only ever calls Create and Delete on this SP's
+    registered endpoint — Get/List/Update are served entirely from
+    `control-plane`'s own store and never reach this SP. All four
+    operations are still defined here for API-contract completeness and any
+    direct/non-`control-plane` caller.
 
     There are two health endpoints, not one, because this SP registers two
     independent providers with the environment agent — `cluster` at
@@ -29,10 +34,243 @@ servers:
     description: OSAC Service Provider
 
 tags:
+  - name: VMs
+    description: Virtual machine management operations
   - name: Health
     description: Health check operations
 
 paths:
+  /api/v1alpha1/vms:
+    post:
+      summary: Create a virtual machine
+      description: |
+        Creates a new OSAC-backed virtual machine. `control-plane`
+        dispatches this with the resource `id` as a query parameter (its
+        own generated identifier) and a body containing only `spec`
+        (DD-080) — the request body schema is this same `VirtualMachine`
+        resource type (AEP-133-compliant, DD-085), but `spec` is its only
+        field `control-plane` ever actually populates on the wire; every
+        other `VirtualMachine` field is absent from that request and simply
+        unmarshals to its zero value, which this handler ignores.
+        Idempotent on `id`: a retry with the same `id` returns the existing
+        VM's current state rather than an error (REQ-VMCREATE-070). Always
+        resolves (or provisions) exactly one default network attachment —
+        DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+      operationId: createVM
+      tags:
+        - VMs
+      parameters:
+        - name: id
+          in: query
+          description: >-
+            Caller-assigned resource identifier, set as OSAC's own
+            `ComputeInstance.id` (REQ-VMCREATE-020). Schema-optional per
+            AEP-133 ("a create operation must not have any required
+            parameters other than path parameters" — DD-085);
+            REQ-VMCREATE-010/060 still make it a hard runtime requirement,
+            enforced by request validation (400 if absent/empty) rather
+            than this field's own `required` flag, since control-plane
+            always supplies it and this SP does not auto-generate ids.
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VirtualMachine'
+      responses:
+        '201':
+          description: VM created (or, if `id` already existed, its current state — REQ-VMCREATE-070).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+        '400':
+          description: >-
+            Missing `id`, missing `spec`, missing a required
+            `provider_hints.osac` field, missing a disk named `boot`, or an
+            unparseable disk `capacity` (REQ-VMCREATE-060).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable, or default network provisioning timed out (REQ-VMNET-040)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      summary: List virtual machines
+      description: |
+        Returns a paginated list of VMs owned by this SP (filtered by the
+        `dcm.io/managed-by=dcm` ownership label — REQ-VMLIST-010). Each
+        entry echoes `internal_ip_address`/`external_ip_address`
+        (REQ-VMLIST-030).
+      operationId: listVMs
+      tags:
+        - VMs
+      parameters:
+        - name: page_token
+          in: query
+          description: Opaque pagination token from a previous response's `next_page_token`.
+          required: false
+          schema:
+            type: string
+        - name: max_page_size
+          in: query
+          description: Maximum number of results to return per page.
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: List of virtual machines
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachineList'
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1alpha1/vms/{vmId}:
+    get:
+      summary: Get virtual machine details
+      description: |
+        Returns the VM's current status, including `internal_ip_address`/
+        `external_ip_address` echoed directly from OSAC (REQ-VMGET-030).
+      operationId: getVM
+      tags:
+        - VMs
+      parameters:
+        - $ref: '#/components/parameters/VMIdPath'
+      responses:
+        '200':
+          description: Virtual machine details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualMachine'
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Virtual machine not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete a virtual machine
+      description: |
+        Deletes a virtual machine. Returns as soon as OSAC acknowledges the
+        request — does not poll for the VM to actually disappear
+        (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
+        treated as success (`204`), mirroring `control-plane`'s own
+        tolerance for this exact case (REQ-VMDELETE-020/DD-080) — this
+        endpoint therefore never returns `404`.
+      operationId: deleteVM
+      tags:
+        - VMs
+      parameters:
+        - $ref: '#/components/parameters/VMIdPath'
+      responses:
+        '204':
+          description: Virtual machine deleted (or already absent)
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1alpha1/clusters/health:
     get:
       summary: Cluster Provider Health Check
@@ -92,7 +330,250 @@ paths:
                 $ref: '#/components/schemas/Error'
 
 components:
+  parameters:
+    VMIdPath:
+      name: vmId
+      in: path
+      required: true
+      description: DCM-level VM resource identifier (same value as OSAC's `ComputeInstance.id` — DD-080's ID Mapping note).
+      schema:
+        type: string
+
   schemas:
+    VMVCPU:
+      type: object
+      required:
+        - count
+      properties:
+        count:
+          type: integer
+          description: >-
+            Informational only (DD-082) — the SP never translates this to
+            an OSAC field. Use `provider_hints.osac.instance_type` instead.
+
+    VMMemory:
+      type: object
+      required:
+        - size
+      properties:
+        size:
+          type: string
+          description: >-
+            Informational only (DD-082) — the SP never translates this to
+            an OSAC field. E.g. "8GB".
+
+    VMDisk:
+      type: object
+      required:
+        - name
+        - capacity
+      properties:
+        name:
+          type: string
+          description: >-
+            Exactly one disk MUST be named `boot` (REQ-VMCREATE-030,
+            REQ-VMCREATE-060) — it maps to OSAC's `spec.boot_disk`. Every
+            other disk's `name` is not preserved on translation
+            (SC-M4-002) — OSAC's `ComputeInstanceDisk` has no name field.
+        capacity:
+          type: string
+          description: >-
+            Parsed per DD-083 (`GB`/`GiB` treated as GiB directly,
+            `TB`/`TiB` ×1024, `MB`/`MiB` ÷1024 rounded up, case-insensitive).
+            E.g. "100GB", "2TB".
+
+    VMStorage:
+      type: object
+      required:
+        - disks
+      properties:
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/VMDisk'
+
+    VMGuestOS:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          description: Mapped to OSAC's `spec.image.source_ref` (SC-M4-002).
+          example: "rhel-9"
+
+    VMAccess:
+      type: object
+      properties:
+        ssh_public_key:
+          type: string
+          description: Optional passthrough to OSAC's `spec.ssh_public_key`.
+
+    VMMetadata:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Human-readable VM name. Mapped to OSAC's `metadata.name`.
+        labels:
+          type: object
+          description: >-
+            Merged with (not replaced by) the three `dcm.io/*` ownership
+            labels the SP always sets (REQ-VMCREATE-050).
+          additionalProperties:
+            type: string
+
+    VMProviderHints:
+      type: object
+      required:
+        - osac
+      properties:
+        osac:
+          $ref: '#/components/schemas/OSACVMProviderHints'
+
+    OSACVMProviderHints:
+      type: object
+      required:
+        - template_id
+        - instance_type
+      properties:
+        template_id:
+          type: string
+          description: Reference to the OSAC VM template. Mapped to OSAC's `spec.template`.
+        instance_type:
+          type: string
+          description: >-
+            Reference to an OSAC `InstanceType` catalog entry. Mapped to
+            OSAC's `spec.instance_type`. **Required** — DD-082, no direct
+            `vcpu`/`memory` fallback exists.
+          example: "standard-4-16"
+        windows:
+          type: boolean
+          description: >-
+            Optional passthrough to OSAC's `spec.is_windows` (renamed here
+            per AEP-140's boolean-naming rule — the SP's own hint schema,
+            not a passthrough of OSAC's field name). Defaults to
+            `false`/omitted.
+
+    VMSpec:
+      type: object
+      description: Service-type-specific input specification for a virtual machine (Virtual Machine generic schema).
+      required:
+        - storage
+        - guest_os
+        - metadata
+        - provider_hints
+      properties:
+        vcpu:
+          $ref: '#/components/schemas/VMVCPU'
+        memory:
+          $ref: '#/components/schemas/VMMemory'
+        storage:
+          $ref: '#/components/schemas/VMStorage'
+        guest_os:
+          $ref: '#/components/schemas/VMGuestOS'
+        access:
+          $ref: '#/components/schemas/VMAccess'
+        metadata:
+          $ref: '#/components/schemas/VMMetadata'
+        provider_hints:
+          $ref: '#/components/schemas/VMProviderHints'
+
+    VirtualMachine:
+      type: object
+      description: A virtual machine resource managed by OSAC.
+      x-aep-resource:
+        singular: vm
+        plural: vms
+        type: osac-service-provider.dcm.io/vm
+        patterns:
+          - vms/{vm}
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          readOnly: true
+          description: Same value as OSAC's `ComputeInstance.id` (DD-080's ID Mapping note).
+        path:
+          type: string
+          readOnly: true
+          description: Resource path for this VM
+          example: vms/123e4567-e89b-12d3-a456-426614174000
+        status:
+          $ref: '#/components/schemas/VMStatus'
+        status_message:
+          type: string
+          readOnly: true
+          description: Human-readable message about the current status
+        spec:
+          description: >-
+            Request-only (DD-085): present when this schema is used as the
+            Create request body (`POST /vms`'s AEP-133-compliant request
+            body, which is this same `VirtualMachine` resource type).
+            Never populated in a Get/List response — control-plane's own
+            actual wire dispatch still sends only `{"spec": {...}}` in the
+            body, so this remains the only body field it ever sets.
+          allOf:
+            - $ref: '#/components/schemas/VMSpec'
+        internal_ip_address:
+          type: string
+          readOnly: true
+          description: >-
+            Echoes OSAC's `status.internal_ip_address` exactly (empty
+            string when unknown — REQ-VMGET-030). Populated identically on
+            Get and every List entry (REQ-VMLIST-030).
+        external_ip_address:
+          type: string
+          readOnly: true
+          description: >-
+            Echoes OSAC's `status.external_ip_address` exactly (empty
+            string when unknown — REQ-VMGET-030). Populated identically on
+            Get and every List entry (REQ-VMLIST-030).
+        create_time:
+          type: string
+          format: date-time
+          readOnly: true
+        update_time:
+          type: string
+          format: date-time
+          readOnly: true
+
+    VMStatus:
+      type: string
+      description: >-
+        DCM's full canonical 8-value VM status vocabulary (DD-081) — a
+        separate vocabulary from Cluster's 7-value one; do not conflate
+        the two.
+      enum:
+        - PROVISIONING
+        - RUNNING
+        - STOPPED
+        - FAILED
+        - DELETING
+        - STOPPING
+        - PAUSED
+        - DELETED
+
+    VirtualMachineList:
+      type: object
+      description: AEP-132 pagination wrapper.
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/VirtualMachine'
+        next_page_token:
+          type: string
+          description: >-
+            Empty/absent exactly when there are no further results
+            (REQ-VMLIST-040).
+
     Health:
       type: object
       description: Health status singleton resource
