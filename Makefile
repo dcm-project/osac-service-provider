@@ -41,11 +41,16 @@ fmt:
 vet:
 	go vet ./...
 
+# test/e2e is a separate Go module (REQ-E2E-080) with its own suite that
+# needs a live kind cluster (make e2e-test); ginkgo's -r walks the
+# filesystem regardless of go.mod boundaries, so it must be skipped
+# explicitly here or `make test`/`make check` would fail for anyone without
+# a cluster running.
 test:
-	go run github.com/onsi/ginkgo/v2/ginkgo -r --race
+	go run github.com/onsi/ginkgo/v2/ginkgo -r --race --skip-package=test/e2e
 
 test-cover:
-	go run github.com/onsi/ginkgo/v2/ginkgo -r --race --cover
+	go run github.com/onsi/ginkgo/v2/ginkgo -r --race --cover --skip-package=test/e2e
 
 lint:
 	golangci-lint run ./...
