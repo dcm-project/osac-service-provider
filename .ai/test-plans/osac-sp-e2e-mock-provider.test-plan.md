@@ -80,15 +80,39 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 5. `cmd/osac-mock-provider` — integration
+## 5. `internal/mockprovider` — Config
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-031 | A real `osac.Bootstrap` authenticates and probes against the real mock binary over real listeners | REQ-MOCK-010, REQ-MOCK-070, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-110, AC-MOCK-120 | Start `internal/mockprovider`'s gRPC server and OIDC HTTP server each on a real `net.Listen("tcp", "127.0.0.1:0")` (not `bufconn`), in-process; construct an `osac.Bootstrap` via the production `osac.New(cfg, logger)` pointed at those two real addresses; call `Start(ctx)`; poll (bounded wait) until `TokenStatus().Valid == true`; assert `Probe(ctx).Connected == true`. |
+| TC-U-142 | `LoadConfig` loads both listen addresses from environment variables | REQ-MOCK-110 | Set `MOCK_GRPC_ADDRESS`/`MOCK_OIDC_ADDRESS`; call `LoadConfig()`; assert both fields equal exactly what was set. |
+| TC-U-143 | `LoadConfig` fails fast when a required field is missing (table-driven) | REQ-MOCK-110 | Unset one of `MOCK_GRPC_ADDRESS`/`MOCK_OIDC_ADDRESS` while the other is set; assert `LoadConfig()` returns a `nil` config and an error naming the missing var. |
 
 ---
 
-## 6. Coverage Matrix
+## 6. `cmd/osac-mock-provider` — unit
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-U-144 | `run` wraps and returns a `LoadConfig` failure | REQ-MOCK-110 | Neither address env var is set; call `run(ctx, logger)`; assert the error wraps `"initializing"`, before any listener is bound. |
+| TC-U-145 | `run` wraps and returns a gRPC listener-bind failure | REQ-MOCK-110 | `MOCK_GRPC_ADDRESS` is already bound by another real listener; assert `run`'s error wraps `"listening for gRPC"`. |
+| TC-U-146 | `run` wraps and returns an OIDC listener-bind failure | REQ-MOCK-110 | `MOCK_OIDC_ADDRESS` is already bound by another real listener (`MOCK_GRPC_ADDRESS` valid); assert `run`'s error wraps `"listening for OIDC HTTP"`. |
+| TC-U-147 | `mainRun` returns exit code `1` when `run` fails | REQ-MOCK-110 | Same trigger as TC-U-144; call `mainRun()` directly (no `os.Exit`); assert it returns `1`. `mainRun`'s happy-path (exit code `0`) is a documented coverage exception — same rationale as `cmd/osac-service-provider/main.go`'s own `mainRun`, since exercising it needs a real OS signal to unblock `signal.NotifyContext`. |
+| TC-U-148 | `serveUntilDone` returns `nil` once both servers gracefully stop after a ctx cancellation | REQ-MOCK-010, REQ-MOCK-080 | Real `grpc.Server`/`http.Server` on real loopback listeners; cancel `ctx` shortly after both start serving; assert `serveUntilDone` returns `nil`. |
+| TC-U-149 | `serveUntilDone` surfaces a genuine gRPC `Serve` error | REQ-MOCK-010 | Close the gRPC listener before `serveUntilDone` (hence before `Serve`) is ever called, so the error isn't attributable to `GracefulStop`; assert the returned error wraps `"serving gRPC"`. |
+| TC-U-150 | `serveUntilDone` surfaces a genuine OIDC HTTP `Serve` error | REQ-MOCK-080 | Same technique as TC-U-149 for the OIDC listener; assert the returned error wraps `"serving OIDC HTTP"` (not `http.ErrServerClosed`, since `Shutdown` was never called). |
+| TC-U-151 | `serveUntilDone` logs, but does not fail on, an OIDC HTTP `Shutdown` timeout | REQ-MOCK-080 | Same slow-handler-plus-tiny-timeout technique as `internal/apiserver/server_unit_test.go`'s TC-U-081, but for `serveUntilDone`'s log-and-continue `Shutdown`-error branch: a handler that blocks 300ms per request, `shutdownTimeout=1ms`, `ctx` cancelled mid-request; assert `serveUntilDone` still returns `nil` and the logger recorded `"OIDC HTTP server shutdown error"`. |
+
+---
+
+## 7. `cmd/osac-mock-provider` — integration
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-I-031 | A real `osac.Bootstrap` authenticates and probes against the real mock binary over real listeners | REQ-MOCK-010, REQ-MOCK-070, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-110, AC-MOCK-120 | Start the real `run()` (env-var config, both real listeners, all 5 fake gRPC services, the OIDC stub) in the background; construct an `osac.Bootstrap` via the production `osac.New(cfg, logger)` pointed at those two real addresses; call `Start(ctx)`; poll (bounded wait) until `TokenStatus().Valid == true`; assert `Probe(ctx).Connected == true`. |
+
+---
+
+## 8. Coverage Matrix
 
 | Spec Topic | REQ Count | AC Count | TC-U | TC-I | Notes |
 |---|---|---|---|---|---|
@@ -96,5 +120,6 @@ test, no further fake/mock layer needed underneath it.
 | `Subnets`/`VirtualNetworks` CRUD | REQ-MOCK-021, 030, 040, 050, 060 | AC-MOCK-040, 050, 070 | 8 (TC-U-126..133) | — | |
 | `Capabilities` | REQ-MOCK-070 | AC-MOCK-080 | 1 (TC-U-134) | — | |
 | OIDC discovery + token | REQ-MOCK-080, 090, 100 | AC-MOCK-090, 100, 110 | 7 (TC-U-135..141) | — | TC-U-140/141 added post-hoc to close `ParseForm`- and encode-error coverage gaps. |
-| Binary wiring (real listeners, real `osac.Bootstrap`) | REQ-MOCK-010, 070, 080, 090, 110 | AC-MOCK-120 | — | 1 (TC-I-031) | Closes the pyramid invariant for every REQ above by proving the real transport, not just the in-memory logic each REQ's TC-U already covers. |
-| **Total** | 11 | 12 | **28** | **1** | |
+| Mock config (`internal/mockprovider.LoadConfig`) | REQ-MOCK-110 | — | 2 (TC-U-142..143) | — | |
+| Binary wiring (`cmd/osac-mock-provider`) | REQ-MOCK-010, 070, 080, 090, 110 | AC-MOCK-120 | 8 (TC-U-144..151) | 1 (TC-I-031) | `run`/`serveUntilDone` are 100% unit-covered on their own (TC-U-144..151); TC-I-031 closes the pyramid invariant by proving the real transport end to end with a real `osac.Bootstrap`, not a fake. `main`/`mainRun`'s happy path is a documented coverage exception (real-OS-signal-dependent), mirroring `cmd/osac-service-provider/main.go`'s own accepted gap. |
+| **Total** | 11 | 12 | **38** | **1** | |
