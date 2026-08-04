@@ -606,3 +606,48 @@ actually causing the failure, leaving the chart's other hardening
 — it is not a permanent feature of this workflow.
 
 **Related requirements:** REQ-E2E-020
+
+## DD-089: `osac-mock-provider`'s OIDC discovery documents derive `token_endpoint` from the request's `Host` header, not the listener's bind address
+
+**Decision:** `internal/mockprovider.OIDCHandler`'s discovery-document
+handler builds `token_endpoint` as `"http://" + r.Host + "/token"` per
+request, computed at request time from the incoming `http.Request`'s own
+`Host` field. `NewOIDCHandler` no longer takes a `tokenURL` parameter;
+`cmd/osac-mock-provider/main.go` no longer computes one from
+`oidcLn.Addr().String()`.
+
+**Rationale:** the first real run of the kind-based e2e infra
+(`osac-sp-e2e-suite`, [#20](https://github.com/dcm-project/osac-service-provider/pull/20))
+caught a genuine bug the mock's own unit/integration tests couldn't: TC-E2E-050
+and TC-E2E-070 failed because `osac-sp`'s OIDC token fetch got
+`dial tcp [::]:9091: connect: connection refused`. Root cause — the pre-fix
+`NewOIDCHandler(tokenURL, logger)` baked `tokenURL` from
+`oidcLn.Addr().String()` once at startup in `main.go`. That's correct for a
+loopback-bound listener (`127.0.0.1:0`, what TC-I-031's integration test and
+all prior unit tests used) but wrong for a wildcard bind (`:9091`, what
+`test/e2e/manifests/osac-mock-provider.yaml`'s `MOCK_OIDC_ADDRESS` uses so the
+Service can reach the pod at all): `net.Listener.Addr().String()` on a
+wildcard bind reports `[::]:9091`, which is the local kernel's own unspecified
+-address representation, not a routable address any other pod can dial. No
+existing test exercised a wildcard bind's discovery document, so this shipped
+undetected until a real cross-pod network call in CI exposed it — exactly the
+class of bug this e2e tier exists to catch (spec's §1 "closes the specific gap
+control-plane#40 identified").
+
+The fix (deriving `token_endpoint` from each request's `Host` header instead)
+is the standard technique real OIDC providers use to self-reference correctly
+regardless of how a client reached them (a wildcard-bound server has no way to
+know an externally-reachable address for itself in advance; the request that
+just arrived does). It requires no new configuration and is not a special
+case for e2e/Kubernetes: it also transparently keeps working for
+TC-I-031's loopback-address integration test (`r.Host` there is whatever
+`127.0.0.1:<port>` the test's own client dialed) and for the unit suite's
+`httptest.Server`-backed tests (`r.Host` is `httptest.Server`'s own
+`127.0.0.1:<port>`).
+
+Added TC-U-152 as the regression test: two requests carrying different `Host`
+headers to the same handler instance must get back two different
+`token_endpoint` values matching each request's own `Host` — this is what the
+pre-fix, construction-time-fixed `doc` value could never satisfy.
+
+**Related requirements:** REQ-MOCK-080

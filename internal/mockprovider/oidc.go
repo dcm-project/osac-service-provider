@@ -51,25 +51,36 @@ type OIDCHandler struct {
 }
 
 // NewOIDCHandler returns an OIDCHandler whose discovery documents
-// advertise tokenURL as the token_endpoint. tokenURL must be the handler's
-// own eventual "<base>/token" address — callers typically only know this
-// after opening the real net.Listener they'll serve this handler on (see
-// cmd/osac-mock-provider/main.go). logger records the rare case of a
-// response failing to encode (headers are already sent by then, so there
-// is nothing more to do than log it — same pattern as
-// internal/httperror.Write).
-func NewOIDCHandler(tokenURL string, logger *slog.Logger) *OIDCHandler {
+// advertise a token_endpoint derived from each request's own Host header
+// (see serveDiscoveryDocument) rather than a value fixed at construction
+// time. logger records the rare case of a response failing to encode
+// (headers are already sent by then, so there is nothing more to do than
+// log it — same pattern as internal/httperror.Write).
+func NewOIDCHandler(logger *slog.Logger) *OIDCHandler {
 	h := &OIDCHandler{mux: http.NewServeMux(), logger: logger}
 
-	doc := discoveryDocument{TokenEndpoint: tokenURL}
-	serveDoc := func(w http.ResponseWriter, _ *http.Request) {
-		h.writeJSON(w, http.StatusOK, doc)
-	}
-	h.mux.HandleFunc("/.well-known/oauth-authorization-server", serveDoc)
-	h.mux.HandleFunc("/.well-known/openid-configuration", serveDoc)
+	h.mux.HandleFunc("/.well-known/oauth-authorization-server", h.serveDiscoveryDocument)
+	h.mux.HandleFunc("/.well-known/openid-configuration", h.serveDiscoveryDocument)
 	h.mux.HandleFunc("/token", h.handleToken)
 
 	return h
+}
+
+// serveDiscoveryDocument advertises a token_endpoint built from the
+// incoming request's own Host header, not a value fixed at construction
+// time (DD-089). This matters because the mock's OIDC listener is
+// typically bound to a wildcard address (e.g. ":9091", so it can accept
+// connections from other pods in a cluster), whose own
+// net.Listener.Addr().String() reports the unroutable "[::]:9091" —
+// baking that in at startup (the pre-fix behavior) made the advertised
+// token endpoint unreachable from any other pod. Deriving it from Host
+// instead means it's always whatever address the client actually used to
+// reach this handler: loopback in unit tests, a Kubernetes Service DNS
+// name in the kind-based e2e infra — mirroring how real OIDC providers
+// self-reference.
+func (h *OIDCHandler) serveDiscoveryDocument(w http.ResponseWriter, r *http.Request) {
+	doc := discoveryDocument{TokenEndpoint: "http://" + r.Host + "/token"}
+	h.writeJSON(w, http.StatusOK, doc)
 }
 
 // ServeHTTP implements http.Handler.
