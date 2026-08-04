@@ -112,4 +112,36 @@ image-build: check-container-engine
 image-build-mock-provider: check-container-engine
 	$(CONTAINER_ENGINE) build -f Containerfile.osac-mock-provider -t $(MOCK_CONTAINER_IMAGE_NAME):$(CONTAINER_IMAGE_TAG) .
 
-.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-container-engine image-build image-build-mock-provider
+# e2e targets (Phase 2 of osac-service-provider#17 / FLPATH-4759): local
+# helpers for the pieces .github/workflows/e2e.yaml also does. The
+# workflow is the canonical, full orchestration (kind create, image
+# build+load, control-plane chart install, manifest apply, readiness wait,
+# suite run, teardown) — these targets don't reimplement the
+# control-plane-chart-fetch-and-install step, since that's CI-specific
+# sparse-checkout plumbing with no local-dev equivalent worth duplicating.
+KIND_CLUSTER_NAME ?= osac-sp-e2e
+
+e2e-cluster-up:
+	kind create cluster --name $(KIND_CLUSTER_NAME) --config test/e2e/kind-config.yaml
+
+e2e-cluster-down:
+	kind delete cluster --name $(KIND_CLUSTER_NAME)
+
+e2e-images: check-container-engine
+	$(CONTAINER_ENGINE) build -t osac-service-provider:e2e -f Containerfile .
+	$(CONTAINER_ENGINE) build -t osac-mock-provider:e2e -f Containerfile.osac-mock-provider .
+
+e2e-load: e2e-images
+	kind load docker-image osac-service-provider:e2e --name $(KIND_CLUSTER_NAME)
+	kind load docker-image osac-mock-provider:e2e --name $(KIND_CLUSTER_NAME)
+
+e2e-apply:
+	kubectl apply -f test/e2e/manifests/
+
+# e2e-test runs the e2e suite (its own Go module, REQ-E2E-080) against an
+# already-deployed cluster; set CONTROL_PLANE_URL/OSAC_SP_URL to whatever
+# you've port-forwarded/exposed them at.
+e2e-test:
+	cd test/e2e && go run github.com/onsi/ginkgo/v2/ginkgo -r -v
+
+.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-container-engine image-build image-build-mock-provider e2e-cluster-up e2e-cluster-down e2e-images e2e-load e2e-apply e2e-test

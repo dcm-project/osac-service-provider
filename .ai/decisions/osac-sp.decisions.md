@@ -475,3 +475,101 @@ since both binaries may run side by side in the same `kind` pod/namespace
 once Phase 2 wires them together.
 
 **Related requirements:** REQ-MOCK-110
+
+---
+
+## DD-084: `osac-sp`/`osac-mock-provider` as this repo's own plain manifests, not a `control-plane` chart contribution
+
+**Decision:** Phase 2's `kind` cluster deploys `osac-service-provider` and
+`osac-mock-provider` via plain `Deployment`+`Service` YAML owned by this
+repo (`test/e2e/manifests/`), applied with `kubectl apply` alongside a
+`helm install` of `control-plane`'s own unmodified
+[`deploy/helm/dcm/`](https://github.com/dcm-project/control-plane/tree/main/deploy/helm/dcm)
+chart — not a PR adding `osacServiceProvider`/`osacMockProvider` sections to
+that chart's `values.yaml`/`templates/` (the pattern its 4 existing
+`*ServiceProvider` sections use for `kubevirt`/`k8s-container`/`acm-cluster`/
+`three-tier-demo`).
+
+**Rationale:** issue #17 ("Ownership & artifact sourcing") explicitly scopes
+this: each SP team owns its own mock-provider binary *and* its own e2e
+workflow in its own repo, consuming `control-plane` purely as a published
+upstream artifact (image + chart directory), not by forking or PRing into
+it. Contributing an `osac-sp` chart section would (a) require a
+`control-plane` PR and review cycle before this repo's own e2e could ever
+go green, directly conflicting with "ready to run asap," and (b) couple
+this repo's CI to `control-plane`'s release cadence for a resource this
+repo already fully owns and controls the shape of. Upstreaming a chart
+section remains a reasonable follow-up once this pattern is proven (issue
+#17's "Generalization for other SP teams"), but is explicitly not a
+blocker for it.
+
+**Related requirements:** REQ-E2E-030
+
+---
+
+## DD-085: Route/Ingress/`dcmUi` disabled when installing `control-plane`'s chart into `kind`
+
+**Decision:** `helm install` overrides `dcmUi.enabled=false`,
+`controlPlane.route.enabled=false`, `controlPlane.ingress.enabled=false`
+against `control-plane`'s chart defaults (`dcmUi.enabled: true`,
+`controlPlane.route.enabled: true`).
+
+**Rationale:** `controlPlane.route.enabled`'s `Route` resource is an
+OpenShift-only CRD (`route.openshift.io/v1`) that plain `kind` doesn't
+install — leaving it enabled would fail the `helm install --wait` step
+outright. `dcmUi` has no bearing on any REQ-E2E-* assertion (this tier
+asserts the REST/gRPC contract, not a browser-driven UI journey) and adds a
+pod + image pull for no verification value, so disabling it keeps the job
+closer to its `NFR-E2E-010` time budget.
+
+**Related requirements:** REQ-E2E-020
+
+---
+
+## DD-086: `kubectl port-forward` (not `NodePort`/`Ingress`) for the e2e suite's cluster access
+
+**Decision:** `.github/workflows/e2e.yaml` reaches `dcm-control-plane` and
+`osac-service-provider` from the GitHub Actions runner host via two
+background `kubectl port-forward` processes (`18080`→`control-plane:8080`,
+`18081`→`osac-service-provider:8080`), not `NodePort` Services or an
+`Ingress`/`Route`.
+
+**Rationale:** the e2e suite (`test/e2e`) runs as a plain `go run` process
+on the runner host, outside the `kind` cluster's pod network, so it needs
+*some* host-reachable path in. `NodePort` would require picking/coordinating
+fixed ports across both this repo's manifests and `kind-config.yaml`'s
+`extraPortMappings`; `Ingress`/`Route` needs an ingress controller neither
+chart installs here. `port-forward` needs zero manifest/kind-config changes
+beyond the `Service`s Phase 1/this phase already create, at the cost of two
+background processes the workflow must remember to stop (`if: always()`) —
+an acceptable, purely-CI-internal tradeoff with no bearing on the
+assertions themselves.
+
+**Related requirements:** REQ-E2E-050, REQ-E2E-060
+
+---
+
+## DD-087: `test/e2e` imports `control-plane`'s own generated REST types directly, not a hand-rolled JSON struct
+
+**Decision:** `test/e2e`'s registration assertions (TC-E2E-020..040)
+import `github.com/dcm-project/control-plane/api/sp/v1alpha1/provider` and
+`.../pkg/sp/client/provider` directly — the exact generated
+OpenAPI client/types `internal/registration/registration.go` itself uses to
+*write* — rather than decoding `GET /providers` responses into a
+locally-defined struct.
+
+**Rationale:** unlike the `osac-sp` health response (where `test/e2e`
+deliberately hand-decodes into its own minimal struct — see the test plan's
+"What's real here" note — to avoid a `replace`-directive dependency on the
+parent module from this nested one), `control-plane`'s provider-types
+package is an independent, already-external, already-pinned dependency
+(`go.mod`'s existing `v0.0.0-20260629133201-6c16c0654018`) with a
+deliberately minimal transitive footprint (confirmed empirically: `go mod
+tidy` in `test/e2e` pulled in only `oapi-codegen/runtime` and small
+`go-openapi`/testify-adjacent packages, no `k8s.io/client-go` or similar) —
+so it carries none of the "heavy transitive deps" risk REQ-E2E-080 exists to
+avoid, while giving exact field-name fidelity (`health_status`,
+`service_type`, etc.) for free instead of risking drift from a hand-copied
+struct.
+
+**Related requirements:** REQ-E2E-050, REQ-E2E-060, REQ-E2E-080

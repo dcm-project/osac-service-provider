@@ -1,0 +1,12 @@
+# kind cluster config for the e2e workflow (REQ-E2E-010).
+#
+# A single control-plane node is sufficient: this cluster runs a handful of
+# lightweight Go-service pods for assertion purposes, not a load test (see
+# osac-service-provider#17's resource estimate, ~3-4.5 GB RAM total). kind's
+# built-in local-path StorageClass (default since kind v0.7) satisfies
+# control-plane's chart's Postgres/NATS PersistentVolumeClaims with no
+# further configuration.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane

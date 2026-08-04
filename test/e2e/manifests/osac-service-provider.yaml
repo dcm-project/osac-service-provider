@@ -1,0 +1,72 @@
+# osac-service-provider (REQ-E2E-030): this repo's own plain manifest,
+# wired against the real dcm-control-plane Service (installed separately
+# from control-plane's deploy/helm/dcm/ chart with Helm release name "dcm",
+# per osac-sp-e2e-suite.spec.md §2's component-wiring table) and the
+# osac-mock-provider Service (osac-mock-provider.yaml in this directory).
+# Env vars per internal/config/config.go's contract.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osac-service-provider
+  labels:
+    app.kubernetes.io/name: osac-service-provider
+    app.kubernetes.io/part-of: osac-sp-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osac-service-provider
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osac-service-provider
+    spec:
+      containers:
+        - name: osac-service-provider
+          image: osac-service-provider:e2e
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SP_OSAC_FULFILLMENT_ADDRESS
+              value: "osac-mock-provider:9090"
+            - name: SP_OSAC_OIDC_ISSUER_URL
+              value: "http://osac-mock-provider:9091"
+            - name: SP_OSAC_OIDC_CLIENT_ID
+              value: "e2e-client"
+            - name: SP_OSAC_OIDC_CLIENT_SECRET
+              value: "e2e-secret"
+            - name: DCM_REGISTRATION_URL
+              value: "http://dcm-control-plane:8080/api/v1alpha1"
+            - name: SP_ENDPOINT
+              value: "http://osac-service-provider:8080"
+          readinessProbe:
+            httpGet:
+              path: /api/v1alpha1/clusters/health
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /api/v1alpha1/clusters/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: osac-service-provider
+  labels:
+    app.kubernetes.io/name: osac-service-provider
+    app.kubernetes.io/part-of: osac-sp-e2e
+spec:
+  selector:
+    app.kubernetes.io/name: osac-service-provider
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
