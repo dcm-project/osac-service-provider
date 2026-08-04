@@ -651,3 +651,28 @@ headers to the same handler instance must get back two different
 pre-fix, construction-time-fixed `doc` value could never satisfy.
 
 **Related requirements:** REQ-MOCK-080
+
+## DD-090: `test/e2e`'s TC-E2E-070 asserts `control-plane`'s real `"ready"` vocabulary, not `osac-sp`'s `"healthy"`
+
+**Decision:** TC-E2E-070's assertion on `control-plane`'s `ListProviders`
+`health_status` field checks for the literal string `"ready"`
+(`healthStatusReady`, a local constant mirroring `control-plane`'s own
+unexported `internal/sp/store/model.HealthStatusReady`), not `"healthy"`.
+
+**Rationale:** the test-plan's original TC-E2E-070 description assumed
+`control-plane` would echo whatever status string the polled provider's own
+`/health` endpoint returns. The first real e2e run proved that assumption
+wrong: `control-plane`'s `healthcheck.Monitor.performHealthCheck` reads the
+polled provider's `status` field and translates it into its **own**
+three-value vocabulary (`model.HealthStatusReady = "ready"` /
+`HealthStatusUnhealthy = "unhealthy"` / `HealthStatusUnavailable =
+"unavailable"`, confirmed directly against `control-plane`'s source in the
+Go module cache) — it does not pass the polled string through verbatim.
+`osac-sp`'s own `/health` reporting `"healthy"` and `control-plane` recording
+`"ready"` for that same provider are therefore both correct, independent
+statements at two different layers, not a contract mismatch. This is exactly
+the class of cross-repo wire-contract fact this e2e tier exists to pin down
+empirically rather than assume (spec's `AC-E2E-030` note: "confirmed against
+the real API at implementation time").
+
+**Related requirements:** REQ-E2E-060

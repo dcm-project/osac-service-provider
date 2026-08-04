@@ -61,13 +61,22 @@ var _ = Describe("osac-sp health, against the real mock backend", func() {
 				}
 			}
 			return statuses
-		}, 60*time.Second, 5*time.Second).Should(And(
-			HaveLen(2),
-			ContainElement("healthy"),
-			Not(ContainElement("<unset>")),
-		), "control-plane's healthcheck.Monitor must have polled osac-sp's own /health endpoint(s) at least once and recorded a healthy status for both registrations")
+		}, 60*time.Second, 5*time.Second).Should(
+			ConsistOf(healthStatusReady, healthStatusReady),
+			"control-plane's healthcheck.Monitor must have polled osac-sp's own /health endpoint(s) at least once and recorded a healthy status for both registrations")
 	})
 })
+
+// healthStatusReady is control-plane's own vocabulary for a provider whose
+// backing /health check succeeded (internal/sp/store/model.HealthStatusReady
+// in control-plane's own source — not re-exported via its generated REST
+// client types, so duplicated here as a literal). It deliberately does not
+// echo osac-sp's own "healthy" string: the two are different layers'
+// independent vocabularies (osac-sp describing its own OSAC connectivity vs.
+// control-plane describing its poll of osac-sp's /health endpoint), and this
+// suite is exactly what confirmed that distinction against the real wire
+// contract (see DD-090).
+const healthStatusReady = "ready"
 
 func getHealth(path string) health {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
