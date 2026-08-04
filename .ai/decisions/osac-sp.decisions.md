@@ -760,3 +760,68 @@ cancellation, not an elapsed window, is what actually stops retrying) as
 regression coverage — see `.ai/test-plans/osac-sp-unit.test-plan.md`.
 
 **Related requirements:** REQ-REG-052
+
+## DD-092: TC-E2E-050/060 poll (`Eventually`) for `osac-sp`'s health status instead of asserting it in a single request
+
+**Decision:** `test/e2e/health_test.go`'s `eventuallyHealthy` helper wraps
+`GET /api/v1alpha1/{clusters,vms}/health` in `Eventually(..., 30*time.Second,
+500*time.Millisecond).Should(Equal("healthy"))`, returning the converged
+response for further field assertions. TC-E2E-050 and TC-E2E-060 now both
+call it independently, rather than each calling the prior single-shot
+`getHealth` directly.
+
+**Rationale:** prompted directly by the user questioning a suspiciously fast
+(~1.8s) `kubectl wait --for=condition=Available` in a
+[passing run](https://github.com/dcm-project/osac-service-provider/actions/runs/30959010814/job/92158554429)
+right after DD-091 landed — "are you sure osac was deployed?" Investigating
+that question surfaced a real, separate latent flakiness risk (not the
+question's literal premise: the deployment *was* genuine — image already
+`kind load`-ed, `Deployment`/`Service` objects created, pod scheduled — but
+the reasoning for *why* "Available" in ~1.8s is unsurprising, and *not*
+strong evidence of full OSAC connectivity, exposed the actual bug below).
+
+`kubectl wait --for=condition=Available` and Kubernetes' own `readinessProbe`
+both only check the HTTP status code (2xx) of `GET
+/api/v1alpha1/clusters/health`. Per `internal/health.Handler.checkHealth`
+(and CLAUDE.md's documented API design, DD-010), that endpoint **always**
+returns HTTP `200` — the real health verdict is only in the JSON body's
+`status` field (`"healthy"`/`"unhealthy"`), which is deliberately invisible
+to a plain `httpGet` probe. So "Available" in ~1.8s only proves the
+container started and its HTTP server bound — not that `osac-sp`'s
+`internal/osac.Bootstrap` had actually finished its real OIDC token fetch +
+gRPC probe against `osac-mock-provider` yet.
+
+Auditing what *does* prove that led to the actual finding: TC-E2E-050/060
+(pre-fix) called `getHealth` exactly once and asserted `status ==
+"healthy"` directly, with no retry. In the run under discussion, this
+"worked" only because Ginkgo v2 by default randomizes the order of
+*top-level containers* between runs (a fresh, printed "Random Seed" each
+run — confirmed non-deterministic), and this run happened to schedule the
+"registration" `Describe` block — whose TC-E2E-040 spec unconditionally
+`Consistently`-waits a fixed 90 seconds — before the "health" `Describe`
+block, incidentally giving `Bootstrap` 90+ seconds of real wall-clock time
+to converge before the health assertions ever ran. Nothing guarantees that
+ordering: a run whose seed schedules "health" first could hit the
+single-shot check within ~1-2s of pod start, before `Bootstrap`'s
+async OIDC/gRPC handshake against `osac-mock-provider` (itself racing
+against `osac-mock-provider`'s own pod becoming `Ready` and its Service
+gaining endpoints) necessarily completes — the exact same class of
+startup-timing race DD-091 fixed in `Server.Run`'s own internal readiness
+gate, just on this suite's side instead of `osac-sp`'s.
+
+The fix makes each `It` self-sufficient rather than implicitly depending on
+another, unrelated `Describe` block's incidental duration — matching the
+polling discipline TC-E2E-070 already used for exactly the same class of
+async-convergence reason. Priority given to per-spec independence (each
+`It` converges on its own) over relying on Ginkgo's within-container
+declaration-order guarantee (which does hold, but is a more fragile,
+implicit inter-spec dependency to lean on than making every spec correct in
+isolation, including under `--focus`/individual execution).
+
+No REQ/AC change: `.ai/specs/osac-sp-e2e-suite.spec.md`'s AC-E2E-030 already
+just requires the body to report healthy, not a specific
+single-shot-vs-polling implementation strategy. `.ai/test-plans/
+osac-sp-e2e-suite.test-plan.md`'s TC-E2E-050/060 descriptions were updated
+to document the polling discipline explicitly.
+
+**Related requirements:** REQ-E2E-060

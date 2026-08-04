@@ -31,15 +31,14 @@ type health struct {
 var _ = Describe("osac-sp health, against the real mock backend", func() {
 	// TC-E2E-050 / AC-E2E-030
 	It("reports the cluster health endpoint as healthy with no failure detail", func() {
-		h := getHealth("/api/v1alpha1/clusters/health")
-		Expect(h.Status).To(Equal("healthy"))
+		h := eventuallyHealthy("/api/v1alpha1/clusters/health")
 		Expect(h.Detail).To(BeEmpty(), "a non-empty detail means either the OIDC token or the OSAC gRPC probe failed")
 	})
 
 	// TC-E2E-060 / AC-E2E-030
 	It("reports the vm health endpoint identically to the cluster one", func() {
-		clusterHealth := getHealth("/api/v1alpha1/clusters/health")
-		vmHealth := getHealth("/api/v1alpha1/vms/health")
+		clusterHealth := eventuallyHealthy("/api/v1alpha1/clusters/health")
+		vmHealth := eventuallyHealthy("/api/v1alpha1/vms/health")
 		Expect(vmHealth.Status).To(Equal(clusterHealth.Status))
 		Expect(vmHealth.Detail).To(Equal(clusterHealth.Detail))
 	})
@@ -77,6 +76,34 @@ var _ = Describe("osac-sp health, against the real mock backend", func() {
 // suite is exactly what confirmed that distinction against the real wire
 // contract (see DD-090).
 const healthStatusReady = "ready"
+
+// eventuallyHealthy polls path until it reports "healthy", returning the
+// final response for further assertions.
+//
+// This is deliberately not a single getHealth call: osac-sp's real OIDC
+// token fetch + gRPC probe against osac-mock-provider (internal/osac.
+// Bootstrap) run asynchronously in the background and are not gated by
+// either the Kubernetes Deployment's Available condition (which the
+// workflow's "Wait for readiness" step waits on, but which only requires a
+// 2xx HTTP response — osac-sp deliberately reports its real status in the
+// body, not the HTTP code, per DD-010) or by this suite's own BeforeSuite
+// reachability check (which similarly only requires *a* response, not a
+// healthy one). A single-shot check here would only pass reliably by
+// accident of Ginkgo's default randomized top-level container ordering
+// happening to run TC-E2E-040's 90-second registration-cycle wait (in the
+// other Describe block) first, incidentally giving Bootstrap time to
+// converge before these specs ever ran — exactly the kind of hidden,
+// non-deterministic startup-timing assumption this e2e tier exists to
+// catch (see DD-091's near-identical root cause in Server.Run's own
+// internal readiness gate; DD-092 for this one).
+func eventuallyHealthy(path string) health {
+	var h health
+	Eventually(func() string {
+		h = getHealth(path)
+		return h.Status
+	}, 30*time.Second, 500*time.Millisecond).Should(Equal("healthy"))
+	return h
+}
 
 func getHealth(path string) health {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
