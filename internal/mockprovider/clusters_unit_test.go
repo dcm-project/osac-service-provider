@@ -100,6 +100,18 @@ var _ = Describe("ClustersServer", func() {
 		Expect(listResp.GetItems()[0].GetId()).To(Equal("b"))
 		Expect(listResp.GetSize()).To(Equal(int32(1)))
 		Expect(listResp.GetTotal()).To(Equal(int32(3)))
+
+		// A negative offset clamps to 0 (all three items, in order).
+		negResp, err := srv.List(ctx, &publicv1.ClustersListRequest{Offset: proto.Int32(-5)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(negResp.GetItems()).To(HaveLen(3))
+		Expect(negResp.GetItems()[0].GetId()).To(Equal("a"))
+
+		// An offset beyond the collection size clamps to empty, not an error.
+		overResp, err := srv.List(ctx, &publicv1.ClustersListRequest{Offset: proto.Int32(100)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(overResp.GetItems()).To(BeEmpty())
+		Expect(overResp.GetTotal()).To(Equal(int32(3)))
 	})
 
 	// TC-U-124: Delete removes a known id; a second Delete is NotFound

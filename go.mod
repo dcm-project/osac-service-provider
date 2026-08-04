@@ -8,6 +8,7 @@ require (
 	github.com/dcm-project/control-plane v0.0.0-20260629133201-6c16c0654018
 	github.com/getkin/kin-openapi v0.145.0
 	github.com/go-chi/chi/v5 v5.3.1
+	github.com/google/uuid v1.6.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0
 	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.1
@@ -27,7 +28,6 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/oapi-codegen/runtime v1.6.0 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
