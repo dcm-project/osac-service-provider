@@ -192,6 +192,21 @@ remains unaddressed by the time this SP approaches a production rollout.
 Full writeup: [enhancements#96](https://github.com/dcm-project/enhancements/pull/96)
 ("Authentication" and "Risks and Mitigations" sections).
 
+**Second consumer of the same `AUTH_DISABLED=true` default, found via the
+kind-based e2e infra:** `test/e2e`'s registration/health test files
+(`osac-sp-e2e-suite`, DD-089/090) call `control-plane`'s real
+`GET /api/v1alpha1/providers` with no `Authorization` header at all and get
+`200`s — confirmed this is the *same* transitional default, not a separate
+gap: `control-plane`'s OpenAPI spec declares `bearerAuth` security on every
+path (including these GETs) via a single global `auth.Middleware`
+(`internal/auth/middleware.go`), but that middleware is a no-op whenever
+`AUTH_DISABLED=true`. If `control-plane`'s chart/deployment ever flips that
+default (e.g. by setting `AUTH_ISSUER_URL`), this e2e suite's unauthenticated
+`cpclient` calls will start failing with `401`s alongside `osac-sp`'s own
+registration POSTs — one fix (giving this SP a real bearer credential to
+send) would need to cover both call sites, not just the registration path
+this decision originally scoped.
+
 **This is not just a client-library swap — `control-plane`'s CRUD-dispatch
 model differs materially from `environment-agent`'s, which matters for
 future milestones even though it doesn't block this one:**
