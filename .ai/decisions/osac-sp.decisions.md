@@ -56,6 +56,10 @@ running code, and confirms the identical convention directly:
 `{registered endpoint}/health` construction, appended per-`Provider`-row.
 This decision needed no change for the Phase 1 pivot (DD-050); if anything,
 it is now verified against running code rather than an unimplemented spec.
+The three-state (Ready/Unhealthy/Unavailable) derivation this confirmation
+refers to — already documented here and in the enhancement doc's own "SP
+Health Check" section — got its first *live* (not just source-read)
+confirmation via the kind-based e2e infra; see DD-090.
 
 **Related requirements:** REQ-HTTP-020, REQ-HTTP-025, REQ-HLT-010, REQ-HLT-015
 
