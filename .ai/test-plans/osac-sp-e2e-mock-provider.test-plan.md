@@ -75,6 +75,8 @@ test, no further fake/mock layer needed underneath it.
 | TC-U-137 | Token endpoint issues a bearer token for a `client_credentials` grant | REQ-MOCK-090, AC-MOCK-100 | `POST /token` with `grant_type=client_credentials` and HTTP Basic auth credentials; assert `200`, decoded JSON has non-empty `access_token`, `token_type == "Bearer"`, `expires_in > 0`. |
 | TC-U-138 | Token endpoint rejects a non-`client_credentials` grant type | REQ-MOCK-100, AC-MOCK-110 | `POST /token` with `grant_type=authorization_code`; assert `400` and decoded JSON's `error` field is non-empty. |
 | TC-U-139 | Token endpoint rejects a request with no `grant_type` at all | REQ-MOCK-100, AC-MOCK-110 | `POST /token` with an empty form body; assert `400` and decoded JSON's `error` field is non-empty. |
+| TC-U-140 | Token endpoint rejects a request whose form body isn't parseable at all | REQ-MOCK-100 | `POST /token` with a body containing invalid percent-encoding (`grant_type=%zz`), making `r.ParseForm()` itself fail (as opposed to merely resolving to a missing/wrong `grant_type`); assert `400` and decoded JSON's `error` field is non-empty. Closes a coverage gap found during implementation (the `ParseForm` error branch). |
+| TC-U-141 | An encode failure while writing any OIDC response is logged, not panicked | — | Same technique as `internal/httperror/write_unit_test.go`'s TC-U-092: a `http.ResponseWriter` whose every `Write` call fails; call `ServeHTTP` for the discovery-document path; assert no panic and the logger recorded `"failed to encode OIDC stub response"`. Closes a coverage gap found during implementation (the `errchkjson`-driven encode-error branch). |
 
 ---
 
@@ -93,6 +95,6 @@ test, no further fake/mock layer needed underneath it.
 | `Clusters`/`ComputeInstances` CRUD | REQ-MOCK-020, 030, 040, 050, 060 | AC-MOCK-010, 020, 030, 040, 050, 060 | 12 (TC-U-114..125) | — | Pyramid invariant: every REQ/AC pair here has a dedicated TC-U; no dedicated TC-I since TC-I-031 already proves the wire-level round trip for the shared gRPC/HTTP plumbing, and the CRUD semantics are pure in-memory logic with no networking edge cases left to add at the integration tier. |
 | `Subnets`/`VirtualNetworks` CRUD | REQ-MOCK-021, 030, 040, 050, 060 | AC-MOCK-040, 050, 070 | 8 (TC-U-126..133) | — | |
 | `Capabilities` | REQ-MOCK-070 | AC-MOCK-080 | 1 (TC-U-134) | — | |
-| OIDC discovery + token | REQ-MOCK-080, 090, 100 | AC-MOCK-090, 100, 110 | 5 (TC-U-135..139) | — | |
+| OIDC discovery + token | REQ-MOCK-080, 090, 100 | AC-MOCK-090, 100, 110 | 7 (TC-U-135..141) | — | TC-U-140/141 added post-hoc to close `ParseForm`- and encode-error coverage gaps. |
 | Binary wiring (real listeners, real `osac.Bootstrap`) | REQ-MOCK-010, 070, 080, 090, 110 | AC-MOCK-120 | — | 1 (TC-I-031) | Closes the pyramid invariant for every REQ above by proving the real transport, not just the in-memory logic each REQ's TC-U already covers. |
-| **Total** | 11 | 12 | **26** | **1** | |
+| **Total** | 11 | 12 | **28** | **1** | |

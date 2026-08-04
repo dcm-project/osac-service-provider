@@ -1,7 +1,10 @@
 package mockprovider_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +16,18 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/mockprovider"
 )
 
+// failingResponseWriter wraps an httptest.ResponseRecorder but fails every
+// Write call, so a test can exercise the OIDCHandler's json-encode-failure
+// branch (TC-U-141) without a real broken network connection — same
+// pattern as internal/httperror/write_unit_test.go's TC-U-092.
+type failingResponseWriter struct {
+	*httptest.ResponseRecorder
+}
+
+func (w *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("simulated write failure")
+}
+
 // newOIDCTestServer starts a real httptest.Server hosting a
 // mockprovider.OIDCHandler whose discovery documents advertise that same
 // server's own /token path — mirroring how cmd/osac-mock-provider must
@@ -21,7 +36,7 @@ import (
 func newOIDCTestServer() *httptest.Server {
 	ts := httptest.NewUnstartedServer(nil)
 	tokenURL := "http://" + ts.Listener.Addr().String() + "/token"
-	ts.Config.Handler = mockprovider.NewOIDCHandler(tokenURL)
+	ts.Config.Handler = mockprovider.NewOIDCHandler(tokenURL, slog.New(slog.DiscardHandler))
 	ts.Start()
 	return ts
 }
@@ -42,7 +57,7 @@ var _ = Describe("OIDCHandler", func() {
 	It("serves the oauth-authorization-server discovery document with the correct token_endpoint (TC-U-135)", func() {
 		resp, err := http.Get(ts.URL + "/.well-known/oauth-authorization-server")
 		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
 		var doc struct {
@@ -57,7 +72,7 @@ var _ = Describe("OIDCHandler", func() {
 	It("serves the openid-configuration discovery document with the correct token_endpoint (TC-U-136)", func() {
 		resp, err := http.Get(ts.URL + "/.well-known/openid-configuration")
 		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
 		var doc struct {
@@ -78,7 +93,7 @@ var _ = Describe("OIDCHandler", func() {
 
 		resp, err := http.DefaultClient.Do(req)
 		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
 		var tok struct {
@@ -97,7 +112,7 @@ var _ = Describe("OIDCHandler", func() {
 		form := url.Values{"grant_type": {"authorization_code"}}
 		resp, err := http.Post(ts.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
 
 		var body struct {
@@ -111,7 +126,7 @@ var _ = Describe("OIDCHandler", func() {
 	It("rejects a request with no grant_type at all (TC-U-139)", func() {
 		resp, err := http.Post(ts.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader(""))
 		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
 
 		var body struct {
@@ -119,5 +134,36 @@ var _ = Describe("OIDCHandler", func() {
 		}
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 		Expect(body.Error).NotTo(BeEmpty())
+	})
+
+	// TC-U-140: token endpoint rejects a request whose form body isn't
+	// parseable at all (as opposed to merely missing/wrong grant_type)
+	It("rejects a request with an unparseable form body (TC-U-140)", func() {
+		resp, err := http.Post(ts.URL+"/token", "application/x-www-form-urlencoded", strings.NewReader("grant_type=%zz"))
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+
+		var body struct {
+			Error string `json:"error"`
+		}
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		Expect(body.Error).NotTo(BeEmpty())
+	})
+
+	// TC-U-141: an encode failure (write error) is logged, not panicked
+	It("logs, and does not panic, when the underlying writer fails (TC-U-141)", func() {
+		var logBuf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+		handler := mockprovider.NewOIDCHandler("http://example.invalid/token", logger)
+
+		w := &failingResponseWriter{ResponseRecorder: httptest.NewRecorder()}
+		req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+
+		Expect(func() {
+			handler.ServeHTTP(w, req)
+		}).NotTo(Panic())
+
+		Expect(logBuf.String()).To(ContainSubstring("failed to encode OIDC stub response"))
 	})
 })
