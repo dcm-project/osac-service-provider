@@ -573,3 +573,36 @@ avoid, while giving exact field-name fidelity (`health_status`,
 struct.
 
 **Related requirements:** REQ-E2E-050, REQ-E2E-060, REQ-E2E-080
+
+---
+
+## DD-088: Patch around control-plane#42 instead of forking the chart or blocking on it
+
+**Decision:** the workflow installs `control-plane`'s chart with
+`helm install` (no `--wait`), then `kubectl rollout status`-waits on
+Postgres/NATS, then `kubectl patch`es `dcm-control-plane`'s
+`wait-for-postgres` init container's `securityContext.runAsNonRoot` to
+`false` (strategic merge, only that one field), then `kubectl
+rollout status`-waits on `dcm-control-plane` itself.
+
+**Rationale:** empirically, `control-plane`'s own chart's
+`dcm.waitForPostgres` helper sets `runAsNonRoot: true` with no `runAsUser`
+against the official `postgres:16-alpine` image (root-by-default), which the
+kubelet permanently refuses to start on plain Kubernetes (`kind` has no
+OpenShift-SCC-style automatic non-root UID injection) —
+`CreateContainerConfigError`, confirmed via a real run of this workflow
+(first real evidence anyone in DCM has produced that this chart doesn't
+install on non-OpenShift Kubernetes at all). Filed upstream as
+[control-plane#42](https://github.com/dcm-project/control-plane/issues/42)
+per this project's standing practice of flagging cross-repo inconsistencies
+to their owning team rather than silently working around them. Forking the
+chart was rejected for the same reason as DD-084 (this repo consumes
+`control-plane` as a published artifact, not a fork); blocking this PR on
+`control-plane#42` landing and releasing was rejected as directly
+contradicting "ready to run asap." The patch touches only the one field
+actually causing the failure, leaving the chart's other hardening
+(`allowPrivilegeEscalation`, `capabilities.drop`, `seccompProfile`) intact.
+**This step should be deleted once control-plane#42 is fixed and released**
+— it is not a permanent feature of this workflow.
+
+**Related requirements:** REQ-E2E-020

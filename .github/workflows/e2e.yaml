@@ -72,8 +72,24 @@ jobs:
           helm install dcm control-plane/deploy/helm/dcm \
             --set dcmUi.enabled=false \
             --set controlPlane.route.enabled=false \
-            --set controlPlane.ingress.enabled=false \
-            --wait --timeout 5m
+            --set controlPlane.ingress.enabled=false
+          kubectl rollout status statefulset/dcm-postgres --timeout=5m
+          kubectl rollout status statefulset/dcm-nats --timeout=5m
+
+      # Workaround for a bug in control-plane's own chart, not this repo's:
+      # its `wait-for-postgres` init container sets `runAsNonRoot: true`
+      # without `runAsUser` against the official postgres image (which has
+      # no non-root default user), so the kubelet permanently refuses to
+      # start it (CreateContainerConfigError) on plain Kubernetes/kind —
+      # only OpenShift's SCC-injected runAsUser sidesteps this, which is
+      # presumably why it's gone unnoticed. Filed upstream as
+      # https://github.com/dcm-project/control-plane/issues/42; drop this
+      # step once that's fixed and released.
+      - name: Work around control-plane#42 (wait-for-postgres init container)
+        run: |
+          kubectl patch deployment dcm-control-plane --type strategic -p \
+            '{"spec":{"template":{"spec":{"initContainers":[{"name":"wait-for-postgres","securityContext":{"runAsNonRoot":false}}]}}}}'
+          kubectl rollout status deployment/dcm-control-plane --timeout=5m
 
       - name: Apply osac-service-provider + osac-mock-provider manifests
         run: kubectl apply -f test/e2e/manifests/
