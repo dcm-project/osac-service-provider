@@ -28,8 +28,11 @@ import (
 // report the same underlying condition (DD-010, REQ-HLT-015).
 const healthPath = "/api/v1alpha1/clusters/health"
 
-// readinessProbeTimeout is how long to wait for the server to confirm it is
-// serving HTTP requests before giving up and skipping the onReady callback.
+// readinessProbeTimeout bounds a single readiness-probing window (see
+// waitForReady). It does not bound the overall wait before onReady fires:
+// waitForReadyUntilCancelled retries fresh windows indefinitely, so an
+// elapsed window alone never permanently skips onReady — only context
+// cancellation does (DD-091).
 const readinessProbeTimeout = 5 * time.Second
 
 // readinessProbeInterval is the polling interval for the self-probe that
@@ -226,6 +229,43 @@ func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handl
 	}
 }
 
+// waitForReadyUntilCancelled repeatedly runs waitForReady's bounded polling
+// window, retrying whenever one window elapses without success, until
+// either a window succeeds or ctx is cancelled (REQ-REG-052/AC-REG-031).
+//
+// A single elapsed window is not itself evidence the server will never
+// become ready — under transient CPU contention (observed in the kind-based
+// e2e infra, see DD-091) a cold-starting pod's /health responses can be slow
+// enough to exceed one readinessProbeTimeout window while the server is
+// otherwise healthy and about to succeed. Treating that as permanent and
+// skipping onReady forever would silently and irrecoverably prevent
+// registration for the rest of the process's life, which is worse than
+// retrying: ctx cancellation (real shutdown) remains the only true stopping
+// condition, consistent with every other retry loop in this codebase
+// (internal/osac's OIDC token fetch and gRPC dial).
+func (s *Server) waitForReadyUntilCancelled(ctx context.Context, addr string) error {
+	for {
+		err := s.waitForReady(ctx, addr)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		s.logger.Warn("readiness probe window elapsed, retrying", "error", err)
+
+		// Paces retries so a deterministic, immediately-failing waitForReady
+		// error (e.g. TC-U-089's malformed-address case) can't spin this
+		// loop tightly; also lets ctx cancellation interrupt the wait
+		// promptly rather than only being observed at the next window.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(s.readinessInterval):
+		}
+	}
+}
+
 // waitForReady polls the server's health endpoint until it returns a
 // response or the context/timeout expires.
 func (s *Server) waitForReady(ctx context.Context, addr string) error {
@@ -274,7 +314,7 @@ func (s *Server) Run(ctx context.Context, ln net.Listener) error {
 	}()
 
 	if s.onReady != nil {
-		if err := s.waitForReady(ctx, ln.Addr().String()); err != nil {
+		if err := s.waitForReadyUntilCancelled(ctx, ln.Addr().String()); err != nil {
 			s.logger.Error("readiness probe failed, skipping onReady callback", "error", err)
 		} else {
 			func() {

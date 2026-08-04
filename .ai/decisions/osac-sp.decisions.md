@@ -695,3 +695,68 @@ empirically rather than assume (spec's `AC-E2E-030` note: "confirmed against
 the real API at implementation time").
 
 **Related requirements:** REQ-E2E-060
+
+## DD-091: `Server.Run`'s internal readiness self-probe retries indefinitely (gated only by ctx cancellation), not just once per a fixed timeout
+
+**Decision:** `internal/apiserver.Server.Run` now gates its `onReady`
+callback (which starts registration, REQ-REG-050) on a new
+`waitForReadyUntilCancelled` method, not a single call to `waitForReady`.
+`waitForReadyUntilCancelled` repeatedly runs `waitForReady`'s existing
+bounded polling window (unchanged: still `readinessProbeTimeout` = 5s,
+`readinessProbeInterval` = 50ms, still fully covered by TC-U-077/078/079/089
+exactly as before) and, whenever one window elapses without success, retries
+a fresh window — paced by `readinessInterval` between attempts — instead of
+giving up. The **only** way `waitForReadyUntilCancelled` ever returns an
+error (and thus permanently skips `onReady`) is if the server's shutdown
+context is cancelled before a window ever succeeds.
+
+**Rationale:** a real run of the kind-based e2e infra
+(`osac-sp-e2e-suite`, [#20](https://github.com/dcm-project/osac-service-provider/pull/20),
+[failed CI run](https://github.com/dcm-project/osac-service-provider/actions/runs/30958037842/job/92155524084))
+caught a genuine production reliability bug in `osac-sp` itself — not the
+mock or the e2e infra — that no unit or integration test had exercised: the
+`kind` node was running Postgres, NATS, `control-plane`, `osac-sp`, and
+`osac-mock-provider` simultaneously, and under that real CPU contention the
+pod's own `/health` responses slowed to ~1s each (visible in
+`osac-service-provider`'s logs). The pre-fix `Run` called `waitForReady`
+exactly once with its single 5-second window; that window elapsed with zero
+successful responses, so `Run` logged `"readiness probe failed, skipping
+onReady callback"` and **never called `onReady` again for the rest of the
+process's life** — `internal/registration.Registrar` never started, so
+`osac-sp` never registered with `control-plane` at all. The pod otherwise
+ran fine: `/health` kept returning 200 OK moments later once contention
+eased, and the pod's own Kubernetes readinessProbe (a separate, external,
+repeatedly-retried check — unaffected by this bug) considered it `Ready`
+throughout. Only the one-shot internal self-probe's single window mattered,
+and it had already permanently given up before the node settled down. All
+four e2e specs downstream of registration (TC-E2E-020/030/040/070) then
+correctly failed with "expected 1 provider, got 0" / "control-plane never
+recorded ready" after their own 60s polling windows — the e2e assertions
+were right; `osac-sp`'s own startup resilience was the actual bug.
+
+This directly contradicts this codebase's own stated resilience philosophy
+(CLAUDE.md's "Non-blocking bootstrap": OIDC token fetch and the OSAC gRPC
+dial both "retry indefinitely with backoff" and never permanently give up)
+— the readiness self-probe was the one bootstrap step that *did* permanently
+give up, and no REQ/AC ever specified that one-shot behavior; it was purely
+an implementation artifact never deliberately specified (TC-U-078's mapped
+REQ-HTTP-030 is actually about SIGTERM graceful shutdown, reused loosely for
+lack of a dedicated readiness REQ at the time). A pod that is merely slow to
+start — not permanently broken — should not be permanently prevented from
+ever registering; requiring a full pod restart to recover from a transient
+startup hiccup is a worse outcome than simply retrying, since retrying costs
+nothing (the probe target is the process's own loopback listener, not a
+remote/rate-limited service, so no backoff is needed the way the OIDC/gRPC
+loops need one against a real remote server).
+
+The fix deliberately leaves `waitForReady` itself, and its three existing
+unit tests (TC-U-078's timeout-error contract, TC-U-079's
+context-cancellation contract, TC-U-089's malformed-address contract), fully
+unchanged — the bug was in `Run`'s one-shot *use* of `waitForReady`'s
+result, not in `waitForReady`'s own per-window behavior. Added REQ-REG-052 /
+AC-REG-031 to codify the required resilient-gating behavior, and TC-U-153
+(retries past one elapsed window and still succeeds) / TC-U-154 (context
+cancellation, not an elapsed window, is what actually stops retrying) as
+regression coverage — see `.ai/test-plans/osac-sp-unit.test-plan.md`.
+
+**Related requirements:** REQ-REG-052

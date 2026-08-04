@@ -96,6 +96,69 @@ var _ = Describe("waitForReady", func() {
 	})
 })
 
+var _ = Describe("waitForReadyUntilCancelled", func() {
+	// TC-U-153: a single elapsed readiness window must not permanently
+	// abandon readiness — it must retry a fresh window and succeed once the
+	// server actually becomes reachable. Regression test for a real bug the
+	// kind-based e2e infra caught under genuine CPU contention (DD-091):
+	// the pre-fix Run gave up and skipped onReady forever after exactly one
+	// timed-out window, even though the server went on to serve requests
+	// successfully for the rest of its life.
+	It("retries after a readiness window times out, instead of giving up permanently (TC-U-153)", func() {
+		// Reserve a loopback address and release it immediately, so the
+		// first window's probes hit "connection refused" and the window
+		// times out — nothing is listening there yet.
+		reserve, err := net.Listen("tcp", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		addr := reserve.Addr().String()
+		Expect(reserve.Close()).To(Succeed())
+
+		s := New(testCfg(), discardLogger, nil, WithReadinessTiming(20*time.Millisecond, 5*time.Millisecond))
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- s.waitForReadyUntilCancelled(context.Background(), addr) }()
+
+		// Let at least one full window (20ms) elapse with nothing
+		// listening, so waitForReadyUntilCancelled must already be on its
+		// (at least) second retry attempt by the time we start listening.
+		time.Sleep(60 * time.Millisecond)
+
+		ln, err := net.Listen("tcp", addr)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = ln.Close() }()
+		mux := http.NewServeMux()
+		mux.HandleFunc(healthPath, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		go func() { _ = http.Serve(ln, mux) }() //nolint:gosec // test-only loopback server, no real deployment risk
+
+		Eventually(errCh, "500ms").Should(Receive(BeNil()))
+	})
+
+	// TC-U-154: ctx cancellation (real shutdown), not an elapsed window,
+	// remains the only way to stop retrying — this is what distinguishes
+	// "give up because a window timed out" (the pre-fix, now-removed
+	// behavior) from "give up because the process is shutting down"
+	// (correct in both the pre- and post-fix behavior).
+	It("stops retrying and returns once ctx is cancelled, with nothing ever listening (TC-U-154)", func() {
+		reserve, err := net.Listen("tcp", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		addr := reserve.Addr().String()
+		Expect(reserve.Close()).To(Succeed())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		s := New(testCfg(), discardLogger, nil, WithReadinessTiming(20*time.Millisecond, 5*time.Millisecond))
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- s.waitForReadyUntilCancelled(ctx, addr) }()
+
+		time.Sleep(50 * time.Millisecond) // let at least one window elapse and retry begin
+		cancel()
+
+		var gotErr error
+		Eventually(errCh, "200ms").Should(Receive(&gotErr))
+		Expect(gotErr).To(HaveOccurred())
+	})
+})
+
 var _ = Describe("requestInstance", func() {
 	// TC-U-084: returns nil for a nil request, rather than panicking on a
 	// nil pointer dereference.

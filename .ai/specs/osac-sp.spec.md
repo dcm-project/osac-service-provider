@@ -543,6 +543,7 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 | REQ-REG-030 | The cluster registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/clusters`; the vm registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/vms` | MUST | |
 | REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object | MUST | DD-050 — `control-plane`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these; carried via its `additionalProperties` catch-all shape (same as `environment-agent`'s would have been) |
 | REQ-REG-050 | Both registrations MUST execute asynchronously and MUST NOT block server startup | MUST | |
+| REQ-REG-052 | The internal readiness self-probe that gates when registration starts (REQ-REG-050) MUST keep retrying if a single probing window elapses without a successful response, rather than permanently abandoning registration; it MUST give up only when the server's shutdown context is cancelled | MUST | DD-091 |
 | REQ-REG-060 | The two registrations MUST be independent: a failure (including non-retryable 4xx) on one MUST NOT stop or delay the other | MUST | |
 | REQ-REG-070 | Registration MUST retry with exponential backoff on retryable failures (connection errors, 5xx) | MUST | |
 | REQ-REG-090 | Non-retryable 4xx responses, including `409 Conflict` (name or provider ID already in use — no per-service-type carve-out under `control-plane`), MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-050 |
@@ -599,6 +600,15 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 - **When** registration is initiated
 - **Then** the server MUST already be accepting HTTP requests
 - **And** both registrations MUST run concurrently with request handling
+
+##### AC-REG-031: Resilient readiness gating
+
+- **Validates:** REQ-REG-052
+- **Given** the HTTP server is slow to confirm its own readiness (e.g. transient CPU contention during pod startup) and one internal probing window elapses without a successful response
+- **When** the shutdown context has not been cancelled
+- **Then** the self-probe MUST retry a fresh window rather than giving up
+- **And** registration MUST still start once the server does confirm readiness, however many windows that takes
+- **And** the self-probe MUST permanently stop only if the shutdown context is cancelled before readiness is ever confirmed
 
 ##### AC-REG-040: Independent registration outcomes
 
