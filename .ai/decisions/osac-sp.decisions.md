@@ -352,3 +352,126 @@ underlying string literal, so only `api/v1alpha1/openapi.yaml`'s enum
 values (and regenerated code) change — no handler logic changes.
 
 **Related requirements:** REQ-HTTP-070
+
+---
+
+## DD-080: Single `internal/mockprovider` package, not one sub-package per service
+
+**Decision:** `cmd/osac-mock-provider`'s five fake gRPC services
+(`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`,
+`VirtualNetworks`) and its OIDC discovery+token stub all live directly in
+one flat package, `internal/mockprovider` — one Go file per
+service/concern (`clusters.go`, `computeinstances.go`, `subnets.go`,
+`virtualnetworks.go`, `capabilities.go`, `oidc.go`, `store.go`,
+`config.go`), not `internal/mockprovider/clusters/`,
+`internal/mockprovider/oidc/`, etc.
+
+**Rationale:** every file in this package shares one concern — faking
+OSAC's backend surface for `osac-sp`'s own client code to dial — and all
+five gRPC services share the exact same generic, unexported storage engine
+(`resourceStore[T]`, see DD-081), which would otherwise need to be exported
+(or duplicated) to cross sub-package boundaries for no benefit: nothing
+outside this mock ever needs to depend on, say, `mockprovider/clusters`
+without also needing the other four services and the OIDC stub to form a
+working substitute. This mirrors the existing repo's own flat-package
+convention for single-concern internal packages (e.g. `internal/osac`,
+`internal/registration`) rather than the multi-file-but-nested-directory
+shape of, say, `internal/api/server` (which is generated, not
+hand-authored).
+
+**Note on DD numbering:** this decision (and DD-081..083 below) start at
+DD-080 on a branch cut directly from `main` while `main`'s own decisions
+file still ends at DD-070. The still-unmerged M3/M4 branches independently
+also claim `DD-080`+ for unrelated decisions of their own — an accepted,
+temporary numbering collision until whichever branch merges first, same
+already-established pattern as this repo's other concurrently-developed
+milestone branches. Whichever of this branch/M3/M4 merges last renumbers its
+own new entries to continue after the numbers already merged.
+
+**Related requirements:** REQ-MOCK-010, REQ-MOCK-070, REQ-MOCK-080
+
+---
+
+## DD-081: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
+
+**Decision:** All four CRUD-capable fake services (`Clusters`,
+`ComputeInstances`, `Subnets`, `VirtualNetworks`) share one generic
+`resourceStore[T]` type (`internal/mockprovider/store.go`) — a
+`sync.Mutex`-protected, `map[string]T`-backed, insertion-ordered store with
+`create`/`insert`/`get`/`list`/`delete` methods — rather than each service
+hand-rolling its own map/mutex pair. `create` performs the duplicate-`id`
+check `Clusters`/`ComputeInstances` need (`ALREADY_EXISTS` on a second
+`Create` for the same caller-supplied `id`, REQ-MOCK-020); `insert` skips
+that check unconditionally, for `Subnets`/`VirtualNetworks`' always-fresh,
+server-generated `id`s (REQ-MOCK-021), where a duplicate-`id` branch would
+be dead code (a `google/uuid` v4 collision is not a realistically testable
+condition).
+
+**Rationale:** the four services' CRUD semantics are otherwise identical
+(insertion-ordered `List` with `offset`/`limit` clamping, `NOT_FOUND` on
+unknown `id` for `Get`/`Delete`) and differ only in (a) whether `Create`
+accepts a caller-supplied `id` or always generates one and (b) which
+protobuf message type and status-enum value each wraps around the stored
+object. Centralizing the storage engine keeps that duplication to a single
+`switch`-free generic type instead of four near-identical hand-rolled
+implementations, while still keeping each service's own file focused on its
+service-specific translation logic (building the right typed
+request/response, setting the right initial `status.state`).
+
+**Consequence:** `resourceStore[T]` is unexported — it is purely an
+implementation detail of this package's five services, never referenced by
+`cmd/osac-mock-provider` or any external caller, so it carries no API
+stability obligation of its own.
+
+**Related requirements:** REQ-MOCK-020, REQ-MOCK-021, REQ-MOCK-030,
+REQ-MOCK-040, REQ-MOCK-050, REQ-MOCK-060
+
+---
+
+## DD-082: No real JWT signing for the OIDC token stub
+
+**Decision:** `internal/mockprovider.OIDCHandler`'s `/token` endpoint issues
+a static, opaque bearer token string (not a real, cryptographically signed
+JWT) for a valid `client_credentials` grant, and never validates the
+`client_id`/`client_secret` credentials presented against anything.
+
+**Rationale:** the mock's own gRPC server (the thing that token is actually
+*for*) doesn't enforce auth either — `internal/mockprovider`'s five gRPC
+services accept every request unconditionally, regardless of what (if any)
+bearer metadata is attached — so a real, verifiable JWT would be signing a
+promise nothing on either side of this mock ever checks. The only real
+production code this mock needs to satisfy end-to-end is `osac-sp`'s own
+`internal/osac.discoveringTokenSource`/`clientcredentials.Config`-backed
+token fetch (REQ-OSAC-010/011), which only requires a syntactically valid
+OAuth2 token response body (`access_token`/`token_type`/`expires_in`) — it
+never inspects the token's own contents. Matches
+`cmd/osac-service-provider/main_integration_test.go`'s own fake Keycloak,
+which takes the identical shortcut for the same reason.
+
+**Related requirements:** REQ-MOCK-090
+
+---
+
+## DD-083: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
+
+**Decision:** `internal/mockprovider.Config` is a flat, two-field struct
+(`GRPCAddress`, `OIDCAddress`, both required/fail-fast) read via
+`MOCK_GRPC_ADDRESS`/`MOCK_OIDC_ADDRESS` — a new, independent env-var
+namespace, not a reuse of `internal/config.Config`'s shape or any of its
+existing `SP_`/`DCM_` prefixes.
+
+**Rationale:** this binary is not a service provider registering with
+`control-plane` and has no OSAC client of its own to configure — the only
+two things it needs are its own two listen addresses — so
+`internal/config.Config`'s `Server`/`OSAC`/`DCM`/`Provider` sub-structs
+would each be either entirely unused or actively misleading (e.g. an `OSAC`
+sub-struct on the binary that *is* the OSAC stand-in). A fresh, minimal,
+purpose-built `Config` avoids importing meaning (and required env vars)
+that don't apply, while still reusing the same `caarlos0/env` loading
+convention (`LoadConfig`, fail-fast via the `notEmpty` tag) as
+`internal/config.Load`. The `MOCK_` prefix (rather than reusing `SP_`)
+keeps this binary's env vars unambiguously distinct from the real SP's own,
+since both binaries may run side by side in the same `kind` pod/namespace
+once Phase 2 wires them together.
+
+**Related requirements:** REQ-MOCK-110
