@@ -7,10 +7,14 @@ name: E2E (kind + real control-plane)
 
 on:
   push:
-    branches: [main, 'release/v*']
+    # TODO(#17/FLPATH-4759): drop 'e2e/kind-control-plane-infra' once this
+    # workflow lands on main — workflow_dispatch only works for workflows
+    # that already exist on the default branch, so this is the only way to
+    # get CI runs while iterating on the workflow itself pre-merge.
+    branches: [main, 'release/v*', 'e2e/kind-control-plane-infra']
   pull_request:
     branches: [main, 'release/v*']
-  workflow_dispatch: {} # manual runs while iterating on this workflow itself
+  workflow_dispatch: {}
 
 env:
   KIND_CLUSTER_NAME: osac-sp-e2e
