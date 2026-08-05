@@ -68,7 +68,20 @@ backend; that substitution is the one documented, deliberate scope boundary
 
 ---
 
-## 5. Coverage Matrix
+## 5. Cluster/VM CRUD (real dispatch into the real mock backend)
+
+Requires `osac-sp` built with Milestone 3 ([#13](https://github.com/dcm-project/osac-service-provider/pull/13)) and Milestone 4 ([#14](https://github.com/dcm-project/osac-service-provider/pull/14))'s REST handlers — not yet on `main`. Validated pre-merge against a throwaway local branch combining this suite with both PRs (evidence linked from the PR introducing these TCs); this branch's own CI will not go green on these until #13/#14 merge.
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-E2E-090 | Cluster Create → Get → List → Delete round-trips over real HTTP into the real mock backend | REQ-E2E-090, AC-E2E-050 | `POST /api/v1alpha1/clusters?id=<unique>` with a valid body; assert `201` with `status == "ACTIVE"` (no polling — the real mock resolves synchronously, REQ-MOCK-030); Create's own response never carries `kubeconfig` (REQ-CREATE-050); `GET` the same id and assert `status == "ACTIVE"` **and** a non-empty, valid-base64 `kubeconfig` (REQ-GET-020); `GET` (list) and assert the id appears; `DELETE` and assert `204`; `GET` again and assert `404`. |
+| TC-E2E-091 | Cluster Delete tolerates an already-deleted id | REQ-E2E-091, AC-E2E-050 | `POST` a cluster, `DELETE` it (`204`), `DELETE` it again; assert the second call also returns `204`, not `404`. |
+| TC-E2E-100 | VM Create → Get → List → Delete round-trips over real HTTP into the real mock backend | REQ-E2E-100, AC-E2E-060 | Same shape as TC-E2E-090 against `/api/v1alpha1/vms`, asserting `status == "RUNNING"` (no polling — `COMPUTE_INSTANCE_STATE_RUNNING` is set synchronously on `Create`, REQ-MOCK-030). |
+| TC-E2E-101 | VM Delete tolerates an already-deleted id | REQ-E2E-101, AC-E2E-060 | Same shape as TC-E2E-091 against `/api/v1alpha1/vms`. |
+
+---
+
+## 6. Coverage Matrix
 
 | Spec Topic | REQ Count | AC Count | TC-E2E | Notes |
 |---|---|---|---|---|
@@ -76,4 +89,6 @@ backend; that substitution is the one documented, deliberate scope boundary
 | Registration contract | REQ-E2E-050 | AC-E2E-020 | 3 (TC-E2E-020..040) | |
 | Health-check propagation | REQ-E2E-060 | AC-E2E-030 | 3 (TC-E2E-050..070) | |
 | CI failure-mode hygiene | REQ-E2E-040, 070 | AC-E2E-040 | 1 (TC-E2E-080) | Manual/opt-in variant, not run on every PR (would otherwise double the job's steady-state runtime for a check that doesn't need re-proving every merge). |
-| **Total** | 8 | 4 | **8** | This tier is deliberately thin (2 behaviors — registration, health — per spec §1's "what exists today" scope) and additive: TC-E2E-090+ is reserved for CRUD/NATS assertions once Milestone 3/4/5 land on `main` (spec §6). |
+| Cluster CRUD (Milestone 3) | REQ-E2E-090, 091 | AC-E2E-050 | 2 (TC-E2E-090, 091) | Gated on #13 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
+| VM CRUD (Milestone 4) | REQ-E2E-100, 101 | AC-E2E-060 | 2 (TC-E2E-100, 101) | Gated on #14 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
+| **Total** | 12 | 6 | **12** | NATS status-event round-trips (Milestone 5) remain the only tracked follow-up (spec §6) — no implementation exists yet to test. |

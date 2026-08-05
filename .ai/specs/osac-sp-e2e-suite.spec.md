@@ -20,12 +20,22 @@ a *mocked provider backend only*. It validates the `osac-sp` ↔
 (`FLPATH-4760`, OCP + real `fulfillment-service`) is `control-plane`'s /
 QE's, tracked separately, and gated on Milestone 4/5 landing.
 
-**What's asserted in this phase, concretely:** registration success and
-health-check propagation — the two behaviors that exist on `main` today
-(Milestone 1/2). CRUD dispatch (Milestone 3/4) and NATS status-event
-round-trips (Milestone 5) are **not yet assertable** because those
-milestones' PRs are still unmerged; §6 tracks them as explicit follow-ups
-rather than silently deferring them.
+**What's asserted in this phase, concretely:** registration success,
+health-check propagation, and — as of REQ-E2E-090/100 below — Cluster and
+VM CRUD dispatch (Milestone 3/4). NATS status-event round-trips
+(Milestone 5) are **still not yet assertable**, since that milestone has no
+implementation yet at all (§6 continues to track it as an explicit
+follow-up).
+
+**Note on Milestone 3/4 sequencing:** REQ-E2E-090/100's test cases were
+validated against a throwaway local branch merging this branch with
+[#13](https://github.com/dcm-project/osac-service-provider/pull/13)/[#14](https://github.com/dcm-project/osac-service-provider/pull/14)
+before being added here (evidence: the passing run linked from the PR that
+introduced these requirements) — `osac-sp`'s own REST CRUD handlers aren't
+on `main` yet, so this branch's *own* CI cannot exercise them until those
+two PRs merge. The requirements/test cases are specified now regardless,
+per this repo's spec-first convention, rather than waiting for the review
+backlog to clear.
 
 **Reference documents:**
 
@@ -103,6 +113,10 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | REQ-E2E-060 | The e2e suite MUST assert that `osac-sp`'s own two health endpoints report `status: healthy` with `connected: true` against the real `osac-mock-provider` (real gRPC dial + real OIDC token fetch, not bufconn) | MUST | Exercises `internal/osac.Bootstrap` end-to-end for the first time outside its own unit/integration tests |
 | REQ-E2E-070 | The job MUST tear down the `kind` cluster on both success and failure, and MUST upload each component's logs as a build artifact on failure | MUST | Matches `fulfillment-service`'s own IT harness convention (verified in the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19)) |
 | REQ-E2E-080 | The e2e suite MUST run as a separate nested Go module (own `go.mod`) so its dependencies (a `control-plane` REST client, `k8s.io/client-go` if used for readiness polling) never enter the main module's `go.mod`/`go.sum` | MUST | Same isolation rationale as the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19) |
+| REQ-E2E-090 | The e2e suite MUST exercise a full Cluster CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend (not the bufconn fakes Milestone 3's own unit/integration tests use), asserting `Create`'s response reaches the mock's terminal ready status (`ACTIVE`) and the subsequent `Get`'s response additionally carries a non-empty `kubeconfig` — `Create` itself never populates `kubeconfig` (`osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-050; only `Get` does, conditionally on `ACTIVE`, REQ-GET-020) — without any polling for convergence, since the real mock resolves `Create` synchronously to `CLUSTER_STATE_READY` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 3 (Cluster CRUD); see sequencing note above |
+| REQ-E2E-091 | Cluster `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-DELETE-020 | MUST | Milestone 3 |
+| REQ-E2E-100 | The e2e suite MUST exercise a full VM CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend, asserting the created object reaches the mock's terminal ready status (`RUNNING`) without any polling for convergence — the real mock resolves `Create` synchronously to `COMPUTE_INSTANCE_STATE_RUNNING` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 4 (VM CRUD); see sequencing note above |
+| REQ-E2E-101 | VM `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMDELETE-020 | MUST | Milestone 4 |
 
 ---
 
@@ -143,6 +157,31 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 - **Then** the job fails (does not hang to its outer CI timeout) and uploads
   `kubectl logs`/`describe` output for every component as a build artifact
 
+##### AC-E2E-050: Cluster CRUD round-trips end-to-end against the real mock backend
+
+- **Validates:** REQ-E2E-090, REQ-E2E-091
+- **Given** the healthy stack from AC-E2E-010, running `osac-sp` built with
+  Milestone 3's Cluster CRUD handlers
+- **When** the e2e suite `POST`s a valid Cluster create request to real
+  `osac-sp`, then `GET`s it, `LIST`s it, and `DELETE`s it — all over real
+  HTTP, no bufconn
+- **Then** `Create`/`Get` both report `status: ACTIVE` with a non-empty
+  `kubeconfig`, `List` includes the created object, `Delete` returns `204`,
+  a subsequent `Get` returns `404`, and a second `Delete` of the same id
+  still returns `204`
+
+##### AC-E2E-060: VM CRUD round-trips end-to-end against the real mock backend
+
+- **Validates:** REQ-E2E-100, REQ-E2E-101
+- **Given** the healthy stack from AC-E2E-010, running `osac-sp` built with
+  Milestone 4's VM CRUD handlers
+- **When** the e2e suite `POST`s a valid VM create request to real
+  `osac-sp`, then `GET`s it, `LIST`s it, and `DELETE`s it — all over real
+  HTTP, no bufconn
+- **Then** `Create`/`Get` both report `status: RUNNING`, `List` includes
+  the created object, `Delete` returns `204`, a subsequent `Get` returns
+  `404`, and a second `Delete` of the same id still returns `204`
+
 ---
 
 ## 5. Non-Functional Requirements
@@ -156,9 +195,14 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 
 ## 6. Explicitly out of scope (this phase)
 
-- **CRUD dispatch assertions** (Cluster/ComputeInstance/Subnet/VirtualNetwork
-  create-via-`control-plane`) — Milestone 3/4 aren't merged to `main` yet;
-  this branch is stacked on `main`+Phase 1 only. Follow-up once M3/M4 land.
+- **Subnet/VirtualNetwork CRUD assertions as their own top-level
+  scenarios** — REQ-E2E-090/100's VM lifecycle already exercises
+  `Subnets/List` and `VirtualNetworks/Create` indirectly (M4's default
+  network provisioning, REQ-VMNET-010..050), but no e2e case asserts
+  those two services' CRUD endpoints directly the way Cluster/VM's own are
+  asserted — no `osac-sp` REST surface exposes them (they're OSAC-internal
+  to VM's network resolution), so there's nothing over HTTP to assert
+  against.
 - **NATS status-event round-trip** — Milestone 5, not yet designed.
 - **Real `fulfillment-service` + real Keycloak** (Tier B, closing the
   auth-claims-fidelity gap identified after Phase 1 — see
