@@ -8,7 +8,7 @@ now merged as [#20](https://github.com/dcm-project/osac-service-provider/pull/20
 which validates the `osac-sp` ↔ `control-plane` contract against real
 `control-plane` but a **hand-written mock** (`osac-mock-provider`) standing
 in for the entire OSAC backend. That mock never validates auth at all
-([DD-082](../decisions/osac-sp.decisions.md)) — a real, deliberate gap for
+([DD-132](../decisions/osac-sp.decisions.md)) — a real, deliberate gap for
 Phase A's scope, but one that means Phase A's green CI proves nothing about
 whether `osac-sp`'s real OIDC client-credentials flow and gRPC calls would
 actually be *accepted* by real OSAC.
@@ -26,7 +26,7 @@ afterward.
 that spike proved `osac-project/fulfillment-service`'s own `it` Go package
 (a live external dependency importing their internal integration-test
 harness) is technically importable. This spec deliberately does **not**
-build on that approach — see DD-093 for why — and instead vendors the
+build on that approach — see DD-143 for why — and instead vendors the
 specific, minimal pieces needed (a static Keycloak realm config; pinned,
 published image/chart tags) so this repo owns and controls its own e2e
 infrastructure rather than depending on upstream's internal test tooling,
@@ -64,7 +64,7 @@ still being reachable.
   `control-plane`+`osac-sp` deployment as-is
 - [PR #19](https://github.com/dcm-project/osac-service-provider/pull/19) —
   the spike that established `it.NewTool()` is importable (informational;
-  not depended on by this spec's chosen approach, see DD-093)
+  not depended on by this spec's chosen approach, see DD-143)
 - `osac-project/osac`'s `fulfillment-service/it/charts/keycloak/files/realm.json` —
   source of the vendored realm config (§2, Phase 1)
 - `osac-project/osac`'s `fulfillment-service/docs/INSTALL.md` — authoritative
@@ -105,7 +105,7 @@ kind cluster
 - Closes the auth-fidelity gap for exactly what M1 exercises: `osac-sp`'s
   real OIDC client-credentials token fetch and gRPC dial must be **accepted**
   by real Keycloak + real OSAC gRPC auth interceptor, not a mock that never
-  checks either (DD-082).
+  checks either (DD-132).
 
 ### Phase 2 (specified now, built once `osac-sp` M2+ CRUD lands)
 
@@ -138,7 +138,7 @@ kind cluster
 | Keycloak deployment | Official Keycloak image, our own plain manifest, `--import-realm` against the vendored file | Upstream's own chart is unpublished and explicitly dev-only (own README's disclaimer); the Operator-based production path is unnecessary weight for a throwaway CI cluster |
 | Postgres (for Keycloak + fulfillment-service DBs) | Our own manifest, same pattern as `control-plane`'s Postgres | Upstream's own IT-tier Postgres chart is generic/disposable — nothing OSAC-specific to vendor |
 | `fulfillment-service`, `osac-operator`, BMFO | Pin real, versioned images (`ghcr.io/osac-project/fulfillment-service:vX.Y.Z`, etc.) and their published OCI Helm charts directly — **no source build, no `it` package Go dependency** | These are genuine, stable, versioned upstream artifacts (confirmed: 80+ real semver tags on GHCR) — treating them as external dependencies is the same posture already used for `control-plane`'s image in Phase A |
-| `osac-aap-mock` (Phase 2 only) | New, hand-written binary in this repo, `cmd/osac-aap-mock/` | No reusable upstream artifact exists (confirmed — §4/DD-094) |
+| `osac-aap-mock` (Phase 2 only) | New, hand-written binary in this repo, `cmd/osac-aap-mock/` | No reusable upstream artifact exists (confirmed — §4/DD-144) |
 
 ---
 

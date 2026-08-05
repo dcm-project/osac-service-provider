@@ -828,7 +828,7 @@ to document the polling discipline explicitly.
 
 ---
 
-## DD-093: Tier B vendors specific OSAC config/artifacts rather than importing `fulfillment-service`'s `it` Go package
+## DD-143: Tier B vendors specific OSAC config/artifacts rather than importing `fulfillment-service`'s `it` Go package
 
 **Decision:** `.ai/specs/osac-sp-e2e-tier-b.spec.md` ("Tier B") deploys real
 Postgres, real Keycloak (official image + a vendored, static realm-config
@@ -874,7 +874,7 @@ both unaffected by the repo move.
 
 ---
 
-## DD-094: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
+## DD-144: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
 
 **Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)
 will introduce a new binary, `cmd/osac-aap-mock/`, implementing enough of
@@ -882,7 +882,7 @@ AAP's REST surface (`GetTemplate`, `LaunchJobTemplate`/
 `LaunchWorkflowTemplate`, `GetJob`, `CancelJob`) for real `osac-operator`/
 BMFO reconciliation to reach a terminal state — built from scratch, the
 same way `osac-mock-provider` was for OSAC's own gRPC/OIDC surface
-(DD-080–083), not adapted from any existing OSAC-provided fake.
+(DD-130–133), not adapted from any existing OSAC-provided fake.
 
 **Rationale:** confirmed by direct source investigation across
 `osac-operator`, BMFO, and the wider `osac-project` org that no reusable
