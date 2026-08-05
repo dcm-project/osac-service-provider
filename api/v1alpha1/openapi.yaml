@@ -431,6 +431,7 @@ components:
           description: Optional passthrough to OSAC's `spec.network.*`.
         pull_secret:
           type: string
+          writeOnly: true
           description: Optional passthrough to OSAC's `spec.pull_secret`. Write-only.
         ssh_key:
           type: string
