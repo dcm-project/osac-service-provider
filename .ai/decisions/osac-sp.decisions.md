@@ -553,3 +553,44 @@ unblocking benefit (the actual outcome — status gets reported — is blocked
 on M3/M4 either way) adds review overhead without upside.
 
 **Related requirements:** none (process decision, not a functional one)
+
+---
+
+## Validation evidence: M3+M4+M5 merged worktree (DD-075)
+
+Per DD-075, the full stack was validated on a throwaway worktree merging all
+three still-independent branches, at these SHAs:
+
+- `feat/milestone-3-cluster-crud` @ `640caaa`
+- `feat/milestone-4-vm-crud` @ `0afb49d`
+- `feat/milestone-5-status-reporting` @ `1adc5ec`
+
+merged (in that order) onto a scratch branch (`tmp/m5-validate-merge2`) in a
+disposable `git worktree`, discarded after this evidence was captured — no
+artifact of it is committed to any real branch. Conflicts were mechanical and
+expected for two independently-developed OpenAPI branches sharing a base:
+`openapi.yaml`/generated code needed a structural (not textual) merge,
+`oapi-codegen`'s collision-avoidance then prefixes overlapping enum names
+(e.g. `VMStatusDELETED`/`ClusterStatusDELETED` instead of bare `DELETED`)
+requiring a handful of call-site updates in M3/M4's own pre-existing code,
+and a few test fixtures needed the analogous stub method for the
+sibling milestone's now-larger `StrictServerInterface`. None of this touches
+M5's own logic.
+
+Results on the merged tree:
+
+- `go build ./...`, `go vet ./...`: clean
+- `gofmt -l`: no files
+- `golangci-lint run ./...`: 0 issues
+- `make generate-api` against the merged `openapi.yaml`: byte-identical
+  output to what was already merged (no generator drift)
+- `ginkgo -r --race --cover`: 15 suites, 338 specs, all green; composite
+  98.7%. The two suites below 100% are both pre-existing, in-code documented
+  coverage exceptions, not artifacts of the merge: `Registration` (98.4%,
+  predates M5) and `StatusPublisher` (88.4%, `buildEnvelope`'s
+  `SetData`/`json.Marshal` branches and `NewPublisher`'s `jetstream.New`
+  branch — see the M5 test plan's coverage notes).
+
+Conclusion: M5's own branch is merge-clean against M3+M4 as of the above
+SHAs. The M5 PR can be opened now per DD-075, with this note (and these
+SHAs) linked as evidence, flagged blocked on #13/#14 for actual merge.
