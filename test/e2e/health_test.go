@@ -74,7 +74,7 @@ var _ = Describe("osac-sp health, against the real mock backend", func() {
 // independent vocabularies (osac-sp describing its own OSAC connectivity vs.
 // control-plane describing its poll of osac-sp's /health endpoint), and this
 // suite is exactly what confirmed that distinction against the real wire
-// contract (see DD-090).
+// contract (see DD-140).
 const healthStatusReady = "ready"
 
 // eventuallyHealthy polls path until it reports "healthy", returning the
@@ -94,8 +94,8 @@ const healthStatusReady = "ready"
 // other Describe block) first, incidentally giving Bootstrap time to
 // converge before these specs ever ran — exactly the kind of hidden,
 // non-deterministic startup-timing assumption this e2e tier exists to
-// catch (see DD-091's near-identical root cause in Server.Run's own
-// internal readiness gate; DD-092 for this one).
+// catch (see DD-141's near-identical root cause in Server.Run's own
+// internal readiness gate; DD-142 for this one).
 func eventuallyHealthy(path string) health {
 	var h health
 	Eventually(func() string {

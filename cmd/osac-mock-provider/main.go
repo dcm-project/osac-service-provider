@@ -78,7 +78,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	publicv1.RegisterVirtualNetworksServer(grpcSrv, mockprovider.NewVirtualNetworksServer())
 
 	// OIDCHandler derives each response's token_endpoint from that
-	// request's own Host header (DD-089), so it needs no address
+	// request's own Host header (DD-139), so it needs no address
 	// computed from oidcLn here.
 	oidcSrv := &http.Server{Handler: mockprovider.NewOIDCHandler(logger)}
 
