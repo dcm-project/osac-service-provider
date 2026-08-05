@@ -46,6 +46,7 @@ import (
 
 	cpv1alpha1 "github.com/dcm-project/control-plane/api/sp/v1alpha1/provider"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 func TestMainIntegration(t *testing.T) {
@@ -618,5 +619,64 @@ var _ = Describe("Full-stack smoke test (integration)", func() {
 
 		Eventually(func() []fakeProviderRequest { return h.controlPlane.RequestsFor("cluster") }, "2s", "20ms").ShouldNot(BeEmpty())
 		Eventually(func() []fakeProviderRequest { return h.controlPlane.RequestsFor("vm") }, "2s", "20ms").ShouldNot(BeEmpty())
+	})
+
+	// TC-I-521 (REQ-VERSION-090, AC-VERSION-100): with
+	// SP_VERSION_MATRIX_PATH left unset, a cold start advertises exactly
+	// versionmatrix.DefaultMatrix's SupportedVersions() — not a
+	// coincidentally-similar hand-typed list.
+	It("advertises DefaultMatrix's SupportedVersions() when SP_VERSION_MATRIX_PATH is unset (TC-I-521)", func() {
+		h := startSP(true)
+		defer h.stop()
+
+		Eventually(func() []fakeProviderRequest { return h.controlPlane.RequestsFor("cluster") }, "2s", "20ms").ShouldNot(BeEmpty())
+
+		req := h.controlPlane.RequestsFor("cluster")[0]
+		versions, ok := req.provider.Metadata.Get("kubernetes_supported_versions")
+		Expect(ok).To(BeTrue())
+		Expect(versions).To(ConsistOf(versionmatrix.DefaultMatrix.SupportedVersions()))
+	})
+})
+
+// TC-I-520 (REQ-VERSION-090, AC-VERSION-040/090): startup fails fast when
+// SP_VERSION_MATRIX_PATH is set but invalid — the process exits non-zero
+// before the HTTP listener opens, and before any registration request
+// reaches the fake control-plane. Uses mainRun() directly (same in-process
+// technique as TC-U-097) rather than the startSP harness, since run()
+// returns its error synchronously here, before any background goroutine
+// (osac.Bootstrap.Start, registrar.Start) is ever launched.
+var _ = Describe("Full-stack startup fails fast on an invalid version matrix (integration)", func() {
+	It("fails fast before opening the listener or registering, when SP_VERSION_MATRIX_PATH is invalid (TC-I-520)", func() {
+		keycloak := newFakeKeycloak()
+		defer keycloak.Close()
+		controlPlane := newFakeProviderServer()
+		defer controlPlane.Close()
+
+		grpcAddr := reserveLoopbackAddr()
+		serverAddr := reserveLoopbackAddr()
+
+		t := GinkgoT()
+		t.Setenv("SP_SERVER_ADDRESS", serverAddr)
+		t.Setenv("SP_SERVER_SHUTDOWN_TIMEOUT", "2s")
+		t.Setenv("SP_OSAC_FULFILLMENT_ADDRESS", grpcAddr)
+		t.Setenv("SP_OSAC_OIDC_ISSUER_URL", keycloak.IssuerURL())
+		t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
+		t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
+		t.Setenv("SP_OSAC_TLS_ENABLED", "false")
+		t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
+		t.Setenv("DCM_REGISTRATION_URL", controlPlane.URL())
+		t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
+		t.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster")
+		t.Setenv("SP_PROVIDER_VM_NAME", "osac-sp-vm")
+		t.Setenv("SP_VERSION_MATRIX_PATH", "/nonexistent/path/version-matrix.json")
+
+		Expect(mainRun()).To(Equal(1))
+
+		// No listener was bound: serverAddr is still free to claim.
+		ln, err := net.Listen("tcp", serverAddr)
+		Expect(err).NotTo(HaveOccurred())
+		_ = ln.Close()
+
+		Expect(controlPlane.Requests()).To(BeEmpty())
 	})
 })
