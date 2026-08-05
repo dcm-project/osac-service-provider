@@ -2,6 +2,8 @@ package mockprovider
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -12,9 +14,13 @@ import (
 // ClustersServer is a real, in-memory fake of osac.public.v1.Clusters
 // (REQ-MOCK-010). Create requires and uses the caller-supplied
 // object.id (REQ-MOCK-020), matching how osac-sp itself sets Cluster.id
-// for idempotent create-retry (M3 DD-100). Update and the kubeconfig/
-// password RPCs are left on the embedded UnimplementedClustersServer
-// default (gRPC UNIMPLEMENTED) — osac-sp never calls them (see spec §1).
+// for idempotent create-retry (M3 DD-100). Update and the
+// GetKubeconfigViaHttp/password RPCs are left on the embedded
+// UnimplementedClustersServer default (gRPC UNIMPLEMENTED) — osac-sp never
+// calls them. Plain GetKubeconfig, by contrast, IS implemented below
+// (REQ-MOCK-120): osac-sp's M3 Get handler calls it for every ACTIVE-status
+// cluster, which every mock-created cluster immediately is (REQ-MOCK-030).
+// See DD-095 for how this correction was found.
 type ClustersServer struct {
 	publicv1.UnimplementedClustersServer
 
@@ -59,4 +65,18 @@ func (s *ClustersServer) Delete(_ context.Context, req *publicv1.ClustersDeleteR
 		return nil, err
 	}
 	return &publicv1.ClustersDeleteResponse{}, nil
+}
+
+// GetKubeconfig returns a stub, non-functional kubeconfig for a known id,
+// and gRPC NOT_FOUND for an unknown one (REQ-MOCK-120) — mirroring the
+// other four CRUD-shaped services' Get semantics (REQ-MOCK-040). The
+// content is never parsed by osac-sp (internal/cluster.Service.Get copies
+// it through as an opaque base64 string), so a deterministic placeholder
+// is sufficient; it only needs to be present and valid base64.
+func (s *ClustersServer) GetKubeconfig(_ context.Context, req *publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error) {
+	if _, err := s.store.get(req.GetId()); err != nil {
+		return nil, err
+	}
+	stub := fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: %s\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: %s\n", req.GetId(), req.GetId())
+	return &publicv1.ClustersGetKubeconfigResponse{Kubeconfig: base64.StdEncoding.EncodeToString([]byte(stub))}, nil
 }

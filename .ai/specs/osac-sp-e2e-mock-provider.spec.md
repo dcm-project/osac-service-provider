@@ -29,10 +29,21 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
   `compute_instances_service.proto`; this mock does not evaluate them).
 - `Update` on any of the four CRUD-shaped services, and `Clusters`'
   `GetKubeconfig(ViaHttp)`/`GetPassword(ViaHttp)` — none of these are called
-  by `osac-sp` today (Milestone 3/4's architecture diagrams only ever invoke
-  `Create`/`Get`/`List`/`Delete`), so they are left on the generated
+  by `osac-sp` today, so they are left on the generated
   `Unimplemented*Server` default (gRPC `UNIMPLEMENTED`), which is itself an
-  accurate mock of "not part of this contract."
+  accurate mock of "not part of this contract." **Correction (see
+  REQ-MOCK-120):** this originally also listed plain `GetKubeconfig` as
+  out of scope on the assumption that "Milestone 3/4's architecture
+  diagrams only ever invoke Create/Get/List/Delete" — confirmed false once
+  Milestone 3's actual `internal/cluster.Service.Get` was read: it calls
+  `Clusters/GetKubeconfig` whenever the mapped status is `ACTIVE`
+  (`osac-sp-m3-cluster-crud.spec.md`'s REQ-GET-020), which every `Get` of a
+  mock-created cluster immediately is (REQ-MOCK-030 sets terminal
+  `CLUSTER_STATE_READY` right away). Leaving it `UNIMPLEMENTED` made every
+  such `Get` fail with a mapped `500` — caught empirically while building
+  M3/M4 e2e coverage on top of this mock, not from re-reading the
+  architecture diagrams alone. `GetKubeconfig(ViaHttp)`/`GetPassword*` stay
+  out of scope; only plain `GetKubeconfig` is corrected. See DD-095.
 - Real JWT signing/validation for the OIDC stub — the mock's own gRPC server
   never enforces auth (there is nothing downstream of the mock to protect),
   so the token only needs to satisfy `osac-sp`'s client, not a resource
@@ -141,6 +152,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 | REQ-MOCK-090 | The token endpoint MUST accept `POST` with `grant_type=client_credentials` (client_id/secret via HTTP Basic auth or form body) and respond `200` with a JSON body containing non-empty `access_token`, `token_type="Bearer"`, and a positive `expires_in` | MUST | |
 | REQ-MOCK-100 | The token endpoint MUST reject any request whose `grant_type` is missing or not `client_credentials` with HTTP `400` and an RFC 6749 §5.2-shaped `{"error": "..."}` body | MUST | |
 | REQ-MOCK-110 | The binary MUST load its gRPC and HTTP listen addresses from environment variables, failing fast (matching `internal/config.Load()`'s convention) when a required value is missing/empty, and MUST shut down both listeners gracefully on `SIGTERM`/`SIGINT` | MUST | |
+| REQ-MOCK-120 | `Clusters/GetKubeconfig` MUST return a non-empty, base64-encoded stub kubeconfig for a known `id`, and gRPC `NOT_FOUND` for an unknown one — mirroring the other four CRUD-shaped services' `Get` semantics (REQ-MOCK-040) | MUST | Correction to §1's original scope (see DD-095); backs Milestone 3's `internal/cluster.Service.Get` (REQ-GET-020) |
 
 ---
 
@@ -248,6 +260,14 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
   `Bootstrap.Probe(ctx).Connected` is `true` within a bounded wait — proving
   the mock is a genuine, real-transport substitute for OSAC before it is
   ever wired into `kind`
+
+##### AC-MOCK-130: GetKubeconfig round-trips for a known id, NotFound for an unknown one
+
+- **Validates:** REQ-MOCK-120
+- **Given** a cluster already created via `Clusters/Create`
+- **When** `Clusters/GetKubeconfig` is called with that cluster's `id`
+- **Then** the response's `kubeconfig` field is non-empty and valid base64
+- **And** calling it with an unknown `id` instead returns gRPC `NOT_FOUND`
 
 ---
 
