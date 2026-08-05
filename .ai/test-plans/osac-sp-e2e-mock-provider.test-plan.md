@@ -4,7 +4,7 @@ Scope: unit and integration tests for
 [`osac-sp-e2e-mock-provider.spec.md`](../specs/osac-sp-e2e-mock-provider.spec.md).
 Continues numbering from `main`'s current maximums (`TC-U-113`, `TC-I-030`)
 — same rebase-later caveat already documented by the M3/M4 branches' own
-numbering (DD-086).
+numbering (DD-126).
 
 **Framework:** Ginkgo v2 + Gomega. Files use the `_unit_test.go` /
 `_integration_test.go` suffix. Run a single case with:
