@@ -572,3 +572,131 @@ removes the "have to remember a separate target" failure mode. Verified
 
 **Related requirements:** REQ-CREATE-010, REQ-CREATE-060 (DD-110); process
 fix has no REQ-* of its own — it is tooling/workflow, not product behavior.
+
+---
+
+## DD-112: A new standalone `internal/versionmatrix` package, not a shared field on an existing type
+
+**Decision:** The version-translation compatibility matrix lives in a new,
+standalone top-level package, `internal/versionmatrix`, exposing a `Matrix`
+type, a `DefaultMatrix` value, and a `Load(path string) (Matrix, error)`
+function. It depends on nothing else in this repo (not even
+`api/v1alpha1`). `internal/registration.Registrar` and
+`internal/cluster.Service` each hold their own copy of the single `Matrix`
+value constructed once in `main.go` and passed to both.
+
+**Rationale:** Before this milestone, `internal/registration` and
+`internal/cluster` each maintained their own version list with no shared
+type between them, and — critically — **neither package currently imports
+the other**. Putting the shared `Matrix` type inside either package (e.g.
+exporting `cluster.ReleaseImageByVersion` for `registration` to import, or
+vice versa) would introduce a new, artificial coupling between two packages
+whose only real relationship is "both need to agree on the same set of
+supported Kubernetes versions" — not "one depends on the other's business
+logic." A new standalone package makes that shared dependency explicit and
+avoids having to pick an arbitrary "owning" side. `Matrix` is a plain
+`map[string]string`-backed value type (not a pointer, not a struct wrapping
+a mutex) specifically so both consumers can hold their own independent copy
+of the same immutable data with no shared-mutable-state/locking concern —
+the matrix is loaded exactly once at startup (`main.go`) and never mutated
+afterward by either consumer.
+
+**Related requirements:** REQ-VERSION-010, REQ-VERSION-020, REQ-VERSION-030
+
+## DD-113: Hard rejection of unsupported versions, at the existing `validateCreateRequest` pre-flight layer — not a silent fallback, and not a new error type
+
+**Decision:** When `provider_hints.osac.release_image` is absent and
+`spec.version` has no matrix entry, Create MUST be rejected with `400 Bad
+Request` (`codes.InvalidArgument`) **before ever calling OSAC** —
+superseding the pre-Milestone-6 behavior of `releaseImage()` silently
+returning `nil` and letting OSAC's per-template default `release_image`
+take effect unannounced. The check itself is added as one more `case` in
+`internal/handlers/cluster.Handler.validateCreateRequest` (Milestone 3's
+existing pre-flight validation function, REQ-CREATE-060), querying a new
+`Service.SupportsVersion(version string) bool` method rather than the
+`Handler` importing/holding its own copy of the matrix directly. No new
+`v1alpha1.ErrorType` enum value or OpenAPI schema change was needed:
+`INVALIDARGUMENT` already exists and already means exactly this ("bad
+input, rejected before ever reaching OSAC") per REQ-CREATE-060's existing
+precedent for the four structural validation failures `validateCreateRequest`
+already checks.
+
+Separately, `internal/versionmatrix.Load` itself fails fast — rather than,
+say, silently ignoring a malformed override file and falling back to
+`DefaultMatrix` — on three conditions when `path != ""`: the file is
+missing, the file is not valid JSON, or the file parses to zero entries.
+The third condition (valid-but-empty) is deliberately treated as an error
+rather than a legal (if useless) configuration: an operator-supplied
+override file that resolves to zero supported versions would silently
+brick every future Create call (every version request would be rejected)
+with no diagnostic pointing at the actual cause — the same
+fail-fast-over-silently-degrading philosophy REQ-XC-CFG-020 already applies
+to missing required env vars is extended here to a malformed *optional*
+one's referenced file, once that variable is actually set.
+
+**Rationale:** Mirrors the sibling `acm-cluster-service-provider`'s
+established, already-reviewed pattern for the identical problem (translating
+a DCM-facing Kubernetes version into a platform-specific release artifact) —
+hard rejection over silent fallback, and a full-replace (not merge) JSON
+override that itself fails fast on malformed input. Reusing
+`validateCreateRequest`/`mapError`/`internal/grpcerror` rather than
+inventing a new error path keeps this milestone's blast radius small: no
+`api/v1alpha1/openapi.yaml` change, no `make generate-api` diff, and every
+existing `TC-U-205`/`TC-U-206`/`AC-CREATE-040`/`AC-CREATE-050` test pattern
+for "reject before calling OSAC" is directly reusable as a template for
+this milestone's own `AC-VERSION-080`.
+
+**Related requirements:** REQ-VERSION-040, REQ-VERSION-070, REQ-VERSION-080
+
+## DD-114: Optional `SP_VERSION_MATRIX_PATH` env var, full-replace JSON override semantics
+
+**Decision:** `internal/config.Config` gains one new optional field,
+`SP_VERSION_MATRIX_PATH` (empty/unset is valid — means "use
+`DefaultMatrix`"). When set, `versionmatrix.Load` reads it as a JSON object
+and that object **entirely replaces** `DefaultMatrix` — it is not merged
+key-by-key with the default table.
+
+**Rationale:** Full-replace (not merge) was chosen because a merge
+semantic's behavior on key collision is inherently ambiguous (does the
+override file's `"1.29"` win, or does an operator have to repeat every
+entry they *don't* want to change just to be sure?) and because a partial
+merge silently keeps hardcoded defaults in effect that an operator
+overriding the file most likely intended to fully take over — matching the
+sibling SP precedent this milestone's plan explicitly adopted (DD-113).
+Making the var optional (rather than required, or defaulting to a
+committed-to-the-repo file path) avoids forcing every deployment to ship
+and mount a JSON file just to reproduce the same 5 entries `DefaultMatrix`
+already hardcodes — the override exists specifically for operators who need
+to diverge from those 5 entries (e.g. a newer OSAC catalog template
+becoming available before a new osac-sp release ships), not for normal
+operation.
+
+**Related requirements:** REQ-VERSION-040, REQ-VERSION-090
+
+## DD-115: Stack this milestone's branch/PR directly on `feat/milestone-3-cluster-crud`, not on `main`
+
+**Decision:** Unlike Milestone 5 (DD-075: a self-contained PR off `main`,
+validated against M3/M4 only in a throwaway merge worktree, since M5 only
+needed M3/M4's *types*), this milestone's branch is created directly from
+`feat/milestone-3-cluster-crud`'s tip and its eventual PR targets that
+branch, not `main`. It is flagged blocked on
+[`#13`](https://github.com/dcm-project/osac-service-provider/pull/13) (the
+M3 PR) only — not `#13` and `#14` like M5, since this milestone never
+touches VM code — and will be retargeted to `main` once `#13` merges,
+exactly like this repo's own existing e2e PR chain already does
+(`#24` on `#23` on `#20` on `#18`).
+
+**Rationale:** This milestone edits `internal/cluster/translate.go` and
+`internal/registration/registration.go` directly — both are Milestone 3
+files (the latter dating to Milestone 1, but modified during M3's
+development), not merely types M3 introduced. There is no self-contained
+way to implement this milestone against `main` alone: `main` does not yet
+have Cluster CRUD at all, so "make this build standalone against `main`"
+would be a fabricated constraint, not a real one — stacking directly says
+plainly that this milestone genuinely cannot exist independently of M3, the
+same way the e2e PR chain already stacks for the same structural reason.
+Stacking also keeps the PR diff small and reviewable (just this milestone's
+actual changes against M3's tip) with no throwaway-merge-worktree dance
+needed to validate it, unlike M5's situation.
+
+**Related requirements:** None directly — process/workflow decision.

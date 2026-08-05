@@ -26,7 +26,10 @@ confirmed scoping:
   Create endpoint is the **first actual consumer** of that placeholder
   concern (SC-001 originally noted "no cluster-create endpoint consumes it
   yet" — this milestone resolves that premise; see §4.1's translation table
-  for the placeholder this milestone uses in its place).
+  for the placeholder this milestone uses in its place). Milestone 6 stacks
+  its own branch directly on top of this milestone's branch (rather than on
+  `main`) specifically because it edits this file's `release_image`
+  translation directly — see `osac-sp-m6-version-matrix.spec.md`.
 
 **Reference documents:**
 
@@ -129,7 +132,7 @@ follows the [generic Cluster schema](https://github.com/dcm-project/enhancements
 | DCM Field | OSAC Field | Notes |
 |-----------|------------|-------|
 | `id` (query param) | `Cluster.id` | Sets OSAC's own identifier — see REQ-CREATE-040 (idempotency) |
-| `spec.version` | `spec.release_image` | Translated via a hardcoded placeholder table (REQ-CREATE-025) — full matrix is Milestone 6 |
+| `spec.version` | `spec.release_image` | Translated via the shared version-translation compatibility matrix (REQ-CREATE-025, `internal/versionmatrix` — Milestone 6) |
 | `spec.nodes.control_plane.*` | *(not sent)* | Hosted Control Planes manage the control plane internally — OSAC's `ClusterSpec` has no control-plane node-set concept |
 | `spec.nodes.worker.count` | `spec.node_sets[key].size` | `key` is the template's own node-set key (from `provider_hints.osac.template_id`), not a DCM-chosen name |
 | `spec.nodes.worker.cpu`/`memory`/`storage` | *(not sent)* | Informational only — `host_type` is fixed by the template (REQ-CREATE-070) |
@@ -148,7 +151,7 @@ follows the [generic Cluster schema](https://github.com/dcm-project/enhancements
 |----|-------------|----------|-------|
 | REQ-CREATE-010 | The SP MUST implement `POST /api/v1alpha1/clusters`, accepting a required `id` query parameter and a request body `{"spec": {...}}` — matching `control-plane`'s actual outbound dispatch shape, not a hypothetical/generic REST-resource shape. "Required" here is a runtime/behavioral requirement (REQ-CREATE-060) enforced by request validation, not the OpenAPI schema's `required` keyword — both `id` and the body's `spec` property are schema-optional for AEP-133 compliance | MUST | DD-080, DD-110 |
 | REQ-CREATE-020 | The SP MUST translate the request per the Field Mapping table above and call `osac.public.v1.Clusters/Create` with `Cluster.id` set to the `id` query parameter's exact value | MUST | |
-| REQ-CREATE-025 | `spec.version` MUST be translated to `release_image` via a hardcoded placeholder table (e.g. the same versions already used for `kubernetes_supported_versions`, REQ-REG-040) when `provider_hints.osac.release_image` is not supplied; this table does not need to be the full compatibility matrix (Milestone 6) | MUST | SC-001 (`osac-sp.spec.md`) |
+| REQ-CREATE-025 | `spec.version` MUST be translated to `release_image` via the shared version-translation compatibility matrix (`internal/versionmatrix`) when `provider_hints.osac.release_image` is not supplied | MUST | Superseded placeholder-table wording — see Milestone 6 (`osac-sp-m6-version-matrix.spec.md`, REQ-VERSION-060) for the matrix's actual design, JSON-override, and hard-rejection-of-unsupported-versions behavior |
 | REQ-CREATE-030 | The SP MUST set three ownership labels on `Cluster.metadata.labels` for every Create call: `dcm.io/managed-by="dcm"`, `dcm.io/instance-id="<id>"`, `dcm.io/service-type="cluster"` — merged with, not replacing, any caller-supplied `spec.metadata.labels` | MUST | |
 | REQ-CREATE-040 | If `Clusters/Create` returns gRPC `AlreadyExists` for the given `id`, the SP MUST call `Clusters/Get(id)` and return **that** object's current state as a successful Create response — MUST NOT surface `AlreadyExists` to the caller as an error | MUST | DD-100 |
 | REQ-CREATE-050 | A successful Create response MUST be `201 Created` with a body whose top-level `id` and `status` fields are always populated (never omitted/null) — `control-plane` persists these two fields with no presence validation of its own | MUST | |
