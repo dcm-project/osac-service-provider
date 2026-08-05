@@ -13,7 +13,7 @@ import (
 //
 // Implements REQ-CREATE-010 through REQ-CREATE-070.
 func (h *Handler) CreateCluster(ctx context.Context, req oapigen.CreateClusterRequestObject) (oapigen.CreateClusterResponseObject, error) {
-	if err := validateCreateRequest(req); err != nil {
+	if err := h.validateCreateRequest(req); err != nil {
 		return h.mapError(err), nil
 	}
 
@@ -35,7 +35,13 @@ func (h *Handler) CreateCluster(ctx context.Context, req oapigen.CreateClusterRe
 // ahead of this handler ever running. This is now the sole enforcement
 // point for REQ-CREATE-010/060's "control-plane always supplies both"
 // requirement.
-func validateCreateRequest(req oapigen.CreateClusterRequestObject) error {
+//
+// The final case (REQ-VERSION-080) hard-rejects an unsupported
+// spec.version instead of silently falling back to OSAC's template
+// default release_image (DD-113) — an explicit, non-empty
+// provider_hints.osac.release_image override bypasses this check
+// entirely, even for a version absent from h.svc's injected matrix.
+func (h *Handler) validateCreateRequest(req oapigen.CreateClusterRequestObject) error {
 	switch {
 	case req.Params.Id == nil || *req.Params.Id == "":
 		return grpcstatus.Error(codes.InvalidArgument, "id query parameter must not be empty")
@@ -49,7 +55,17 @@ func validateCreateRequest(req oapigen.CreateClusterRequestObject) error {
 		return grpcstatus.Error(codes.InvalidArgument, "spec.metadata.name is required")
 	case req.Body.Spec.ProviderHints.Osac.TemplateId == "":
 		return grpcstatus.Error(codes.InvalidArgument, "spec.provider_hints.osac.template_id is required")
+	case !hasReleaseImageOverride(req) && !h.svc.SupportsVersion(req.Body.Spec.Version):
+		return grpcstatus.Error(codes.InvalidArgument, "spec.version is not a supported Kubernetes version")
 	default:
 		return nil
 	}
+}
+
+// hasReleaseImageOverride reports whether req sets a non-empty
+// provider_hints.osac.release_image, which bypasses the matrix entirely
+// (REQ-VERSION-060/080).
+func hasReleaseImageOverride(req oapigen.CreateClusterRequestObject) bool {
+	override := req.Body.Spec.ProviderHints.Osac.ReleaseImage
+	return override != nil && *override != ""
 }
