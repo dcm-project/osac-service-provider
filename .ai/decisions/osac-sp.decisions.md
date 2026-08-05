@@ -59,7 +59,7 @@ it is now verified against running code rather than an unimplemented spec.
 The three-state (Ready/Unhealthy/Unavailable) derivation this confirmation
 refers to — already documented here and in the enhancement doc's own "SP
 Health Check" section — got its first *live* (not just source-read)
-confirmation via the kind-based e2e infra; see DD-090.
+confirmation via the kind-based e2e infra; see DD-140.
 
 **Related requirements:** REQ-HTTP-020, REQ-HTTP-025, REQ-HLT-010, REQ-HLT-015
 
@@ -198,7 +198,7 @@ Full writeup: [enhancements#96](https://github.com/dcm-project/enhancements/pull
 
 **Second consumer of the same `AUTH_DISABLED=true` default, found via the
 kind-based e2e infra:** `test/e2e`'s registration/health test files
-(`osac-sp-e2e-suite`, DD-089/090) call `control-plane`'s real
+(`osac-sp-e2e-suite`, DD-139/090) call `control-plane`'s real
 `GET /api/v1alpha1/providers` with no `Authorization` header at all and get
 `200`s — confirmed this is the *same* transitional default, not a separate
 gap: `control-plane`'s OpenAPI spec declares `bearerAuth` security on every
@@ -374,7 +374,7 @@ values (and regenerated code) change — no handler logic changes.
 
 ---
 
-## DD-080: Single `internal/mockprovider` package, not one sub-package per service
+## DD-130: Single `internal/mockprovider` package, not one sub-package per service
 
 **Decision:** `cmd/osac-mock-provider`'s five fake gRPC services
 (`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`,
@@ -388,7 +388,7 @@ service/concern (`clusters.go`, `computeinstances.go`, `subnets.go`,
 **Rationale:** every file in this package shares one concern — faking
 OSAC's backend surface for `osac-sp`'s own client code to dial — and all
 five gRPC services share the exact same generic, unexported storage engine
-(`resourceStore[T]`, see DD-081), which would otherwise need to be exported
+(`resourceStore[T]`, see DD-131), which would otherwise need to be exported
 (or duplicated) to cross sub-package boundaries for no benefit: nothing
 outside this mock ever needs to depend on, say, `mockprovider/clusters`
 without also needing the other four services and the OIDC stub to form a
@@ -398,10 +398,10 @@ convention for single-concern internal packages (e.g. `internal/osac`,
 shape of, say, `internal/api/server` (which is generated, not
 hand-authored).
 
-**Note on DD numbering:** this decision (and DD-081..083 below) start at
-DD-080 on a branch cut directly from `main` while `main`'s own decisions
+**Note on DD numbering:** this decision (and DD-131..083 below) start at
+DD-130 on a branch cut directly from `main` while `main`'s own decisions
 file still ends at DD-070. The still-unmerged M3/M4 branches independently
-also claim `DD-080`+ for unrelated decisions of their own — an accepted,
+also claim `DD-130`+ for unrelated decisions of their own — an accepted,
 temporary numbering collision until whichever branch merges first, same
 already-established pattern as this repo's other concurrently-developed
 milestone branches. Whichever of this branch/M3/M4 merges last renumbers its
@@ -411,7 +411,7 @@ own new entries to continue after the numbers already merged.
 
 ---
 
-## DD-081: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
+## DD-131: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
 
 **Decision:** All four CRUD-capable fake services (`Clusters`,
 `ComputeInstances`, `Subnets`, `VirtualNetworks`) share one generic
@@ -447,7 +447,7 @@ REQ-MOCK-040, REQ-MOCK-050, REQ-MOCK-060
 
 ---
 
-## DD-082: No real JWT signing for the OIDC token stub
+## DD-132: No real JWT signing for the OIDC token stub
 
 **Decision:** `internal/mockprovider.OIDCHandler`'s `/token` endpoint issues
 a static, opaque bearer token string (not a real, cryptographically signed
@@ -471,7 +471,7 @@ which takes the identical shortcut for the same reason.
 
 ---
 
-## DD-083: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
+## DD-133: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
 
 **Decision:** `internal/mockprovider.Config` is a flat, two-field struct
 (`GRPCAddress`, `OIDCAddress`, both required/fail-fast) read via
@@ -497,7 +497,7 @@ once Phase 2 wires them together.
 
 ---
 
-## DD-084: `osac-sp`/`osac-mock-provider` as this repo's own plain manifests, not a `control-plane` chart contribution
+## DD-134: `osac-sp`/`osac-mock-provider` as this repo's own plain manifests, not a `control-plane` chart contribution
 
 **Decision:** Phase 2's `kind` cluster deploys `osac-service-provider` and
 `osac-mock-provider` via plain `Deployment`+`Service` YAML owned by this
@@ -526,7 +526,7 @@ blocker for it.
 
 ---
 
-## DD-085: Route/Ingress/`dcmUi` disabled when installing `control-plane`'s chart into `kind`
+## DD-135: Route/Ingress/`dcmUi` disabled when installing `control-plane`'s chart into `kind`
 
 **Decision:** `helm install` overrides `dcmUi.enabled=false`,
 `controlPlane.route.enabled=false`, `controlPlane.ingress.enabled=false`
@@ -545,7 +545,7 @@ closer to its `NFR-E2E-010` time budget.
 
 ---
 
-## DD-086: `kubectl port-forward` (not `NodePort`/`Ingress`) for the e2e suite's cluster access
+## DD-136: `kubectl port-forward` (not `NodePort`/`Ingress`) for the e2e suite's cluster access
 
 **Decision:** `.github/workflows/e2e.yaml` reaches `dcm-control-plane` and
 `osac-service-provider` from the GitHub Actions runner host via two
@@ -568,7 +568,7 @@ assertions themselves.
 
 ---
 
-## DD-087: `test/e2e` imports `control-plane`'s own generated REST types directly, not a hand-rolled JSON struct
+## DD-137: `test/e2e` imports `control-plane`'s own generated REST types directly, not a hand-rolled JSON struct
 
 **Decision:** `test/e2e`'s registration assertions (TC-E2E-020..040)
 import `github.com/dcm-project/control-plane/api/sp/v1alpha1/provider` and
@@ -595,7 +595,7 @@ struct.
 
 ---
 
-## DD-088: Patch around control-plane#42 instead of forking the chart or blocking on it
+## DD-138: Patch around control-plane#42 instead of forking the chart or blocking on it
 
 **Decision:** the workflow installs `control-plane`'s chart with
 `helm install` (no `--wait`), then `kubectl rollout status`-waits on
@@ -615,7 +615,7 @@ install on non-OpenShift Kubernetes at all). Filed upstream as
 [control-plane#42](https://github.com/dcm-project/control-plane/issues/42)
 per this project's standing practice of flagging cross-repo inconsistencies
 to their owning team rather than silently working around them. Forking the
-chart was rejected for the same reason as DD-084 (this repo consumes
+chart was rejected for the same reason as DD-134 (this repo consumes
 `control-plane` as a published artifact, not a fork); blocking this PR on
 `control-plane#42` landing and releasing was rejected as directly
 contradicting "ready to run asap." The patch touches only the one field
@@ -626,7 +626,7 @@ actually causing the failure, leaving the chart's other hardening
 
 **Related requirements:** REQ-E2E-020
 
-## DD-089: `osac-mock-provider`'s OIDC discovery documents derive `token_endpoint` from the request's `Host` header, not the listener's bind address
+## DD-139: `osac-mock-provider`'s OIDC discovery documents derive `token_endpoint` from the request's `Host` header, not the listener's bind address
 
 **Decision:** `internal/mockprovider.OIDCHandler`'s discovery-document
 handler builds `token_endpoint` as `"http://" + r.Host + "/token"` per
@@ -671,7 +671,7 @@ pre-fix, construction-time-fixed `doc` value could never satisfy.
 
 **Related requirements:** REQ-MOCK-080
 
-## DD-090: `test/e2e`'s TC-E2E-070 asserts `control-plane`'s real `"ready"` vocabulary, not `osac-sp`'s `"healthy"`
+## DD-140: `test/e2e`'s TC-E2E-070 asserts `control-plane`'s real `"ready"` vocabulary, not `osac-sp`'s `"healthy"`
 
 **Decision:** TC-E2E-070's assertion on `control-plane`'s `ListProviders`
 `health_status` field checks for the literal string `"ready"`
@@ -696,7 +696,7 @@ the real API at implementation time").
 
 **Related requirements:** REQ-E2E-060
 
-## DD-091: `Server.Run`'s internal readiness self-probe retries indefinitely (gated only by ctx cancellation), not just once per a fixed timeout
+## DD-141: `Server.Run`'s internal readiness self-probe retries indefinitely (gated only by ctx cancellation), not just once per a fixed timeout
 
 **Decision:** `internal/apiserver.Server.Run` now gates its `onReady`
 callback (which starts registration, REQ-REG-050) on a new
@@ -761,7 +761,7 @@ regression coverage — see `.ai/test-plans/osac-sp-unit.test-plan.md`.
 
 **Related requirements:** REQ-REG-052
 
-## DD-092: TC-E2E-050/060 poll (`Eventually`) for `osac-sp`'s health status instead of asserting it in a single request
+## DD-142: TC-E2E-050/060 poll (`Eventually`) for `osac-sp`'s health status instead of asserting it in a single request
 
 **Decision:** `test/e2e/health_test.go`'s `eventuallyHealthy` helper wraps
 `GET /api/v1alpha1/{clusters,vms}/health` in `Eventually(..., 30*time.Second,
@@ -773,7 +773,7 @@ call it independently, rather than each calling the prior single-shot
 **Rationale:** prompted directly by the user questioning a suspiciously fast
 (~1.8s) `kubectl wait --for=condition=Available` in a
 [passing run](https://github.com/dcm-project/osac-service-provider/actions/runs/30959010814/job/92158554429)
-right after DD-091 landed — "are you sure osac was deployed?" Investigating
+right after DD-141 landed — "are you sure osac was deployed?" Investigating
 that question surfaced a real, separate latent flakiness risk (not the
 question's literal premise: the deployment *was* genuine — image already
 `kind load`-ed, `Deployment`/`Service` objects created, pod scheduled — but
@@ -806,7 +806,7 @@ single-shot check within ~1-2s of pod start, before `Bootstrap`'s
 async OIDC/gRPC handshake against `osac-mock-provider` (itself racing
 against `osac-mock-provider`'s own pod becoming `Ready` and its Service
 gaining endpoints) necessarily completes — the exact same class of
-startup-timing race DD-091 fixed in `Server.Run`'s own internal readiness
+startup-timing race DD-141 fixed in `Server.Run`'s own internal readiness
 gate, just on this suite's side instead of `osac-sp`'s.
 
 The fix makes each `It` self-sufficient rather than implicitly depending on

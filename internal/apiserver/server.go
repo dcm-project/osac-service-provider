@@ -32,7 +32,7 @@ const healthPath = "/api/v1alpha1/clusters/health"
 // waitForReady). It does not bound the overall wait before onReady fires:
 // waitForReadyUntilCancelled retries fresh windows indefinitely, so an
 // elapsed window alone never permanently skips onReady — only context
-// cancellation does (DD-091).
+// cancellation does (DD-141).
 const readinessProbeTimeout = 5 * time.Second
 
 // readinessProbeInterval is the polling interval for the self-probe that
@@ -235,7 +235,7 @@ func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handl
 //
 // A single elapsed window is not itself evidence the server will never
 // become ready — under transient CPU contention (observed in the kind-based
-// e2e infra, see DD-091) a cold-starting pod's /health responses can be slow
+// e2e infra, see DD-141) a cold-starting pod's /health responses can be slow
 // enough to exceed one readinessProbeTimeout window while the server is
 // otherwise healthy and about to succeed. Treating that as permanent and
 // skipping onReady forever would silently and irrecoverably prevent

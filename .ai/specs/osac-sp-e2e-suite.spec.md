@@ -46,7 +46,7 @@ rather than silently deferring them.
   `osac-mock-provider` manifest must satisfy (`MOCK_GRPC_ADDRESS`,
   `MOCK_OIDC_ADDRESS`)
 - [Design Decisions](../decisions/osac-sp.decisions.md) — new decisions for
-  this work continue from wherever Phase 1's `DD-08x` left off on this branch
+  this work continue from wherever Phase 1's `DD-13x` left off on this branch
 
 ---
 
@@ -86,7 +86,7 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | `osac-service-provider` | `SP_ENDPOINT` | `http://osac-service-provider:8080` |
 | `osac-service-provider` | `SP_OSAC_FULFILLMENT_ADDRESS` | `osac-mock-provider:9090` |
 | `osac-service-provider` | `SP_OSAC_OIDC_ISSUER_URL` | `http://osac-mock-provider:9091` |
-| `osac-service-provider` | `SP_OSAC_OIDC_CLIENT_ID`/`_SECRET` | any non-empty value (mock never validates, [DD-082](../decisions/osac-sp.decisions.md)) |
+| `osac-service-provider` | `SP_OSAC_OIDC_CLIENT_ID`/`_SECRET` | any non-empty value (mock never validates, [DD-132](../decisions/osac-sp.decisions.md)) |
 | `osac-mock-provider` | `MOCK_GRPC_ADDRESS` / `MOCK_OIDC_ADDRESS` | `:9090` / `:9091` |
 
 ---
