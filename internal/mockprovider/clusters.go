@@ -20,7 +20,7 @@ import (
 // calls them. Plain GetKubeconfig, by contrast, IS implemented below
 // (REQ-MOCK-120): osac-sp's M3 Get handler calls it for every ACTIVE-status
 // cluster, which every mock-created cluster immediately is (REQ-MOCK-030).
-// See DD-095 for how this correction was found.
+// See DD-145 for how this correction was found.
 type ClustersServer struct {
 	publicv1.UnimplementedClustersServer
 

@@ -43,7 +43,7 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
   such `Get` fail with a mapped `500` — caught empirically while building
   M3/M4 e2e coverage on top of this mock, not from re-reading the
   architecture diagrams alone. `GetKubeconfig(ViaHttp)`/`GetPassword*` stay
-  out of scope; only plain `GetKubeconfig` is corrected. See DD-095.
+  out of scope; only plain `GetKubeconfig` is corrected. See DD-145.
 - Real JWT signing/validation for the OIDC stub — the mock's own gRPC server
   never enforces auth (there is nothing downstream of the mock to protect),
   so the token only needs to satisfy `osac-sp`'s client, not a resource
@@ -152,7 +152,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 | REQ-MOCK-090 | The token endpoint MUST accept `POST` with `grant_type=client_credentials` (client_id/secret via HTTP Basic auth or form body) and respond `200` with a JSON body containing non-empty `access_token`, `token_type="Bearer"`, and a positive `expires_in` | MUST | |
 | REQ-MOCK-100 | The token endpoint MUST reject any request whose `grant_type` is missing or not `client_credentials` with HTTP `400` and an RFC 6749 §5.2-shaped `{"error": "..."}` body | MUST | |
 | REQ-MOCK-110 | The binary MUST load its gRPC and HTTP listen addresses from environment variables, failing fast (matching `internal/config.Load()`'s convention) when a required value is missing/empty, and MUST shut down both listeners gracefully on `SIGTERM`/`SIGINT` | MUST | |
-| REQ-MOCK-120 | `Clusters/GetKubeconfig` MUST return a non-empty, base64-encoded stub kubeconfig for a known `id`, and gRPC `NOT_FOUND` for an unknown one — mirroring the other four CRUD-shaped services' `Get` semantics (REQ-MOCK-040) | MUST | Correction to §1's original scope (see DD-095); backs Milestone 3's `internal/cluster.Service.Get` (REQ-GET-020) |
+| REQ-MOCK-120 | `Clusters/GetKubeconfig` MUST return a non-empty, base64-encoded stub kubeconfig for a known `id`, and gRPC `NOT_FOUND` for an unknown one — mirroring the other four CRUD-shaped services' `Get` semantics (REQ-MOCK-040) | MUST | Correction to §1's original scope (see DD-145); backs Milestone 3's `internal/cluster.Service.Get` (REQ-GET-020) |
 
 ---
 

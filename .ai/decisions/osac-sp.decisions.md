@@ -828,7 +828,7 @@ to document the polling discipline explicitly.
 
 ---
 
-## DD-093: `osac-mock-provider`'s `Clusters/GetKubeconfig` is implemented, correcting Phase 1's original out-of-scope call
+## DD-145: `osac-mock-provider`'s `Clusters/GetKubeconfig` is implemented, correcting Phase 1's original out-of-scope call
 
 **Decision:** `internal/mockprovider/clusters.go`'s `ClustersServer` now
 implements `GetKubeconfig` (REQ-MOCK-120): for a known `id` it returns a
@@ -854,13 +854,5 @@ maps to `ACTIVE` and hits this path — so leaving `GetKubeconfig`
 spec's `Get` call fail with a mapped `500`, not the `200` it exercises.
 This is exactly the class of gap this M3/M4 e2e validation work exists to
 catch before it reaches a real deployment.
-
-**Numbering note:** `DD-093`/`DD-094` may also exist independently on the
-parallel `docs/e2e-tier-b-spec` branch (Tier B spec work) with different
-content — both branches picked the next available number off their own
-tip at write time. This is the same collision-until-merge situation
-`osac-sp-e2e-mock-provider.spec.md`'s own reference-documents section
-already flags for `DD-080`+ generally; whichever branch merges to `main`
-second gets renumbered at that point, not before.
 
 **Related requirements:** REQ-MOCK-120, REQ-GET-020 (M3)
