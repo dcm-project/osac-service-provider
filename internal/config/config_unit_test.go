@@ -25,6 +25,7 @@ var allEnvVars = []string{
 	"SP_ENDPOINT",
 	"SP_PROVIDER_CLUSTER_NAME",
 	"SP_PROVIDER_VM_NAME",
+	"SP_VERSION_MATRIX_PATH",
 }
 
 func clearEnv() {
@@ -82,6 +83,17 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.Provider.VMName).To(Equal("osac-sp-vm-custom"))
 	})
 
+	// TC-U-540 (REQ-VERSION-090): SP_VERSION_MATRIX_PATH loads exactly
+	// when set.
+	It("loads SP_VERSION_MATRIX_PATH exactly when set (TC-U-540)", func() {
+		setRequiredEnv()
+		_ = os.Setenv("SP_VERSION_MATRIX_PATH", "/etc/osac-sp/version-matrix.json")
+
+		cfg, err := config.Load()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.VersionMatrix.Path).To(Equal("/etc/osac-sp/version-matrix.json"))
+	})
+
 	// TC-U-002: Applies documented defaults when optional vars are unset
 	It("applies documented defaults when optional vars are unset (TC-U-002)", func() {
 		setRequiredEnv()
@@ -97,6 +109,17 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(5 * time.Second))
 		Expect(cfg.Provider.ClusterName).To(Equal("osac-sp-cluster"))
 		Expect(cfg.Provider.VMName).To(Equal("osac-sp-vm"))
+		Expect(cfg.VersionMatrix.Path).To(Equal(""))
+	})
+
+	// TC-U-541 (REQ-VERSION-090): SP_VERSION_MATRIX_PATH defaults to the
+	// empty string when unset.
+	It("defaults SP_VERSION_MATRIX_PATH to the empty string when unset (TC-U-541)", func() {
+		setRequiredEnv()
+
+		cfg, err := config.Load()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.VersionMatrix.Path).To(Equal(""))
 	})
 
 	// TC-U-003: Fails fast when a required field is missing (table-driven)
