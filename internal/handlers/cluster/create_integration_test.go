@@ -12,6 +12,7 @@ import (
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // postCreate issues a real POST /api/v1alpha1/clusters?id=X (every test in
@@ -116,5 +117,57 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
 
 		Expect(f.fake.CreateCallCount()).To(Equal(1))
+	})
+})
+
+var _ = Describe("Cluster Create version-matrix validation (integration, real HTTP + router + bufconn OSAC fake)", func() {
+	// TC-I-500 (REQ-VERSION-080, AC-VERSION-080): Create rejects an
+	// unsupported version with no override, over real HTTP.
+	It("rejects an unsupported version with no override, over real HTTP (TC-I-500)", func() {
+		testMatrix := versionmatrix.Matrix{"1.29": "quay.io/example/release:1.29"}
+		f := newIntegrationFixtureWithMatrix(testMatrix)
+		defer f.Close()
+
+		body := `{"spec":{"version":"9.99","nodes":{"worker":{"count":3}},"metadata":{"name":"foo"},"provider_hints":{"osac":{"template_id":"default-hcp"}}}}`
+		resp := postCreate(f, body)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		var problem v1alpha1.Error
+		Expect(json.NewDecoder(resp.Body).Decode(&problem)).To(Succeed())
+		Expect(problem.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// TC-I-501 (REQ-VERSION-070, AC-VERSION-070): an explicit
+	// release_image override bypasses matrix validation, over real HTTP.
+	It("bypasses matrix validation via an explicit release_image override, over real HTTP (TC-I-501)", func() {
+		testMatrix := versionmatrix.Matrix{"1.29": "quay.io/example/release:1.29"}
+		f := newIntegrationFixtureWithMatrix(testMatrix)
+		defer f.Close()
+
+		body := `{"spec":{"version":"9.99","nodes":{"worker":{"count":3}},"metadata":{"name":"foo"},"provider_hints":{"osac":{"template_id":"default-hcp","release_image":"custom-image"}}}}`
+		resp := postCreate(f, body)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-image"))
+	})
+
+	// TC-I-502 (REQ-VERSION-060, AC-VERSION-010/030/060): Create dispatches
+	// an injected, non-default matrix's release_image, over real HTTP —
+	// proving the real HTTP path consults the actually-injected matrix,
+	// not a hardcoded default.
+	It("dispatches an injected, non-default matrix's release_image, over real HTTP (TC-I-502)", func() {
+		testMatrix := versionmatrix.Matrix{"1.40": "custom-release-image"}
+		f := newIntegrationFixtureWithMatrix(testMatrix)
+		defer f.Close()
+
+		body := `{"spec":{"version":"1.40","nodes":{"worker":{"count":3}},"metadata":{"name":"foo"},"provider_hints":{"osac":{"template_id":"default-hcp"}}}}`
+		resp := postCreate(f, body)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-release-image"))
 	})
 })
