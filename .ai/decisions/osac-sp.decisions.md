@@ -352,3 +352,204 @@ underlying string literal, so only `api/v1alpha1/openapi.yaml`'s enum
 values (and regenerated code) change — no handler logic changes.
 
 **Related requirements:** REQ-HTTP-070
+
+---
+
+## DD-071: `DCM_NATS_URL` on `DCMConfig`; CloudEvents envelope via the SDK; `data` includes `id` for both Cluster and VM
+
+**Decision:** name the NATS broker URL config field `DCM_NATS_URL` (a new
+field on the existing `DCMConfig` struct), build the CloudEvents envelope
+with `github.com/cloudevents/sdk-go/v2` rather than a hand-rolled struct, and
+report `data` as `{"id": <resource id>, "status": <string>, "message":
+<string>}` for **both** Cluster and VM — not the two-field `{status,
+message}` the canonical spec's `VmStatus` type declaration literally shows.
+
+**Rationale (config placement):** `DCMConfig` already uses the unprefixed
+`DCM_` prefix specifically for backends that are DCM-wide, not
+provider-specific — `DCM_REGISTRATION_URL` is the same URL every SP and
+`control-plane` must agree on. The NATS broker is structurally identical
+(one shared, DCM-operated instance), so it belongs on `DCMConfig` under the
+same reasoning, not a provider-specific `SP_NATS_URL` (the two sibling SPs
+that already publish status disagree with each other on this exact point —
+`acm-cluster-service-provider` uses `SP_NATS_URL`, `kubevirt-service-provider`
+uses bare `NATS_URL` — so nose-counting sibling precedent doesn't resolve it;
+breaking the tie on `DCMConfig`'s own underlying placement principle does).
+
+**Rationale (SDK, not hand-rolled):** `github.com/cloudevents/sdk-go/v2`
+guarantees envelope-level spec compliance (correct `specversion`, attribute
+serialization) for free, and `control-plane` (the consumer) already depends
+on it for parsing — zero net-new dependency risk to the ecosystem. This only
+protects the envelope shape, not the `data` payload shape, which is a
+project-specific contract the SDK knows nothing about (see below and
+DD-073's contract-test requirement).
+
+**Rationale (`data` includes `id` for VM too — corrects a doc
+inconsistency):** the canonical spec's §3 defines `type VmStatus struct {
+Status string; Message string }` (no `id`) directly above a worked example
+that constructs a *different*, self-contradictory `VmStatus{Id, "123-123",
+Status: "Running", Message: "VM is running."}` literal (unparseable Go —
+appears to be a copy/paste artifact from the `ContainerStatus`/
+`StorageStatus`/`NetworkStatus` definitions immediately above it, all three
+of which do declare `Id`). Without an `id` in `data`, `control-plane` has no
+way to attribute a `dcm.vm` event to a specific instance — `subject`
+identifies only the *service type* (`dcm.vm`), never a resource. Confirmed
+directly against `control-plane`'s real, running consumer code
+(`internal/sp/consumer/consumer.go`'s `StatusEvent{Id, Status, Message,
+Timestamp}`), which requires `Id`. Per this repo's established precedent for
+resolving doc/code conflicts in favor of real running code over a doc's own
+internally-inconsistent prose (see DD-010's "Phase 1 confirmation" for the
+same class of resolution), this SP always includes `id` in `data`, for both
+service types.
+
+**Confirmed by spike** (2026-08-05): a throwaway module built the exact
+envelope this decision describes with `cloudevents-sdk-go v2.16.2`, published
+it to a real embedded JetStream stream/consumer configured identically to
+`control-plane`'s own (`consumer.go:90-121`), and round-tripped it through
+`control-plane`'s real `StatusEvent` struct end-to-end. Wire bytes:
+`{"specversion":"1.0","id":"evt-abc","source":"dcm/providers/osac-sp-vm","type":"dcm.status.vm","subject":"dcm.vm","datacontenttype":"application/json","time":"...","data":{"id":"vm-123","status":"RUNNING","message":"instance is running"}}`.
+
+**Related requirements:** REQ-PUBLISH-010, REQ-PUBLISH-030
+
+---
+
+## DD-072: JetStream (`js.Publish`) over core NATS, wrapped in an indefinite-retry, coalescing background worker
+
+**Decision:** publish status events via the JetStream API (`js.Publish`),
+never plain core NATS (`nc.Publish`), from a single background worker
+goroutine (`Publisher.Start(ctx)`) that retries indefinitely with
+exponential backoff on failure and always delivers the *latest* known value
+for a given resource — never a stale one superseded by a newer update still
+queued behind a slow/failing retry.
+
+**Rationale (JetStream over core):** `js.Publish` fails loudly (a retryable
+error) if the target stream isn't ready yet; `nc.Publish` silently drops the
+message with no error in that same case. Confirmed empirically (2026-08-05
+spike): `js.Publish` against a stream-less embedded `nats-server` returned a
+real error (`nats: no response from stream`) — not just inferred from
+`control-plane`/`kubevirt-service-provider` source. This repo already has an
+established, documented resilience convention for exactly this class of
+"dependency not ready yet" condition (`CLAUDE.md`'s "Non-blocking bootstrap"
+and "Independent registration loops": the OIDC token loop, gRPC dial, and
+both registration loops all retry indefinitely with backoff rather than
+silently dropping work) — `js.Publish` is the only one of the two transports
+that can participate in that convention at all.
+
+**Rationale (coalescing background worker, not a bounded per-call retry):**
+an earlier design considered a synchronous `Publish` method with a small
+bounded retry (matching `acm-cluster-service-provider`'s
+`SP_NATS_PUBLISH_RETRY_MAX`/`_INTERVAL` knobs), reasoning that indefinite
+*synchronous* retry would stall the poll loop's processing of every other
+resource behind one failing publish. Resolved by decoupling: `Publish`
+records the latest value for `(serviceType, resourceID)` in an in-memory map
+and returns immediately (never blocks the poll loop); a single background
+worker drains that map, retrying failed deliveries indefinitely. Because the
+worker always re-reads the *current* map value for a key before each
+attempt (not a value captured when first enqueued), a newer status arriving
+while an older delivery for the same resource is still retrying always wins
+— the worker can never deliver the older one after the newer one has been
+recorded. This is a coalescing work-queue pattern (conceptually the same
+technique `client-go`'s controller-runtime workqueue uses to deduplicate
+reconcile keys), not an original invention for this project — chosen because
+it satisfies "indefinite retry" and "never blocks the caller" and "never
+reorders/regresses a resource's reported status" simultaneously, which a
+simple bounded synchronous retry cannot.
+
+**Related requirements:** REQ-PUBLISH-040, REQ-PUBLISH-050, REQ-PUBLISH-060,
+REQ-PUBLISH-070, REQ-PUBLISH-080
+
+---
+
+## DD-073: Pin `nats.go`/`nats-server`/`cloudevents-sdk-go` to versions already used by `control-plane`
+
+**Decision:** pin `github.com/nats-io/nats.go` (+ its `jetstream`
+subpackage) to `v1.50.0`, `github.com/nats-io/nats-server/v2` to `v2.12.5`
+(test-only — the contract test's embedded broker, DD-074's cross-reference),
+and `github.com/cloudevents/sdk-go/v2` to `v2.16.2`.
+
+**Rationale:** `v1.50.0`/`v2.16.2` match `control-plane` (the consumer) and
+`acm-cluster-service-provider` exactly; `kubevirt-service-provider` is one
+minor version behind (`nats.go v1.49.0`) with no reason to match the stale
+one. `v2.12.5` matches `control-plane`'s own test-time `nats-server`
+version. Confirmed by two independent spikes (2026-08-05): a throwaway
+module using exactly these versions, and a second drop-in check directly
+against this repo's real `go.mod` (`go get` the three pins, then
+`go build ./...`, `go vet ./...`, and the full Ginkgo suite — 10 suites, 156
+specs, all green, zero transitive-dependency conflicts with the existing
+gRPC/protobuf/OIDC stack; the `go.mod`/`go.sum` change was reverted after,
+since it was purely a compatibility probe run ahead of this spec).
+
+**Related requirements:** REQ-PUBLISH-020
+
+---
+
+## DD-074: Periodic full resync mitigates `control-plane`'s dispatch-before-persist race (filed upstream, not fixed here)
+
+**Decision:** in addition to publishing immediately on a detected diff
+(REQ-POLL-040), the Poller unconditionally republishes every currently
+observed resource's status every `ResyncEvery` poll cycles (default 10,
+~5 minutes at the default 30s interval), regardless of whether the local
+cache thinks it changed.
+
+**Rationale:** tracing `control-plane`'s actual `UpdateStatus` SQL
+(`internal/sp/store/resource_manager/service_instance.go:160-175`, a plain
+`UPDATE ... WHERE id=?` checking `RowsAffected == 0` → `ErrInstanceNotFound`)
+confirms repeated identical status updates are safe/idempotent — so a
+resync costs nothing extra on the happy path. But the same trace surfaced a
+real gap a pure diff-only design does not handle: `control-plane`'s
+`CreateInstance`
+(`internal/sp/service/resource_manager/service_type_instance.go:86-105`)
+dispatches to the provider's REST endpoint **before** persisting its own
+`ServiceTypeInstance` DB row. If this SP's Poller observes and publishes a
+newly-created resource's status during that window, `control-plane`'s
+consumer receives it, calls `UpdateStatus`, gets `ErrInstanceNotFound`, and
+unconditionally `Ack()`s the message (dropped, no redelivery — confirmed no
+`MaxDeliver`/backoff is configured on their consumer) — while this SP's own
+local cache has already recorded that status as "delivered," so a pure
+diff-based design would never naturally retry it, permanently losing that
+update. This race is structurally present on every create, org-wide, not an
+osac-sp-specific edge case (confirmed via `control-plane`'s own test suite,
+where this exact path is untested beyond "doesn't panic":
+`internal/sp/consumer/consumer_test.go:153`).
+
+This is `control-plane`'s bug to fix, not something to fully absorb here —
+filed as
+[control-plane#44](https://github.com/dcm-project/control-plane/issues/44),
+presenting two remediation options (reorder persist-before-dispatch, or a
+bounded-retry `Nak` instead of unconditional `Ack` on `ErrInstanceNotFound`)
+without prescribing which. The periodic resync mitigation ships regardless
+of that issue's resolution, both because this SP cannot wait on their
+fix/timeline and because it is generic defense-in-depth against any class of
+transient consumer-side loss, not just this one race. It also subsumes the
+original cold-start design (first poll = empty cache = every resource looks
+new = already a de facto full resync) as cycle 0's natural case — no
+separate cold-start code path is needed.
+
+**Related requirements:** REQ-POLL-080
+
+---
+
+## DD-075: Deliver the publisher and poll loop as a single milestone/PR, not split across two phases
+
+**Decision:** `internal/statuspublisher` and `internal/statuspoll` are
+specified, implemented, and landed together in one PR, validated the same
+way as [PR #24](https://github.com/dcm-project/osac-service-provider/pull/24)
+(E2E CRUD coverage) — on a throwaway branch merging Milestone 3 + Milestone
+4 + this milestone's code, then as a single small draft PR off `main`,
+explicitly flagged blocked on Milestone 3/4 (#13/#14) merging first.
+
+**Rationale:** an earlier draft of this plan split delivery into an
+"unblocked" publisher-only phase (no import dependency on M3/M4) and a
+"blocked" poll-loop phase, reasoning the publisher could land and be
+reviewed independently. Reassessed and reversed for two reasons: (1) a
+standalone publisher with no caller delivers no working capability — nothing
+in this repo invokes `internal/statuspublisher` until the poll loop exists,
+making a publisher-only PR a "why does this exist yet" review smell rather
+than real progress; (2) it would introduce a *second*, different
+unblocked/blocked delivery shape when PR #24 already established and
+proved — via actual review — that the single-PR/draft/blocked-on-#13/#14
+pattern works and is reviewer-legible for exactly this class of "depends on
+an unmerged milestone" work. Introducing a new pattern here for no real
+unblocking benefit (the actual outcome — status gets reported — is blocked
+on M3/M4 either way) adds review overhead without upside.
+
+**Related requirements:** none (process decision, not a functional one)
