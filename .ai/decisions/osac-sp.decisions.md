@@ -374,7 +374,7 @@ values (and regenerated code) change — no handler logic changes.
 
 ---
 
-## DD-080: Single `internal/mockprovider` package, not one sub-package per service
+## DD-130: Single `internal/mockprovider` package, not one sub-package per service
 
 **Decision:** `cmd/osac-mock-provider`'s five fake gRPC services
 (`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`,
@@ -388,7 +388,7 @@ service/concern (`clusters.go`, `computeinstances.go`, `subnets.go`,
 **Rationale:** every file in this package shares one concern — faking
 OSAC's backend surface for `osac-sp`'s own client code to dial — and all
 five gRPC services share the exact same generic, unexported storage engine
-(`resourceStore[T]`, see DD-081), which would otherwise need to be exported
+(`resourceStore[T]`, see DD-131), which would otherwise need to be exported
 (or duplicated) to cross sub-package boundaries for no benefit: nothing
 outside this mock ever needs to depend on, say, `mockprovider/clusters`
 without also needing the other four services and the OIDC stub to form a
@@ -398,10 +398,10 @@ convention for single-concern internal packages (e.g. `internal/osac`,
 shape of, say, `internal/api/server` (which is generated, not
 hand-authored).
 
-**Note on DD numbering:** this decision (and DD-081..083 below) start at
-DD-080 on a branch cut directly from `main` while `main`'s own decisions
+**Note on DD numbering:** this decision (and DD-131..083 below) start at
+DD-130 on a branch cut directly from `main` while `main`'s own decisions
 file still ends at DD-070. The still-unmerged M3/M4 branches independently
-also claim `DD-080`+ for unrelated decisions of their own — an accepted,
+also claim `DD-130`+ for unrelated decisions of their own — an accepted,
 temporary numbering collision until whichever branch merges first, same
 already-established pattern as this repo's other concurrently-developed
 milestone branches. Whichever of this branch/M3/M4 merges last renumbers its
@@ -411,7 +411,7 @@ own new entries to continue after the numbers already merged.
 
 ---
 
-## DD-081: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
+## DD-131: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
 
 **Decision:** All four CRUD-capable fake services (`Clusters`,
 `ComputeInstances`, `Subnets`, `VirtualNetworks`) share one generic
@@ -447,7 +447,7 @@ REQ-MOCK-040, REQ-MOCK-050, REQ-MOCK-060
 
 ---
 
-## DD-082: No real JWT signing for the OIDC token stub
+## DD-132: No real JWT signing for the OIDC token stub
 
 **Decision:** `internal/mockprovider.OIDCHandler`'s `/token` endpoint issues
 a static, opaque bearer token string (not a real, cryptographically signed
@@ -471,7 +471,7 @@ which takes the identical shortcut for the same reason.
 
 ---
 
-## DD-083: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
+## DD-133: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
 
 **Decision:** `internal/mockprovider.Config` is a flat, two-field struct
 (`GRPCAddress`, `OIDCAddress`, both required/fail-fast) read via

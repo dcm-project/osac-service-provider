@@ -60,10 +60,10 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
   testable) — both **structural** references only; this package has no code
   dependency on `internal/vm`, `internal/cluster`, or either milestone's
   handler packages, and branches from `main` (independent of the still
-  -unmerged Milestone 3/4 PRs), per the same rationale as DD-086.
+  -unmerged Milestone 3/4 PRs), per the same rationale as DD-126.
 - [Design Decisions](../decisions/osac-sp.decisions.md) — new decisions for
-  this work start at `DD-080` (next available on `main`); the same
-  numbering-collision-until-merge caveat DD-086 already documents applies.
+  this work start at `DD-130` (next available on `main`); the same
+  numbering-collision-until-merge caveat DD-126 already documents applies.
 
 ---
 
