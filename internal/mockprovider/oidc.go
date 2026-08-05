@@ -68,7 +68,7 @@ func NewOIDCHandler(logger *slog.Logger) *OIDCHandler {
 
 // serveDiscoveryDocument advertises a token_endpoint built from the
 // incoming request's own Host header, not a value fixed at construction
-// time (DD-089). This matters because the mock's OIDC listener is
+// time (DD-139). This matters because the mock's OIDC listener is
 // typically bound to a wildcard address (e.g. ":9091", so it can accept
 // connections from other pods in a cluster), whose own
 // net.Listener.Addr().String() reports the unroutable "[::]:9091" —
