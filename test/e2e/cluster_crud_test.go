@@ -30,7 +30,7 @@ type clusterList struct {
 // osac-mock-provider resolves Create straight to CLUSTER_STATE_READY with
 // no PROGRESSING transition (REQ-MOCK-030), unlike the bufconn IT
 // fixture's own default behavior, so no polling is needed here for status
-// convergence, only for the health checks (DD-092) which race against
+// convergence, only for the health checks (DD-142) which race against
 // Bootstrap's async startup instead.
 var _ = Describe("Cluster CRUD, against the real mock backend", func() {
 	// TC-E2E-090 / AC-E2E-050
