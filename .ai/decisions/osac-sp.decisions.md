@@ -825,3 +825,93 @@ osac-sp-e2e-suite.test-plan.md`'s TC-E2E-050/060 descriptions were updated
 to document the polling discipline explicitly.
 
 **Related requirements:** REQ-E2E-060
+
+---
+
+## DD-093: Tier B vendors specific OSAC config/artifacts rather than importing `fulfillment-service`'s `it` Go package
+
+**Decision:** `.ai/specs/osac-sp-e2e-tier-b.spec.md` ("Tier B") deploys real
+Postgres, real Keycloak (official image + a vendored, static realm-config
+file copied into this repo), and real `fulfillment-service`/`osac-operator`/
+BMFO (pinned, published `vX.Y.Z` image and OCI chart tags) — not by adding a
+live Go module dependency on `osac-project/fulfillment-service`'s own `it`
+integration-test package (which [#19](https://github.com/dcm-project/osac-service-provider/pull/19)'s
+spike proved is technically importable), and not by building any OSAC
+component from source.
+
+**Rationale:** requested directly — depending on another team's internal
+test-harness *code* (as opposed to their published, versioned artifacts)
+means this repo's own CI can break for reasons entirely outside its
+control, on a schedule it doesn't own, with no version pin protecting it
+(the `it` package has no stability contract; it's `fulfillment-service`'s
+own test-only tooling, not a public API). Concretely, this repo would
+inherit: `it.Tool`'s exact function signatures, its own Kind/Helm/podman
+orchestration assumptions, and its full transitive dependency graph
+(confirmed non-trivial in the spike — `osac-operator`/BMFO CRD types, etc.),
+none of which this repo has any influence over.
+
+The chosen alternative — vendor the *minimum static config* actually
+needed (Keycloak's realm/client/claim-mapper definitions, which are what
+determine JWT-claim-shape fidelity) and reference *published, versioned*
+images/charts for everything else — mirrors this repo's own existing
+precedent for depending on other DCM/OSAC components: `control-plane` is
+already consumed as a pulled image + sparse-checked-out chart at a pinned
+ref in Phase A (`osac-sp-e2e-suite.spec.md` §2), never built from source or
+imported as a Go dependency; DD-020 vendors (copies) OSAC's protos rather
+than living off an unpublished BSR module for the identical reason. Tier B
+extends that same posture to Keycloak/`fulfillment-service`/`osac-operator`/
+BMFO instead of introducing a new, inconsistent pattern.
+
+Confirmed as a real, live risk while researching this decision (not
+theoretical): `osac-project/fulfillment-service` (along with `osac-operator`,
+BMFO, and `osac-aap`) was archived and merged into a new monorepo,
+`osac-project/osac`, on 2026-08-04 — the day before this decision was
+written. A live Go dependency on the old repo's `it` package would already
+need remediation; a pinned image/chart tag and a vendored static file are
+both unaffected by the repo move.
+
+**Related requirements:** REQ-TB-010, REQ-TB-050
+
+---
+
+## DD-094: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
+
+**Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)
+will introduce a new binary, `cmd/osac-aap-mock/`, implementing enough of
+AAP's REST surface (`GetTemplate`, `LaunchJobTemplate`/
+`LaunchWorkflowTemplate`, `GetJob`, `CancelJob`) for real `osac-operator`/
+BMFO reconciliation to reach a terminal state — built from scratch, the
+same way `osac-mock-provider` was for OSAC's own gRPC/OIDC surface
+(DD-080–083), not adapted from any existing OSAC-provided fake.
+
+**Rationale:** confirmed by direct source investigation across
+`osac-operator`, BMFO, and the wider `osac-project` org that no reusable
+provisioning-layer test double exists anywhere upstream:
+
+- The `ProvisioningProvider`/`AAPClient` interfaces
+  (`osac-operator/pkg/provisioning`) are genuinely public and cross-repo
+  (BMFO imports them as a real Go module dependency) — so the *interface
+  contract* `osac-aap-mock` must satisfy is stable and well-defined.
+- Every concrete fake implementing those interfaces
+  (`noopProvisioningProvider`, `mockProvisioningProvider`,
+  `mockAAPClient`, etc.) is unexported and defined inline in `_test.go`
+  files, scattered and duplicated per controller test — Go tooling
+  excludes `_test.go` files from normal builds, so none of these are
+  importable by any external module regardless of intent.
+- No runtime dry-run/test-mode config flag exists in either operator's
+  production code — `osac-operator/cmd/main.go`'s
+  `createAAPProviderFromEnv` unconditionally constructs a real AAP client
+  from env vars pointing at a URL.
+- No dedicated AAP/Ansible-mock repo or component exists anywhere in the
+  `osac-project` org; the only place real AAP is ever exercised is the
+  separate, heavyweight `osac-test-infra` full-stack pipelines (real
+  KVM/libvirt), which is precisely the "genuinely impossible in CI" tier
+  Tier B's Phase 2 is designed to never require.
+
+Because `createAAPProviderFromEnv` wires the AAP client from a URL at
+runtime (not compiled in), real `osac-operator`/BMFO can run completely
+unmodified against `osac-aap-mock` — no upstream code changes needed, only
+a config value pointing at our own component instead of a real AAP
+instance.
+
+**Related requirements:** REQ-TB-080
