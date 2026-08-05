@@ -699,4 +699,23 @@ Stacking also keeps the PR diff small and reviewable (just this milestone's
 actual changes against M3's tip) with no throwaway-merge-worktree dance
 needed to validate it, unlike M5's situation.
 
+**Validation evidence:** since the branch stacks directly on
+`feat/milestone-3-cluster-crud`'s tip, no throwaway-merge worktree was
+needed — the branch as checked out already contains the full M1+M3+M6 tree.
+Verified locally, in place, post-implementation:
+`make build` (compiles), `make vet` (clean), `gofmt -s -l .` (no output,
+zero unformatted files), `make lint` (`golangci-lint run ./...`: 0 issues),
+`make check-aep` (spectral: no results at `warn` or higher against
+`api/v1alpha1/openapi.yaml` — unchanged by this milestone), and
+`make test-cover` (`ginkgo -r --race --cover`): all 11 suites green
+(220/220 specs), composite coverage 99.2%. The two packages this milestone
+touched most (`internal/registration` 98.4%, `cmd/osac-service-provider`
+92.5%) have zero *new* uncovered lines — their only gaps are the
+pre-existing, already-documented coverage exceptions predating this
+milestone (`NewRegistrar`'s unreachable client-construction error branch;
+`main`'s `os.Exit` wrapper; `mainRun`'s OS-signal-only happy path). The new
+`internal/versionmatrix` package, and every other package this milestone
+touched (`internal/cluster`, `internal/handlers/cluster`,
+`internal/config`), are 100% covered.
+
 **Related requirements:** None directly — process/workflow decision.
