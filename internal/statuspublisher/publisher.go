@@ -118,6 +118,15 @@ func NewPublisher(natsURL string, logger *slog.Logger, opts ...Option) (*Publish
 		return nil, fmt.Errorf("connecting to NATS: %w", err)
 	}
 
+	// Coverage exception (documented, not tested): jetstream.New only
+	// fails if one of its variadic JetStreamOpt options returns an error;
+	// this call passes none, so no input reachable from this codebase can
+	// make this branch fire today. Kept as defensive error handling
+	// against a future option being added here rather than fabricating a
+	// failing fake purely to hit it, per this suite's "test real
+	// production types" convention (see
+	// .ai/test-plans/osac-sp-m5-status-reporting.test-plan.md's coverage
+	// note).
 	js, err := jetstream.New(nc)
 	if err != nil {
 		nc.Close()

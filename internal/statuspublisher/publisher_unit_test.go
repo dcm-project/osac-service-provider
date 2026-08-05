@@ -331,4 +331,14 @@ var _ = Describe("Publish lifecycle", func() {
 		Expect(p.Close()).To(Succeed())
 		Expect(closed).To(BeTrue())
 	})
+
+	// TC-U-417: NewPublisher wraps and returns a NATS connect failure,
+	// without ever needing a live broker — a malformed URL fails
+	// nats.Connect's own synchronous parsing, before any network I/O.
+	It("wraps and returns a NATS connect failure for a malformed URL (TC-U-417)", func() {
+		p, err := NewPublisher("://not-a-valid-url", discardLogger)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("connecting to NATS"))
+		Expect(p).To(BeNil())
+	})
 })

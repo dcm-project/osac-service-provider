@@ -72,10 +72,19 @@ types" convention (see `.ai/test-plans/osac-sp-unit.test-plan.md`, section
 | TC-U-410 | `Publish` returns before delivery completes | REQ-PUBLISH-050, AC-PUBLISH-020 | Inject a fake `jsPublisher` whose `Publish` method blocks on a channel until signaled; call `Publisher.Publish(...)`; assert the call returns immediately (bounded by a short test timeout) without the fake having been signaled yet. |
 | TC-U-411 | The correct subject is used for delivery | REQ-PUBLISH-040, AC-PUBLISH-020 | Fake `jsPublisher` records the subject of each call; call `Publish` for `ServiceType{Subject:"dcm.cluster",...}`; once `Start(ctx)` delivers it, assert the fake recorded exactly `"dcm.cluster"`. |
 | TC-U-412 | Failed publishes retry with exponential backoff, never silently dropped | REQ-PUBLISH-070, AC-PUBLISH-030 | Fake `jsPublisher` fails the first two calls, succeeds on the third; call `Publish` once, run `Start(ctx)`; assert the fake eventually records exactly one successful call carrying the original value, and that at least `initialBackoff` elapsed between the first and second attempts (test uses a short configured backoff, e.g. `WithInitialBackoff(5*time.Millisecond)`). |
-| TC-U-413 | A newer update supersedes a stale one still pending delivery | REQ-PUBLISH-080, AC-PUBLISH-040 | Fake `jsPublisher`'s first call blocks on a channel; call `Publish(st, "vm-1", "PROVISIONING", ...)`, then before unblocking the fake, call `Publish(st, "vm-1", "RUNNING", ...)` again; unblock the fake; assert the delivered payload's `status` equals `"RUNNING"`, never `"PROVISIONING"`, and the fake's total call count for `vm-1` is exactly 1 (coalesced, not two separate deliveries). |
+| TC-U-413 | A newer update is the final delivered value even if a stale one was already in flight | REQ-PUBLISH-080, AC-PUBLISH-040 | Fake `jsPublisher`'s first call blocks on a channel; call `Publish(st, "vm-1", "PROVISIONING", ...)`, then before unblocking the fake, call `Publish(st, "vm-1", "RUNNING", ...)` again; unblock the fake; assert the *last* observed successful publish for `vm-1` carries `status=="RUNNING"` (per AC-PUBLISH-040's exact wording, the already in-flight `"PROVISIONING"` call may still land on the wire — its bytes were built and handed to the fake before it blocked — but it must never be the final one). |
 | TC-U-414 | Two different resources are delivered independently (no cross-key coalescing) | REQ-PUBLISH-080 | Call `Publish` for `("vm-1", "RUNNING")` and `("vm-2", "STOPPED")`; assert the fake eventually records one delivery for each id with its own distinct status — proving coalescing is scoped per `(serviceType, resourceID)` key, not global. |
 | TC-U-415 | `Start`/`Done` are idempotent and mirror `Registrar`'s shape | REQ-PUBLISH-060, AC-PUBLISH-050 | Call `Start(ctx)` twice; assert (via an internal call counter guarded by `-race`) only one worker goroutine ever runs; cancel `ctx`; assert `Done()`'s channel closes exactly once. |
 | TC-U-416 | `Close` closes the underlying NATS connection | REQ-PUBLISH-090 | Construct a `Publisher` against a fake/real connection wrapper recording `Close()` calls; call `Publisher.Close()`; assert the underlying connection's `Close` was called exactly once. |
+| TC-U-417 | `NewPublisher` wraps and returns a NATS connect failure | REQ-PUBLISH-020 | Call `NewPublisher("://not-a-valid-url", logger)` — `nats.Connect` fails synchronously on URL parsing, no live broker needed; assert a non-nil error wrapping "connecting to NATS" and a nil `*Publisher`. |
+
+**Coverage note:** `NewPublisher`'s `jetstream.New(nc)` error-wrap branch is
+not exercised by any TC here — `jetstream.New` is called with no
+`JetStreamOpt`s, and only such an option's own error can make it fail, so no
+input reachable from this codebase can trigger it today. Documented as an
+accepted coverage exception in the code, consistent with this suite's "test
+real production types" convention (see `.ai/test-plans/osac-sp-unit.test-plan.md`,
+section 4's coverage note).
 
 ---
 
@@ -125,7 +134,7 @@ types" convention (see `.ai/test-plans/osac-sp-unit.test-plan.md`, section
 | REQ/AC | TC-U | TC-I |
 |--------|------|------|
 | REQ-PUBLISH-010 (config) | — (covered by `config` package's existing env-parsing tests; no new logic to unit-test) | — |
-| REQ-PUBLISH-020 (connect, non-blocking) | TC-U-415 | TC-I-401 |
+| REQ-PUBLISH-020 (connect, non-blocking) | TC-U-415, TC-U-417 | TC-I-401 |
 | REQ-PUBLISH-030 / AC-PUBLISH-010 (envelope) | TC-U-400, TC-U-401, TC-U-402 | TC-I-400 |
 | REQ-PUBLISH-040 / AC-PUBLISH-020 (JetStream subject) | TC-U-411 | TC-I-400 |
 | REQ-PUBLISH-050 / AC-PUBLISH-020 (non-blocking) | TC-U-410 | TC-I-400 |
