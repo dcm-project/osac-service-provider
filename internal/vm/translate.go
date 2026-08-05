@@ -52,7 +52,7 @@ func mergeLabels(caller *map[string]string, id string) map[string]string {
 // toOSACComputeInstance translates a Create request's id/spec into the
 // OSAC ComputeInstance object sent to ComputeInstances/Create, per the M4
 // spec's Field Mapping table (§4.1). spec.vcpu/spec.memory are
-// deliberately never read here (DD-082) — they're informational only.
+// deliberately never read here (DD-122) — they're informational only.
 // network_attachments is left unset — Service.Create fills it in after
 // resolving the default subnet (§4.5), since that step can itself fail and
 // must not have already dispatched to OSAC.

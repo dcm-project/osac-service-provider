@@ -15,7 +15,7 @@ import (
 // pure function, tested directly against every REQ-VMSTATUS-020 precedence
 // rule without needing the bufconn fixture. This is a separate 8-value
 // vocabulary and a separate, condition-free implementation from Cluster's
-// MapStatus (DD-081) — do not conflate the two.
+// MapStatus (DD-121) — do not conflate the two.
 var _ = Describe("MapStatus (Topic 4.6 Status Mapping)", func() {
 	DescribeTable("maps each individual signal to its documented value (TC-U-350)",
 		func(err error, status *publicv1.ComputeInstanceStatus, want v1alpha1.VMStatus) {

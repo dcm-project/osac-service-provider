@@ -30,7 +30,7 @@ func (h *Handler) CreateVM(ctx context.Context, req oapigen.CreateVMRequestObjec
 // (REQ-VMERR-030) — before ever dispatching to OSAC. Both req.Params.Id
 // and req.Body.Spec are pointers that can genuinely be nil: the "id" query
 // parameter and the body's "spec" property are schema-optional (AEP-133
-// compliance, DD-085), so the router's generated ServerInterfaceWrapper
+// compliance, DD-125), so the router's generated ServerInterfaceWrapper
 // does not reject a wholly-absent "id" (or an empty JSON object body)
 // ahead of this handler ever running. This is the sole enforcement point
 // for the id/spec/template_id/instance_type presence checks;

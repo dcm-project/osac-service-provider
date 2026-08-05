@@ -20,7 +20,7 @@ Milestone 3's Cluster CRUD.
   exists in this repo yet).
 - Best-fit `instance_type` resolution from raw `vcpu`/`memory` values — a
   required `provider_hints.osac.instance_type` is a hard requirement instead
-  (DD-082); revisit only if a documented need emerges.
+  (DD-122); revisit only if a documented need emerges.
 - `InstanceTypes`/`SecurityGroups` CRUD or admin management — this SP only
   ever *references* an `instance_type` by name and *creates* the one default
   `VirtualNetwork`/`Subnet` pair it needs (§4.5); it never manages the
@@ -40,7 +40,7 @@ Milestone 3's Cluster CRUD.
   [Ownership Tracking](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#ownership-tracking),
   [Status Mapping — VM Status](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#status-mapping-osac-to-dcm) —
   **PR [#100](https://github.com/dcm-project/enhancements/pull/100)**
-  (corrective fix to VM Sizing, landed ahead of this spec — see DD-082)
+  (corrective fix to VM Sizing, landed ahead of this spec — see DD-122)
   supersedes the merged [PR #96](https://github.com/dcm-project/enhancements/pull/96)'s
   "keep direct `cores`/`memory_gib` mapping" resolution.
 - [`dcm-project/control-plane`](https://github.com/dcm-project/control-plane)'s
@@ -51,7 +51,7 @@ Milestone 3's Cluster CRUD.
   and [Generic Service Schema](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-type-definitions/service-type-definitions.md#generic-service)
 - [Service Provider Status Reporting — VM Status](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#vm-status) —
   the canonical 8-value status vocabulary (§4.6), **distinct** from Cluster's
-  7-value vocabulary (DD-081)
+  7-value vocabulary (DD-121)
 - OSAC public protos, already vendored in Milestone 2:
   [`compute_instances_service.proto`/`compute_instance_type.proto`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1),
   [`subnets_service.proto`/`subnet_type.proto`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1),
@@ -59,18 +59,18 @@ Milestone 3's Cluster CRUD.
   no new vendoring needed. Every field/behavior claim below was re-verified
   directly against `fulfillment-service`'s current `main`
   ([`c4110b2`](https://github.com/osac-project/fulfillment-service/blob/c4110b28a14d4a3b3926ae5360e2cd59c15430d5)),
-  not the vendored commit alone, given DD-082's finding that the vendored
+  not the vendored commit alone, given DD-122's finding that the vendored
   commit already lagged the enhancement doc's own prose in one respect.
 - [Milestone 1 spec](./osac-sp.spec.md) (`internal/httperror`, DD-070) and
   [Milestone 2 spec](./osac-sp-m2-grpc-client-generation.spec.md)
   (`Bootstrap.Conn()`) — both extended, not replaced. Milestone 3's spec
   (`./osac-sp-m3-cluster-crud.spec.md`) is a **structural** reference (same
   patterns applied to a different resource type) but not a code dependency —
-  Milestone 4 branched from `main` before Milestone 3 merged (see DD-086),
+  Milestone 4 branched from `main` before Milestone 3 merged (see DD-126),
   so `internal/cluster`/`internal/handlers/cluster` do not exist on this
   branch.
-- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-080 through
-  DD-086 (new, this milestone)
+- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-120 through
+  DD-126 (new, this milestone)
 
 ---
 
@@ -92,13 +92,13 @@ Milestone 2's `internal/osac.Bootstrap.Conn()`. Three new packages:
   `internal/httperror`/`internal/grpcerror` for every non-2xx response
   (§4.7).
 - **`internal/grpcerror`** (new, shared) — `Classify(err error) (status
-  int, errType v1alpha1.ErrorType, title string)`, extracted per DD-086 so
+  int, errType v1alpha1.ErrorType, title string)`, extracted per DD-126 so
   `internal/handlers/vm` does not duplicate the gRPC-code mapping table a
   second time. `internal/handlers/cluster` (Milestone 3, landing separately)
   should adopt this in a follow-up.
 
 ```
-control-plane (synchronous, direct REST — same contract as Milestone 3, DD-080)
+control-plane (synchronous, direct REST — same contract as Milestone 3, DD-120)
         |
         | POST /api/v1alpha1/vms?id=X   {"spec": {...}}
         | DELETE /api/v1alpha1/vms/X
@@ -145,7 +145,7 @@ Milestone 2's already-authenticated shared connection.
 | 4 | VM Delete                    | VMDELETE | Topic 7, Milestone 2                                                     |
 | 5 | Default Network Provisioning | VMNET    | Topic 7, Milestone 2 (`Subnets`/`VirtualNetworks` clients)                |
 | 6 | Status Mapping                | VMSTATUS | Milestone 2 (`publicv1.ComputeInstanceState` type)                        |
-| 7 | Error Mapping                 | VMERR    | Milestone 1 Topic 4.1 (`internal/httperror`, DD-070); introduces `internal/grpcerror` (DD-086) |
+| 7 | Error Mapping                 | VMERR    | Milestone 1 Topic 4.1 (`internal/httperror`, DD-070); introduces `internal/grpcerror` (DD-126) |
 
 ```
 Topic 7: Error Mapping   ---+--> Topic 1: Create (via Topic 5)
@@ -164,7 +164,7 @@ Topic 6: Status Mapping  ---+--> Topic 2: Get
 #### Overview
 
 `POST /api/v1alpha1/vms` accepts an optional-schema `id` query parameter
-(runtime-required, DD-085) and a JSON body `{"spec": {...}}` where `spec`
+(runtime-required, DD-125) and a JSON body `{"spec": {...}}` where `spec`
 follows the
 [VM schema](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-type-definitions/service-type-definitions.md#virtual-machine)
 (`vcpu.count`, `memory.size`, `storage.disks[]`, `guest_os.type`,
@@ -177,33 +177,33 @@ calls `ComputeInstances/Create`.
 | DCM Field                                | OSAC Field                          | Notes                                                                          |
 | ------------------------------------------ | -------------------------------------- | --------------------------------------------------------------------------------- |
 | `id` (query param)                        | `ComputeInstance.id`                  | Sets OSAC's own identifier — REQ-VMCREATE-070 (idempotency)                      |
-| `spec.vcpu.count`                         | *(not sent)*                          | Informational only — DD-082                                                      |
-| `spec.memory.size`                        | *(not sent)*                          | Informational only — DD-082                                                      |
-| `spec.storage.disks[]` (`name == "boot"`) | `spec.boot_disk.size_gib`             | Parsed per DD-083. Exactly one disk named `boot` is required (REQ-VMCREATE-060)  |
-| `spec.storage.disks[]` (all others)       | `spec.additional_disks[].size_gib`    | Parsed per DD-083. Disk `name` is **not** preserved — OSAC's `ComputeInstanceDisk` has no name field (SC-M4-002) |
+| `spec.vcpu.count`                         | *(not sent)*                          | Informational only — DD-122                                                      |
+| `spec.memory.size`                        | *(not sent)*                          | Informational only — DD-122                                                      |
+| `spec.storage.disks[]` (`name == "boot"`) | `spec.boot_disk.size_gib`             | Parsed per DD-123. Exactly one disk named `boot` is required (REQ-VMCREATE-060)  |
+| `spec.storage.disks[]` (all others)       | `spec.additional_disks[].size_gib`    | Parsed per DD-123. Disk `name` is **not** preserved — OSAC's `ComputeInstanceDisk` has no name field (SC-M4-002) |
 | `spec.guest_os.type`                      | `spec.image.source_ref`               | `image.source_type` is a fixed constant, `"catalog"` — see SC-M4-002              |
 | `spec.access.ssh_public_key`               | `spec.ssh_public_key`                 | Optional passthrough                                                             |
 | `spec.metadata.name`                       | `metadata.name`                       |                                                                                     |
 | `spec.metadata.labels`                     | `metadata.labels` (merged with ownership labels, REQ-VMCREATE-050) |                                                            |
 | `spec.provider_hints.osac.template_id`     | `spec.template`                       | Required                                                                          |
-| `spec.provider_hints.osac.instance_type`   | `spec.instance_type`                  | **Required** — DD-082, no fallback                                               |
+| `spec.provider_hints.osac.instance_type`   | `spec.instance_type`                  | **Required** — DD-122, no fallback                                               |
 | `spec.provider_hints.osac.windows`         | `spec.is_windows`                     | Optional, defaults to `false`/omitted. Named `windows`, not `is_windows`, per AEP-140 (boolean properties omit the `is` prefix) — this is the SP's own hint schema, not a literal passthrough of OSAC's field name |
 | *(SP-resolved, §4.5)*                      | `spec.network_attachments`            | Always exactly one entry — REQ-VMNET-040                                          |
 
 **Provider Hints (`provider_hints.osac`):** `template_id` (string,
-required); `instance_type` (string, required — DD-082); `windows`
+required); `instance_type` (string, required — DD-122); `windows`
 (bool, optional — AEP-140 naming).
 
 #### Requirements
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-VMCREATE-010 | The SP MUST implement `POST /api/v1alpha1/vms`, accepting an optional-schema `id` query parameter and a request body `{"spec": {...}}` — matching `control-plane`'s actual outbound dispatch shape. "Required" here is a runtime/behavioral requirement (REQ-VMCREATE-060), not the OpenAPI schema's `required` keyword — both `id` and the body's `spec` property are schema-optional for AEP-133 compliance | MUST | DD-085 |
+| REQ-VMCREATE-010 | The SP MUST implement `POST /api/v1alpha1/vms`, accepting an optional-schema `id` query parameter and a request body `{"spec": {...}}` — matching `control-plane`'s actual outbound dispatch shape. "Required" here is a runtime/behavioral requirement (REQ-VMCREATE-060), not the OpenAPI schema's `required` keyword — both `id` and the body's `spec` property are schema-optional for AEP-133 compliance | MUST | DD-125 |
 | REQ-VMCREATE-020 | The SP MUST translate the request per the Field Mapping table above and call `osac.public.v1.ComputeInstances/Create` with `ComputeInstance.id` set to the `id` query parameter's exact value | MUST | |
 | REQ-VMCREATE-030 | Exactly one entry of `spec.storage.disks[]` MUST have `name == "boot"`; its `capacity` (parsed per REQ-VMCREATE-040) MUST become `spec.boot_disk.size_gib`. Every other entry's parsed `capacity` MUST become one `spec.additional_disks[]` entry, in the same relative order as the request, with the boot disk excluded | MUST | |
-| REQ-VMCREATE-040 | Disk `capacity` strings MUST be parsed per DD-083 (`GB`/`GiB` treated as GiB directly, `TB`/`TiB` ×1024, `MB`/`MiB` ÷1024 rounded up, case-insensitive unit matching); an unparseable string, unrecognized unit, or non-positive value MUST be rejected per REQ-VMCREATE-060 | MUST | DD-083 |
+| REQ-VMCREATE-040 | Disk `capacity` strings MUST be parsed per DD-123 (`GB`/`GiB` treated as GiB directly, `TB`/`TiB` ×1024, `MB`/`MiB` ÷1024 rounded up, case-insensitive unit matching); an unparseable string, unrecognized unit, or non-positive value MUST be rejected per REQ-VMCREATE-060 | MUST | DD-123 |
 | REQ-VMCREATE-050 | The SP MUST set three ownership labels on `metadata.labels` for every Create call: `dcm.io/managed-by="dcm"`, `dcm.io/instance-id="<id>"`, `dcm.io/service-type="vm"` — merged with, not replacing, any caller-supplied `spec.metadata.labels` | MUST | |
-| REQ-VMCREATE-060 | A request missing the `id` query parameter, missing the body's `spec` property entirely, missing `spec.provider_hints.osac.template_id` or `spec.provider_hints.osac.instance_type`, missing a disk named `boot`, or containing an unparseable disk `capacity` (REQ-VMCREATE-040), MUST return `400 Bad Request` via the shared error-mapping topic (§4.7) without calling OSAC | MUST | DD-082 |
+| REQ-VMCREATE-060 | A request missing the `id` query parameter, missing the body's `spec` property entirely, missing `spec.provider_hints.osac.template_id` or `spec.provider_hints.osac.instance_type`, missing a disk named `boot`, or containing an unparseable disk `capacity` (REQ-VMCREATE-040), MUST return `400 Bad Request` via the shared error-mapping topic (§4.7) without calling OSAC | MUST | DD-122 |
 | REQ-VMCREATE-070 | If `ComputeInstances/Create` returns gRPC `AlreadyExists` for the given `id`, the SP MUST call `ComputeInstances/Get(id)` and return **that** object's current state as a successful Create response — MUST NOT surface `AlreadyExists` to the caller as an error | MUST | Mirrors DD-100 (Milestone 3) |
 | REQ-VMCREATE-080 | A successful Create response MUST be `201 Created` with a body whose top-level `id` and `status` fields are always populated (never omitted/null) | MUST | |
 | REQ-VMCREATE-090 | `spec.network_attachments` MUST always be set to exactly the single entry resolved by §4.5 (Default Network Provisioning) — the SP MUST NOT accept or forward any caller-supplied network configuration (DCM's VM schema defines none) | MUST | REQ-VMNET-040 |
@@ -263,7 +263,7 @@ None — reuses Milestone 2's `Bootstrap.Conn()`.
 
 ##### AC-VMCREATE-060: Missing `provider_hints.osac.instance_type` is rejected before calling OSAC
 
-- **Validates:** REQ-VMCREATE-060, DD-082
+- **Validates:** REQ-VMCREATE-060, DD-122
 - **Given** a Create request with `provider_hints.osac.template_id` set but `instance_type` omitted
 - **When** processed
 - **Then** the response is `400 Bad Request` and the fake OSAC server recorded zero `ComputeInstances/Create` calls — proving the SP never falls back to a direct `cores`/`memory_gib` mapping
@@ -390,7 +390,7 @@ Depends on Topic 6 (Status Mapping), Topic 7 (Error Mapping), Milestone 2.
 
 `DELETE /api/v1alpha1/vms/{vmId}` calls `ComputeInstances/Delete`. Per
 `control-plane`'s own dispatcher tolerance for a `404` (same as Cluster,
-DD-080) — and per DD-080's direct verification that `ComputeInstances/Delete`
+DD-120) — and per DD-120's direct verification that `ComputeInstances/Delete`
 is fully implemented today with **no** teardown-ambiguity gap (unlike
 Cluster's tracked `OSAC-1586`/`OSAC-1391`) — the SP mirrors that tolerance:
 a `NotFound` from OSAC is success, not an error.
@@ -399,7 +399,7 @@ a `NotFound` from OSAC is success, not an error.
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-VMDELETE-010 | The SP MUST implement `DELETE /api/v1alpha1/vms/{vmId}`, calling `ComputeInstances/Delete(vmId)` | MUST | DD-080 |
+| REQ-VMDELETE-010 | The SP MUST implement `DELETE /api/v1alpha1/vms/{vmId}`, calling `ComputeInstances/Delete(vmId)` | MUST | DD-120 |
 | REQ-VMDELETE-020 | `ComputeInstances/Delete` returning gRPC `NotFound` MUST be treated as success — response `204 No Content`, **not** `404` | MUST | Mirrors REQ-DELETE-020 (Milestone 3) |
 | REQ-VMDELETE-030 | Any other gRPC error from `ComputeInstances/Delete` MUST map through the shared error-mapping topic (§4.7) | MUST | |
 | REQ-VMDELETE-040 | The SP MUST return `204` as soon as OSAC acknowledges the delete request — it MUST NOT poll/wait for the VM to actually disappear | MUST | |
@@ -445,22 +445,22 @@ Depends on Topic 7 (Error Mapping), Milestone 2.
 `spec.network_attachments`, each referencing a `Subnet` in `READY` state.
 DCM's VM schema has no networking concept, so on every Create the SP
 resolves (or provisions) a default subnet and attaches it automatically —
-statelessly, per DD-084, not via the enhancement doc's cached per-tenant
+statelessly, per DD-124, not via the enhancement doc's cached per-tenant
 mapping store.
 
 #### Requirements
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-VMNET-010 | Before every `ComputeInstances/Create` call, the SP MUST call `Subnets/List` with CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm"`. If at least one result is returned, the SP MUST use the first result's `id` as the resolved subnet and MUST NOT create a new `VirtualNetwork`/`Subnet` | MUST | DD-084 |
-| REQ-VMNET-020 | If `Subnets/List` returns zero results, the SP MUST call `VirtualNetworks/Create` with `spec.ipv4_cidr="10.200.0.0/16"`, `spec.capabilities.enable_ipv4=true`, `spec.network_class` omitted, and **two** ownership labels: `dcm.io/managed-by="dcm"` and `dcm.io/service-type="vm-default-network"`. **No** `dcm.io/instance-id` label is set — unlike Create's per-VM ownership labels (REQ-VMCREATE-050), this network is shared across every VM, not owned by the one whose Create call happened to trigger its provisioning, so there is no single VM id to attribute it to (see SC-M4-001) | MUST | DD-084 |
-| REQ-VMNET-030 | After a successful `VirtualNetworks/Create`, the SP MUST call `Subnets/Create` with `spec.virtual_network` set to the new `VirtualNetwork`'s `id`, `spec.ipv4_cidr="10.200.1.0/24"`, the same two ownership labels as REQ-VMNET-020, and `metadata.annotations["osac.openshift.io/owner-reference"]` set to the `VirtualNetwork`'s `id` | MUST | DD-084 |
-| REQ-VMNET-040 | The SP MUST poll (`Get`, `500ms` interval, `15s` total timeout, bounded by the request's context) both the new `VirtualNetwork` and `Subnet` until both report `READY`, before using the `Subnet`'s `id`. If the timeout elapses first, the SP MUST return an error that maps to `502 Bad Gateway` (§4.7) and MUST NOT call `ComputeInstances/Create` | MUST | DD-084 |
+| REQ-VMNET-010 | Before every `ComputeInstances/Create` call, the SP MUST call `Subnets/List` with CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm"`. If at least one result is returned, the SP MUST use the first result's `id` as the resolved subnet and MUST NOT create a new `VirtualNetwork`/`Subnet` | MUST | DD-124 |
+| REQ-VMNET-020 | If `Subnets/List` returns zero results, the SP MUST call `VirtualNetworks/Create` with `spec.ipv4_cidr="10.200.0.0/16"`, `spec.capabilities.enable_ipv4=true`, `spec.network_class` omitted, and **two** ownership labels: `dcm.io/managed-by="dcm"` and `dcm.io/service-type="vm-default-network"`. **No** `dcm.io/instance-id` label is set — unlike Create's per-VM ownership labels (REQ-VMCREATE-050), this network is shared across every VM, not owned by the one whose Create call happened to trigger its provisioning, so there is no single VM id to attribute it to (see SC-M4-001) | MUST | DD-124 |
+| REQ-VMNET-030 | After a successful `VirtualNetworks/Create`, the SP MUST call `Subnets/Create` with `spec.virtual_network` set to the new `VirtualNetwork`'s `id`, `spec.ipv4_cidr="10.200.1.0/24"`, the same two ownership labels as REQ-VMNET-020, and `metadata.annotations["osac.openshift.io/owner-reference"]` set to the `VirtualNetwork`'s `id` | MUST | DD-124 |
+| REQ-VMNET-040 | The SP MUST poll (`Get`, `500ms` interval, `15s` total timeout, bounded by the request's context) both the new `VirtualNetwork` and `Subnet` until both report `READY`, before using the `Subnet`'s `id`. If the timeout elapses first, the SP MUST return an error that maps to `502 Bad Gateway` (§4.7) and MUST NOT call `ComputeInstances/Create` | MUST | DD-124 |
 | REQ-VMNET-050 | The resolved subnet `id` (whether reused via REQ-VMNET-010 or newly provisioned via REQ-VMNET-020..040) MUST be set as `spec.network_attachments[0].subnet` on the subsequent `ComputeInstances/Create` call, with `security_groups` left empty | MUST | REQ-VMCREATE-090 |
 
 #### Configuration Introduced
 
-None — poll interval/timeout are hardcoded constants (DD-084), not new
+None — poll interval/timeout are hardcoded constants (DD-124), not new
 environment variables.
 
 #### Acceptance Criteria
@@ -506,18 +506,18 @@ Depends on Topic 7 (Error Mapping), Milestone 2's `Bootstrap.Conn()`.
 A single mapping function, shared identically by Create's response, Get,
 and List (REQ-VMSTATUS-030), translating OSAC's `ComputeInstanceState` and
 the outcome of the gRPC call itself into DCM's canonical **8-value** VM
-status vocabulary (DD-081), per
+status vocabulary (DD-121), per
 [`service-provider-status-reporting.md#vm-status`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#vm-status):
 `PROVISIONING | RUNNING | STOPPED | FAILED | DELETING | STOPPING | PAUSED |
 DELETED`. This is a **separate** vocabulary from Cluster's 7-value one
-(DD-081) — do not conflate the two mappers.
+(DD-121) — do not conflate the two mappers.
 
 #### Requirements
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-VMSTATUS-010 | The status mapper MUST return exactly one of the 8 canonical values listed above for every Create/Get/List call | MUST | DD-081 |
-| REQ-VMSTATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` → `FAILED`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `state == COMPUTE_INSTANCE_STATE_STARTING` → `PROVISIONING`; (4) `state == COMPUTE_INSTANCE_STATE_RUNNING` → `RUNNING`; (5) `state == COMPUTE_INSTANCE_STATE_FAILED` → `FAILED`; (6) `state == COMPUTE_INSTANCE_STATE_DELETING` → `DELETING`; (7) `state == COMPUTE_INSTANCE_STATE_STOPPING` → `STOPPING`; (8) `state == COMPUTE_INSTANCE_STATE_STOPPED` → `STOPPED`; (9) `state == COMPUTE_INSTANCE_STATE_PAUSED` → `PAUSED`; (10) anything else (including `COMPUTE_INSTANCE_STATE_UNSPECIFIED`) → `FAILED` (defensive default) | MUST | DD-081 — no condition-based step, unlike Cluster's mapper |
+| REQ-VMSTATUS-010 | The status mapper MUST return exactly one of the 8 canonical values listed above for every Create/Get/List call | MUST | DD-121 |
+| REQ-VMSTATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` → `FAILED`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `state == COMPUTE_INSTANCE_STATE_STARTING` → `PROVISIONING`; (4) `state == COMPUTE_INSTANCE_STATE_RUNNING` → `RUNNING`; (5) `state == COMPUTE_INSTANCE_STATE_FAILED` → `FAILED`; (6) `state == COMPUTE_INSTANCE_STATE_DELETING` → `DELETING`; (7) `state == COMPUTE_INSTANCE_STATE_STOPPING` → `STOPPING`; (8) `state == COMPUTE_INSTANCE_STATE_STOPPED` → `STOPPED`; (9) `state == COMPUTE_INSTANCE_STATE_PAUSED` → `PAUSED`; (10) anything else (including `COMPUTE_INSTANCE_STATE_UNSPECIFIED`) → `FAILED` (defensive default) | MUST | DD-121 — no condition-based step, unlike Cluster's mapper |
 | REQ-VMSTATUS-030 | Create's response `status`, Get's `status`, and each List entry's `status` MUST all be computed by the same mapper implementation (no per-handler duplication) | MUST | |
 
 #### Configuration Introduced
@@ -554,7 +554,7 @@ new proto vendoring).
 Every gRPC error surfaced by any `ComputeInstances`/`Subnets`/
 `VirtualNetworks` RPC (except the two carve-outs below) MUST be mapped to
 an HTTP status and an RFC 9457 body, via a new shared package,
-`internal/grpcerror` (DD-086), reusing `internal/httperror.WriteResponse`
+`internal/grpcerror` (DD-126), reusing `internal/httperror.WriteResponse`
 for the actual write (unchanged from Milestone 1, DD-070).
 
 **Carve-outs (handler-specific, override this table):** Create's
@@ -567,9 +567,9 @@ returns `204`, not `404`. Default Network Provisioning's poll timeout
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-VMERR-010 | `internal/grpcerror.Classify` MUST map gRPC codes to HTTP status + `v1alpha1.ErrorType` identically to Milestone 3's table: `InvalidArgument`→`400`/`INVALIDARGUMENT`; `Unauthenticated`→`401`/`UNAUTHENTICATED`; `PermissionDenied`→`403`/`PERMISSIONDENIED`; `NotFound`→`404`/`NOTFOUND`; `AlreadyExists`→`409`/`ALREADYEXISTS`; `Unavailable`/`DeadlineExceeded`→`502`/`UNAVAILABLE`; `Internal`/`Unknown`/anything else→`500`/`INTERNAL` | MUST | DD-086 |
+| REQ-VMERR-010 | `internal/grpcerror.Classify` MUST map gRPC codes to HTTP status + `v1alpha1.ErrorType` identically to Milestone 3's table: `InvalidArgument`→`400`/`INVALIDARGUMENT`; `Unauthenticated`→`401`/`UNAUTHENTICATED`; `PermissionDenied`→`403`/`PERMISSIONDENIED`; `NotFound`→`404`/`NOTFOUND`; `AlreadyExists`→`409`/`ALREADYEXISTS`; `Unavailable`/`DeadlineExceeded`→`502`/`UNAVAILABLE`; `Internal`/`Unknown`/anything else→`500`/`INTERNAL` | MUST | DD-126 |
 | REQ-VMERR-020 | Every error response MUST use `internal/httperror.WriteResponse`, producing `Content-Type: application/problem+json` and a body matching the `v1alpha1.Error` schema | MUST | DD-070 |
-| REQ-VMERR-030 | `internal/grpcerror.Classify` MUST be the single implementation consumed by all 4 VM handlers (no per-handler duplication) | MUST | DD-086 |
+| REQ-VMERR-030 | `internal/grpcerror.Classify` MUST be the single implementation consumed by all 4 VM handlers (no per-handler duplication) | MUST | DD-126 |
 
 #### Configuration Introduced
 
@@ -615,12 +615,12 @@ No new configuration keys. See `osac-sp.spec.md` §6 for the full table
 
 Design decisions (`DD-NNN`) live in
 [`.ai/decisions/osac-sp.decisions.md`](../decisions/osac-sp.decisions.md).
-This milestone adds **DD-080** (VM CRUD dispatch contract; `Delete`
-verified fully implemented), **DD-081** (8-value VM status vocabulary,
-condition-free mapping), **DD-082** (`instance_type` required, no direct
-sizing), **DD-083** (disk capacity unit parsing), **DD-084** (stateless
-default network provisioning), **DD-085** (AEP-133-compliant `POST
-/api/v1alpha1/vms` from the start), and **DD-086** (shared
+This milestone adds **DD-120** (VM CRUD dispatch contract; `Delete`
+verified fully implemented), **DD-121** (8-value VM status vocabulary,
+condition-free mapping), **DD-122** (`instance_type` required, no direct
+sizing), **DD-123** (disk capacity unit parsing), **DD-124** (stateless
+default network provisioning), **DD-125** (AEP-133-compliant `POST
+/api/v1alpha1/vms` from the start), and **DD-126** (shared
 `internal/grpcerror` package).
 
 ---

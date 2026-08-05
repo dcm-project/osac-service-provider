@@ -10,7 +10,7 @@ import (
 
 // MapStatus translates OSAC's ComputeInstanceState, or the outcome of the
 // gRPC call that produced it, into DCM's canonical 8-value VM status
-// vocabulary (DD-081), per REQ-VMSTATUS-020's precedence order. When err is
+// vocabulary (DD-121), per REQ-VMSTATUS-020's precedence order. When err is
 // non-nil, status is ignored (and may be nil): the error's own gRPC code
 // alone determines the result.
 //

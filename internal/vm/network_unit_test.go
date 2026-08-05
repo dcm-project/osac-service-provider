@@ -13,7 +13,7 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/vm"
 )
 
-// Default Network Provisioning (Topic 4.5, DD-084) has no dedicated public
+// Default Network Provisioning (Topic 4.5, DD-124) has no dedicated public
 // method — it's an internal step of Create (see the M4 spec §2 architecture
 // diagram) — so these tests drive it exclusively through Create and assert
 // against the fake Subnets/VirtualNetworks servers' recorded calls, exactly

@@ -18,7 +18,7 @@ import (
 )
 
 // defaultNetworkPollInterval/Timeout are REQ-VMNET-040's hardcoded polling
-// constants (DD-084 — no new configuration is introduced for these).
+// constants (DD-124 — no new configuration is introduced for these).
 // Overridable per-Service via WithNetworkPollInterval/WithNetworkPollTimeout,
 // exclusively so tests can exercise the timeout path (AC-VMNET-040) without
 // a real 15-second wait.
@@ -122,7 +122,7 @@ func (s *Service) Get(ctx context.Context, id string) (v1alpha1.VirtualMachine, 
 
 // Delete calls ComputeInstances/Delete(id). A NotFound response is treated
 // as success (REQ-VMDELETE-020), mirroring control-plane's own tolerance
-// for this exact case (DD-080).
+// for this exact case (DD-120).
 func (s *Service) Delete(ctx context.Context, id string) error {
 	_, err := s.computeInstances.Delete(ctx, &publicv1.ComputeInstancesDeleteRequest{Id: id})
 	if err != nil && grpcstatus.Code(err) != codes.NotFound {

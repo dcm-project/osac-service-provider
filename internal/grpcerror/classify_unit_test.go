@@ -14,7 +14,7 @@ import (
 
 // TC-U-360 (REQ-VMERR-010/020, AC-VMERR-010): Classify maps every
 // documented gRPC code to its exact HTTP status and v1alpha1.ErrorType,
-// identically to Milestone 3's table (DD-086).
+// identically to Milestone 3's table (DD-126).
 var _ = Describe("Classify (Topic 7 VM Error Mapping)", func() {
 	DescribeTable("maps each gRPC code to its documented HTTP status and type (TC-U-360)",
 		func(code codes.Code, wantStatus int, wantType v1alpha1.ErrorType) {

@@ -40,7 +40,7 @@ func (e mappedError) VisitDeleteVMResponse(w http.ResponseWriter) error { return
 // mapError translates err — either a gRPC error surfaced by internal/vm,
 // or a synthetic codes.InvalidArgument error from this package's own
 // request validation — into the RFC 9457 status/type/title documented by
-// REQ-VMERR-010, via the shared internal/grpcerror.Classify (DD-086, not
+// REQ-VMERR-010, via the shared internal/grpcerror.Classify (DD-126, not
 // duplicated per-handler). Callers implementing the AlreadyExists/NotFound
 // carve-outs (REQ-VMCREATE-070, REQ-VMDELETE-020) MUST intercept those
 // codes before reaching mapError; this function applies no carve-out of

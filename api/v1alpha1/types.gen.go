@@ -158,7 +158,7 @@ type HealthStatus string
 
 // OSACVMProviderHints defines model for OSACVMProviderHints.
 type OSACVMProviderHints struct {
-	// InstanceType Reference to an OSAC `InstanceType` catalog entry. Mapped to OSAC's `spec.instance_type`. **Required** — DD-082, no direct `vcpu`/`memory` fallback exists.
+	// InstanceType Reference to an OSAC `InstanceType` catalog entry. Mapped to OSAC's `spec.instance_type`. **Required** — DD-122, no direct `vcpu`/`memory` fallback exists.
 	//
 	// Example: standard-4-16
 	InstanceType string `json:"instance_type"`
@@ -178,7 +178,7 @@ type VMAccess struct {
 
 // VMDisk defines model for VMDisk.
 type VMDisk struct {
-	// Capacity Parsed per DD-083 (`GB`/`GiB` treated as GiB directly, `TB`/`TiB` ×1024, `MB`/`MiB` ÷1024 rounded up, case-insensitive). E.g. "100GB", "2TB".
+	// Capacity Parsed per DD-123 (`GB`/`GiB` treated as GiB directly, `TB`/`TiB` ×1024, `MB`/`MiB` ÷1024 rounded up, case-insensitive). E.g. "100GB", "2TB".
 	Capacity string `json:"capacity"`
 
 	// Name Exactly one disk MUST be named `boot` (REQ-VMCREATE-030, REQ-VMCREATE-060) — it maps to OSAC's `spec.boot_disk`. Every other disk's `name` is not preserved on translation (SC-M4-002) — OSAC's `ComputeInstanceDisk` has no name field.
@@ -195,7 +195,7 @@ type VMGuestOS struct {
 
 // VMMemory defines model for VMMemory.
 type VMMemory struct {
-	// Size Informational only (DD-082) — the SP never translates this to an OSAC field. E.g. "8GB".
+	// Size Informational only (DD-122) — the SP never translates this to an OSAC field. E.g. "8GB".
 	Size string `json:"size"`
 }
 
@@ -224,7 +224,7 @@ type VMSpec struct {
 	Vcpu          *VMVCPU         `json:"vcpu,omitempty"`
 }
 
-// VMStatus DCM's full canonical 8-value VM status vocabulary (DD-081) — a separate vocabulary from Cluster's 7-value one; do not conflate the two.
+// VMStatus DCM's full canonical 8-value VM status vocabulary (DD-121) — a separate vocabulary from Cluster's 7-value one; do not conflate the two.
 type VMStatus string
 
 // VMStorage defines model for VMStorage.
@@ -234,7 +234,7 @@ type VMStorage struct {
 
 // VMVCPU defines model for VMVCPU.
 type VMVCPU struct {
-	// Count Informational only (DD-082) — the SP never translates this to an OSAC field. Use `provider_hints.osac.instance_type` instead.
+	// Count Informational only (DD-122) — the SP never translates this to an OSAC field. Use `provider_hints.osac.instance_type` instead.
 	Count int `json:"count"`
 }
 
@@ -245,7 +245,7 @@ type VirtualMachine struct {
 	// ExternalIpAddress Echoes OSAC's `status.external_ip_address` exactly (empty string when unknown — REQ-VMGET-030). Populated identically on Get and every List entry (REQ-VMLIST-030).
 	ExternalIpAddress *string `json:"external_ip_address,omitempty"`
 
-	// Id Same value as OSAC's `ComputeInstance.id` (DD-080's ID Mapping note).
+	// Id Same value as OSAC's `ComputeInstance.id` (DD-120's ID Mapping note).
 	Id *string `json:"id,omitempty"`
 
 	// InternalIpAddress Echoes OSAC's `status.internal_ip_address` exactly (empty string when unknown — REQ-VMGET-030). Populated identically on Get and every List entry (REQ-VMLIST-030).
@@ -256,10 +256,10 @@ type VirtualMachine struct {
 	// Example: vms/123e4567-e89b-12d3-a456-426614174000
 	Path *string `json:"path,omitempty"`
 
-	// Spec Request-only (DD-085): present when this schema is used as the Create request body (`POST /vms`'s AEP-133-compliant request body, which is this same `VirtualMachine` resource type). Never populated in a Get/List response — control-plane's own actual wire dispatch still sends only `{"spec": {...}}` in the body, so this remains the only body field it ever sets.
+	// Spec Request-only (DD-125): present when this schema is used as the Create request body (`POST /vms`'s AEP-133-compliant request body, which is this same `VirtualMachine` resource type). Never populated in a Get/List response — control-plane's own actual wire dispatch still sends only `{"spec": {...}}` in the body, so this remains the only body field it ever sets.
 	Spec *VMSpec `json:"spec,omitempty"`
 
-	// Status DCM's full canonical 8-value VM status vocabulary (DD-081) — a separate vocabulary from Cluster's 7-value one; do not conflate the two.
+	// Status DCM's full canonical 8-value VM status vocabulary (DD-121) — a separate vocabulary from Cluster's 7-value one; do not conflate the two.
 	Status VMStatus `json:"status"`
 
 	// StatusMessage Human-readable message about the current status
@@ -288,7 +288,7 @@ type ListVMsParams struct {
 
 // CreateVMParams defines parameters for CreateVM.
 type CreateVMParams struct {
-	// Id Caller-assigned resource identifier, set as OSAC's own `ComputeInstance.id` (REQ-VMCREATE-020). Schema-optional per AEP-133 ("a create operation must not have any required parameters other than path parameters" — DD-085); REQ-VMCREATE-010/060 still make it a hard runtime requirement, enforced by request validation (400 if absent/empty) rather than this field's own `required` flag, since control-plane always supplies it and this SP does not auto-generate ids.
+	// Id Caller-assigned resource identifier, set as OSAC's own `ComputeInstance.id` (REQ-VMCREATE-020). Schema-optional per AEP-133 ("a create operation must not have any required parameters other than path parameters" — DD-125); REQ-VMCREATE-010/060 still make it a hard runtime requirement, enforced by request validation (400 if absent/empty) rather than this field's own `required` flag, since control-plane always supplies it and this SP does not auto-generate ids.
 	Id *string `form:"id,omitempty" json:"id,omitempty"`
 }
 

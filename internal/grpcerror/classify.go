@@ -1,7 +1,7 @@
 // Package grpcerror provides the single, shared gRPC-code -> HTTP
 // status/v1alpha1.ErrorType mapping used by every OSAC Service Provider
 // REST handler. Extracted from Milestone 3's internal/handlers/cluster
-// (DD-086) so Milestone 4's internal/handlers/vm does not duplicate the
+// (DD-126) so Milestone 4's internal/handlers/vm does not duplicate the
 // same table a second time; internal/handlers/cluster should adopt this in
 // a follow-up.
 //

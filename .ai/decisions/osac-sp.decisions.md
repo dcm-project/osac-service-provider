@@ -355,7 +355,7 @@ values (and regenerated code) change — no handler logic changes.
 
 ---
 
-## DD-080: VM CRUD dispatch contract mirrors Cluster's; `ComputeInstances/Delete` is fully implemented today, not gated on OSAC
+## DD-120: VM CRUD dispatch contract mirrors Cluster's; `ComputeInstances/Delete` is fully implemented today, not gated on OSAC
 
 **Decision:** Milestone 4 (VM CRUD) reuses Milestone 3's dispatch contract
 verbatim — `control-plane` calls `POST /api/v1alpha1/vms?id=X`,
@@ -390,7 +390,7 @@ Cluster's REQ-DELETE-*.
 
 ---
 
-## DD-081: VM status uses its own 8-value DCM vocabulary with a direct, condition-free state mapping
+## DD-121: VM status uses its own 8-value DCM vocabulary with a direct, condition-free state mapping
 
 **Decision:** The VM status mapper returns one of DCM's VM-specific
 lifecycle phases — `PROVISIONING | RUNNING | STOPPED | FAILED | DELETING |
@@ -432,7 +432,7 @@ between the two, and none is warranted.
 
 ---
 
-## DD-082: `provider_hints.osac.instance_type` is required on every VM Create — no direct `cores`/`memory_gib` fallback exists
+## DD-122: `provider_hints.osac.instance_type` is required on every VM Create — no direct `cores`/`memory_gib` fallback exists
 
 **Decision:** VM Create requires `spec.provider_hints.osac.instance_type`
 on every request; a request omitting it is rejected `400 Bad Request`
@@ -471,7 +471,7 @@ one.
 
 ---
 
-## DD-083: Disk capacity strings are parsed as GiB-colloquial, not strict SI/IEC units
+## DD-123: Disk capacity strings are parsed as GiB-colloquial, not strict SI/IEC units
 
 **Decision:** `spec.storage.disks[*].capacity` (DCM strings like `"100GB"`,
 `"2TB"`) are parsed into OSAC's `size_gib` (`int32`) by treating the numeric
@@ -491,14 +491,14 @@ unrequested decimal-to-binary rounding policy for a distinction no caller
 in this schema is likely to intend precisely.
 
 **Consequence:** this parser is the only unit-conversion logic Milestone 4
-needs — `spec.memory.size` needs no parsing at all per DD-082 (never sent to
+needs — `spec.memory.size` needs no parsing at all per DD-122 (never sent to
 OSAC).
 
 **Related requirements:** REQ-VMCREATE-030, REQ-VMCREATE-040
 
 ---
 
-## DD-084: Default Network Provisioning is stateless (List-then-create-on-miss every Create), not a cached per-tenant mapping store
+## DD-124: Default Network Provisioning is stateless (List-then-create-on-miss every Create), not a cached per-tenant mapping store
 
 **Decision:** On every VM Create, the SP calls `Subnets/List` filtered by
 `this.metadata.labels["dcm.io/managed-by"] == "dcm"`. If a matching subnet
@@ -549,7 +549,7 @@ hardcoded constants, consistent with `Bootstrap`'s existing
 
 ---
 
-## DD-085: `POST /api/v1alpha1/vms` is AEP-133-compliant from the start
+## DD-125: `POST /api/v1alpha1/vms` is AEP-133-compliant from the start
 
 **Decision:** the `id` query parameter is schema-optional (`required:
 false`) and the request body is the `VirtualMachine` resource itself
@@ -577,7 +577,7 @@ as `internal/handlers/cluster/create.go` already does.
 
 ---
 
-## DD-086: gRPC-to-HTTP error classification is extracted into a shared `internal/grpcerror` package
+## DD-126: gRPC-to-HTTP error classification is extracted into a shared `internal/grpcerror` package
 
 **Decision:** the gRPC-code → HTTP-status/`v1alpha1.ErrorType`/title
 mapping table (REQ-VMERR-010) lives in a new `internal/grpcerror` package

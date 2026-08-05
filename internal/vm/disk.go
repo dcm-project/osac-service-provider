@@ -14,7 +14,7 @@ import (
 var capacityPattern = regexp.MustCompile(`^(-?[0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]+)$`)
 
 // ParseDiskCapacityGiB parses a DCM capacity string (e.g. "100GB", "2TB")
-// into OSAC's size_gib integer, per DD-083: GB/GiB are treated as GiB
+// into OSAC's size_gib integer, per DD-123: GB/GiB are treated as GiB
 // directly (colloquial usage — this SP doesn't distinguish binary from
 // decimal units), TB/TiB multiply by 1024, and MB/MiB divide by 1024
 // (rounded up, so a sub-GiB disk is never truncated to zero). Unit

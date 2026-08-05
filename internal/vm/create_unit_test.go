@@ -47,7 +47,7 @@ var _ = Describe("Service.Create (Topic 4.1 VM Create)", func() {
 
 	// TC-U-300 (REQ-VMCREATE-010/020, AC-VMCREATE-010): Create translates
 	// and dispatches the full field set with exact values, and never
-	// translates vcpu/memory (DD-082).
+	// translates vcpu/memory (DD-122).
 	It("translates the full field set and dispatches exact values to ComputeInstances/Create (TC-U-300)", func() {
 		_, err := f.svc.Create(context.Background(), "X", baseSpec())
 		Expect(err).NotTo(HaveOccurred())

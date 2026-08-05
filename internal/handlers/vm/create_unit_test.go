@@ -18,7 +18,7 @@ import (
 
 // validCreateBody is a fully-populated, valid CreateVMJSONRequestBody
 // satisfying every REQ-VMCREATE-060 required field. Individual tests
-// mutate a copy to omit exactly one field. Spec is a pointer (DD-085: the
+// mutate a copy to omit exactly one field. Spec is a pointer (DD-125: the
 // body's "spec" property is schema-optional per AEP-133, even though this
 // SP treats an absent one as a validation failure, not silent success).
 func validCreateBody() v1alpha1.CreateVMJSONRequestBody {
@@ -150,7 +150,7 @@ var _ = Describe("Handler.CreateVM request validation (Topic 1 VM Create)", func
 
 	// TC-U-306 (REQ-VMCREATE-060, AC-VMCREATE-060): a missing
 	// provider_hints.osac.instance_type is rejected before calling OSAC —
-	// proving no direct cores/memory_gib fallback exists (DD-082).
+	// proving no direct cores/memory_gib fallback exists (DD-122).
 	It("rejects a request missing provider_hints.osac.instance_type before calling OSAC (TC-U-306)", func() {
 		body := validCreateBody()
 		body.Spec.ProviderHints.Osac.InstanceType = ""

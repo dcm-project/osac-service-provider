@@ -37,7 +37,7 @@ func defaultNetworkLabels() map[string]string {
 }
 
 // resolveDefaultSubnet implements the Default Network Provisioning topic
-// (§4.5, DD-084): reuse an existing default subnet if one exists
+// (§4.5, DD-124): reuse an existing default subnet if one exists
 // (REQ-VMNET-010), otherwise provision a new VirtualNetwork/Subnet pair
 // and wait for both to become READY (REQ-VMNET-020/030/040) before
 // returning the resolved subnet id.

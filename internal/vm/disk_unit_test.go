@@ -10,9 +10,9 @@ import (
 )
 
 // TC-U-305 (REQ-VMCREATE-040): ParseDiskCapacityGiB is a pure function,
-// tested directly against DD-083's unit table without needing the bufconn
+// tested directly against DD-123's unit table without needing the bufconn
 // fixture.
-var _ = Describe("ParseDiskCapacityGiB (Topic 4.1 disk capacity parsing, DD-083)", func() {
+var _ = Describe("ParseDiskCapacityGiB (Topic 4.1 disk capacity parsing, DD-123)", func() {
 	DescribeTable("parses each supported unit, case-insensitively (TC-U-305)",
 		func(capacity string, wantGiB int32) {
 			got, err := vm.ParseDiskCapacityGiB(capacity)

@@ -117,8 +117,8 @@ type ClientInterface interface {
 	// Creates a new OSAC-backed virtual machine. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `VirtualMachine`
-	// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 	// field `control-plane` ever actually populates on the wire; every
 	// other `VirtualMachine` field is absent from that request and simply
 	// unmarshals to its zero value, which this handler ignores.
@@ -137,8 +137,8 @@ type ClientInterface interface {
 	// Creates a new OSAC-backed virtual machine. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `VirtualMachine`
-	// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 	// field `control-plane` ever actually populates on the wire; every
 	// other `VirtualMachine` field is absent from that request and simply
 	// unmarshals to its zero value, which this handler ignores.
@@ -169,7 +169,7 @@ type ClientInterface interface {
 	// request — does not poll for the VM to actually disappear
 	// (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
 	// treated as success (`204`), mirroring `control-plane`'s own
-	// tolerance for this exact case (REQ-VMDELETE-020/DD-080) — this
+	// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
 	// endpoint therefore never returns `404`.
 	//
 	// Corresponds with DELETE /api/v1alpha1/vms/{vmId} (the `DeleteVM` operationId).
@@ -230,8 +230,8 @@ func (c *Client) ListVMs(ctx context.Context, params *ListVMsParams, reqEditors 
 // Creates a new OSAC-backed virtual machine. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `VirtualMachine`
-// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 // field `control-plane` ever actually populates on the wire; every
 // other `VirtualMachine` field is absent from that request and simply
 // unmarshals to its zero value, which this handler ignores.
@@ -260,8 +260,8 @@ func (c *Client) CreateVMWithBody(ctx context.Context, params *CreateVMParams, c
 // Creates a new OSAC-backed virtual machine. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `VirtualMachine`
-// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 // field `control-plane` ever actually populates on the wire; every
 // other `VirtualMachine` field is absent from that request and simply
 // unmarshals to its zero value, which this handler ignores.
@@ -312,7 +312,7 @@ func (c *Client) GetVMsHealth(ctx context.Context, reqEditors ...RequestEditorFn
 // request — does not poll for the VM to actually disappear
 // (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
 // treated as success (`204`), mirroring `control-plane`'s own
-// tolerance for this exact case (REQ-VMDELETE-020/DD-080) — this
+// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
 // endpoint therefore never returns `404`.
 //
 // Corresponds with DELETE /api/v1alpha1/vms/{vmId} (the `DeleteVM` operationId).
@@ -675,8 +675,8 @@ type ClientWithResponsesInterface interface {
 	// Creates a new OSAC-backed virtual machine. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `VirtualMachine`
-	// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 	// field `control-plane` ever actually populates on the wire; every
 	// other `VirtualMachine` field is absent from that request and simply
 	// unmarshals to its zero value, which this handler ignores.
@@ -695,8 +695,8 @@ type ClientWithResponsesInterface interface {
 	// Creates a new OSAC-backed virtual machine. `control-plane`
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `VirtualMachine`
-	// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 	// field `control-plane` ever actually populates on the wire; every
 	// other `VirtualMachine` field is absent from that request and simply
 	// unmarshals to its zero value, which this handler ignores.
@@ -729,7 +729,7 @@ type ClientWithResponsesInterface interface {
 	// request — does not poll for the VM to actually disappear
 	// (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
 	// treated as success (`204`), mirroring `control-plane`'s own
-	// tolerance for this exact case (REQ-VMDELETE-020/DD-080) — this
+	// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
 	// endpoint therefore never returns `404`.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -1169,8 +1169,8 @@ func (c *ClientWithResponses) ListVMsWithResponse(ctx context.Context, params *L
 // Creates a new OSAC-backed virtual machine. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `VirtualMachine`
-// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 // field `control-plane` ever actually populates on the wire; every
 // other `VirtualMachine` field is absent from that request and simply
 // unmarshals to its zero value, which this handler ignores.
@@ -1195,8 +1195,8 @@ func (c *ClientWithResponses) CreateVMWithBodyWithResponse(ctx context.Context, 
 // Creates a new OSAC-backed virtual machine. `control-plane`
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `VirtualMachine`
-// resource type (AEP-133-compliant, DD-085), but `spec` is its only
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
 // field `control-plane` ever actually populates on the wire; every
 // other `VirtualMachine` field is absent from that request and simply
 // unmarshals to its zero value, which this handler ignores.
@@ -1241,7 +1241,7 @@ func (c *ClientWithResponses) GetVMsHealthWithResponse(ctx context.Context, reqE
 // request — does not poll for the VM to actually disappear
 // (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
 // treated as success (`204`), mirroring `control-plane`'s own
-// tolerance for this exact case (REQ-VMDELETE-020/DD-080) — this
+// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
 // endpoint therefore never returns `404`.
 //
 // Returns a wrapper object for the known response body format(s).

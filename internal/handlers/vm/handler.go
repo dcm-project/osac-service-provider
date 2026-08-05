@@ -1,7 +1,7 @@
 // Package vm implements the OSAC Service Provider's thin
 // StrictServerInterface handlers for the 4 VM REST operations, delegating
 // business logic to internal/vm and reusing internal/grpcerror for every
-// non-2xx response (DD-086) — the VM counterpart to Milestone 3's
+// non-2xx response (DD-126) — the VM counterpart to Milestone 3's
 // internal/handlers/cluster.
 //
 // Implements .ai/specs/osac-sp-m4-vm-crud.spec.md's internal/handlers/vm
