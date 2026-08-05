@@ -100,7 +100,7 @@ var _ = Describe("waitForReadyUntilCancelled", func() {
 	// TC-U-153: a single elapsed readiness window must not permanently
 	// abandon readiness — it must retry a fresh window and succeed once the
 	// server actually becomes reachable. Regression test for a real bug the
-	// kind-based e2e infra caught under genuine CPU contention (DD-091):
+	// kind-based e2e infra caught under genuine CPU contention (DD-141):
 	// the pre-fix Run gave up and skipped onReady forever after exactly one
 	// timed-out window, even though the server went on to serve requests
 	// successfully for the rest of its life.

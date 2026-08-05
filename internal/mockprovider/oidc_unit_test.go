@@ -31,7 +31,7 @@ func (w *failingResponseWriter) Write([]byte) (int, error) {
 // newOIDCTestServer starts a real httptest.Server hosting a
 // mockprovider.OIDCHandler. Its discovery documents advertise a
 // token_endpoint built from each request's own Host header (see
-// OIDCHandler's doc comment and DD-089), which for a plain http.Client
+// OIDCHandler's doc comment and DD-139), which for a plain http.Client
 // request against this server is exactly ts.URL's host:port — so
 // TC-U-135/136 below can still assert against ts.URL+"/token" verbatim.
 func newOIDCTestServer() *httptest.Server {
@@ -165,7 +165,7 @@ var _ = Describe("OIDCHandler", func() {
 	})
 
 	// TC-U-152: regression test for a real bug found via the kind-based
-	// e2e infra (osac-sp-e2e-suite TC-E2E-050/070, DD-089). The mock's
+	// e2e infra (osac-sp-e2e-suite TC-E2E-050/070, DD-139). The mock's
 	// OIDC listener binds a wildcard address (":9091") so other pods can
 	// reach it, but net.Listener.Addr().String() on a wildcard bind
 	// reports the unroutable "[::]:9091" — baking that into the
