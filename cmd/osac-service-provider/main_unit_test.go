@@ -81,6 +81,22 @@ var _ = Describe("run's top-level error wrapping (unit)", func() {
 		Expect(runErr).To(HaveOccurred())
 		Expect(runErr.Error()).To(ContainSubstring("creating OSAC client bootstrap"))
 	})
+
+	// TC-U-114 (Milestone 5): a status-publisher construction failure
+	// (malformed NATS URL, same value as internal/statuspublisher's own
+	// TC-U-417) is wrapped and returned, before the poll loop or HTTP
+	// handlers are wired. Numbered TC-U-114 (not 098/099) to avoid
+	// colliding with Milestone 3/4's own apiHandler CRUD-forwarding
+	// wiring tests in this same file — see the test plan's note.
+	It("wraps and returns a status-publisher construction failure (TC-U-114)", func() {
+		setValidEnv(reserveLoopbackAddr())
+		t := GinkgoT()
+		t.Setenv("DCM_NATS_URL", "://not-a-valid-url")
+
+		runErr := run(context.Background(), slog.New(slog.DiscardHandler))
+		Expect(runErr).To(HaveOccurred())
+		Expect(runErr.Error()).To(ContainSubstring("creating status publisher"))
+	})
 })
 
 var _ = Describe("mainRun (unit)", func() {

@@ -16,7 +16,10 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/health"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
+	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/registration"
+	"github.com/dcm-project/osac-service-provider/internal/statuspoll"
+	"github.com/dcm-project/osac-service-provider/internal/statuspublisher"
 )
 
 // version is the application version, set at build time via
@@ -82,6 +85,20 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("creating registrar: %w", err)
 	}
+
+	publisher, err := statuspublisher.NewPublisher(cfg.DCM.NATSURL, logger)
+	if err != nil {
+		return fmt.Errorf("creating status publisher: %w", err)
+	}
+	defer func() { _ = publisher.Close() }()
+	publisher.Start(ctx)
+
+	poller := statuspoll.New(
+		publicv1.NewClustersClient(osacBootstrap.Conn()),
+		publicv1.NewComputeInstancesClient(osacBootstrap.Conn()),
+		publisher, cfg.Status, logger,
+	)
+	poller.Start(ctx)
 
 	healthHandler := health.NewHandler(osacBootstrap, time.Now(), version)
 	strictAdapter := oapigen.NewStrictHandlerWithOptions(healthHandler, nil, oapigen.StrictHTTPServerOptions{
