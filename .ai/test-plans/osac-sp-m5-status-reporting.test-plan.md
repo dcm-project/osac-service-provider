@@ -53,6 +53,16 @@ One addition specific to this milestone:
 | TC-U-401 | The envelope `id` is a fresh, non-resource identifier on every call | REQ-PUBLISH-030, AC-PUBLISH-010 | Build two envelopes for the same resource with different status values; assert both envelopes' `id` attributes are non-empty, valid UUIDs, and differ from each other and from the resource id `"vm-1"`. |
 | TC-U-402 | Cluster and VM service types produce the documented distinct subject/type/source | REQ-PUBLISH-030 | Table-driven over `{Subject:"dcm.cluster",...}` and `{Subject:"dcm.vm",...}`; assert each produces its own documented `subject`/`type`/`source` triple, never the other's. |
 
+**Coverage note:** `buildEnvelope`'s two error-wrap branches
+(`ev.SetData`'s and `json.Marshal`'s — [publisher.go](../../internal/statuspublisher/publisher.go))
+and `deliver`'s corresponding `buildEnvelope` error branch are not exercised
+by any TC here — `StatusPayload`'s fields are all plain strings, so no input
+reachable from this codebase can make `json.Marshal` fail today. Documented
+as accepted coverage exceptions in the code rather than tested with a
+fabricated failing fake, consistent with this suite's "test real production
+types" convention (see `.ai/test-plans/osac-sp-unit.test-plan.md`, section
+4's coverage note, and `registration.go`'s matching exception).
+
 ---
 
 ## 2. Unit tests: Publish lifecycle — non-blocking, retry, coalescing (`internal/statuspublisher`)

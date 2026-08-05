@@ -390,6 +390,7 @@ func startSPWithOptions(opts spStartOptions) *spHarness {
 	t.Setenv("SP_OSAC_TLS_ENABLED", "false")
 	t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
 	t.Setenv("DCM_REGISTRATION_URL", h.controlPlane.URL())
+	t.Setenv("DCM_NATS_URL", "nats://127.0.0.1:4222")
 	t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 	t.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster")
 	t.Setenv("SP_PROVIDER_VM_NAME", "osac-sp-vm")

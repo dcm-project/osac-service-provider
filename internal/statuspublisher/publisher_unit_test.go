@@ -53,14 +53,15 @@ type recordedCall struct {
 // succeeds, is recorded before publishFunc decides the outcome, so tests
 // can assert both delivered content and retry counts.
 type fakeJS struct {
-	mu          sync.Mutex
-	attempts    []recordedCall
-	publishFunc func(attemptIndex int, subject string, payload []byte) error
+	mu           sync.Mutex
+	attempts     []recordedCall
+	enteredCount int
+	publishFunc  func(attemptIndex int, subject string, payload []byte) error
 
-	// blockFirst, if non-nil, is closed by the first call once it has
-	// recorded itself as "entered" (via enteredFirst) and is then made to
-	// wait until blockFirst is closed, letting a test coalesce a second
-	// Publish() before the first delivery attempt completes.
+	// blockFirst, if non-nil, is waited on by the first call — after it
+	// signals enteredFirst but before it records itself as an attempt or
+	// evaluates publishFunc — letting a test coalesce a second Publish()
+	// before the first delivery attempt completes.
 	blockFirst   chan struct{}
 	enteredFirst chan struct{}
 
@@ -79,8 +80,8 @@ func (f *fakeJS) Publish(_ context.Context, subject string, payload []byte, _ ..
 	}
 
 	f.mu.Lock()
-	idx := len(f.attempts)
-	f.attempts = append(f.attempts, recordedCall{subject: subject, payload: append([]byte(nil), payload...)})
+	idx := f.enteredCount
+	f.enteredCount++
 	fn := f.publishFunc
 	block := f.blockFirst
 	entered := f.enteredFirst
@@ -94,6 +95,13 @@ func (f *fakeJS) Publish(_ context.Context, subject string, payload []byte, _ ..
 			<-block
 		}
 	}
+
+	// Recorded only once the call is past any block, so a test can observe
+	// "started but not yet delivered" (via enteredFirst) distinctly from
+	// "delivered" (via Attempts()).
+	f.mu.Lock()
+	f.attempts = append(f.attempts, recordedCall{subject: subject, payload: append([]byte(nil), payload...)})
+	f.mu.Unlock()
 
 	if fn != nil {
 		if err := fn(idx, subject, payload); err != nil {
@@ -185,7 +193,7 @@ var _ = Describe("Publish lifecycle", func() {
 		}()
 
 		Eventually(done, time.Second).Should(BeClosed(), "Publish must return without waiting for the fake to be unblocked")
-		Expect(fake.Attempts()).To(HaveLen(0), "the fake must not have completed a call yet, proving Publish itself did not wait for it")
+		Expect(fake.Attempts()).To(BeEmpty(), "the fake must not have completed a call yet, proving Publish itself did not wait for it")
 		close(fake.blockFirst)
 	})
 
@@ -231,8 +239,12 @@ var _ = Describe("Publish lifecycle", func() {
 		Expect(payload).To(Equal(StatusPayload{ID: "vm-1", Status: "RUNNING", Message: "instance is running"}))
 	})
 
-	// TC-U-413: a newer update supersedes a stale one still pending delivery
-	It("delivers only the latest value when a newer update supersedes a pending one (TC-U-413)", func() {
+	// TC-U-413: a newer update supersedes a stale one still pending delivery.
+	// The stale first attempt may still reach the fake (its bytes were
+	// already handed to Publish() before it blocked — REQ-PUBLISH-080 only
+	// forbids a stale value being the *final* delivered one for the key),
+	// but RUNNING must always be the last observed successful publish.
+	It("ensures the newer update, not the stale one, is the final delivered value (TC-U-413)", func() {
 		fake := &fakeJS{blockFirst: make(chan struct{}), enteredFirst: make(chan struct{})}
 		p := newPublisher(fake, func() {}, discardLogger, WithInitialBackoff(time.Millisecond), WithMaxBackoff(5*time.Millisecond))
 		ctx, cancel := context.WithCancel(context.Background())
@@ -245,13 +257,26 @@ var _ = Describe("Publish lifecycle", func() {
 		p.Publish(vmType, "vm-1", "RUNNING", "instance is running")
 		close(fake.blockFirst)
 
-		Eventually(fake.Attempts, time.Second).Should(HaveLen(1))
-		Consistently(fake.Attempts, 100*time.Millisecond).Should(HaveLen(1), "coalesced: exactly one delivery for this resource, never two")
+		statusOf := func(a recordedCall) string {
+			env := decodeEnvelope(a.payload)
+			var payload StatusPayload
+			Expect(json.Unmarshal(env.Data, &payload)).To(Succeed())
+			return payload.Status
+		}
+		lastStatus := func() string {
+			attempts := fake.Attempts()
+			if len(attempts) == 0 {
+				return ""
+			}
+			return statusOf(attempts[len(attempts)-1])
+		}
 
-		env := decodeEnvelope(fake.Attempts()[0].payload)
-		var payload StatusPayload
-		Expect(json.Unmarshal(env.Data, &payload)).To(Succeed())
-		Expect(payload.Status).To(Equal("RUNNING"), "must never deliver the superseded PROVISIONING value")
+		Eventually(lastStatus, time.Second).Should(Equal("RUNNING"))
+		Consistently(lastStatus, 100*time.Millisecond).Should(Equal("RUNNING"), "RUNNING must remain the final delivered value; no further stale redelivery")
+
+		for _, a := range fake.Attempts() {
+			Expect(statusOf(a)).To(BeElementOf("PROVISIONING", "RUNNING"))
+		}
 	})
 
 	// TC-U-414: two different resources are delivered independently
@@ -267,8 +292,9 @@ var _ = Describe("Publish lifecycle", func() {
 
 		Eventually(fake.Attempts, time.Second).Should(HaveLen(2))
 
-		var statuses []string
-		for _, a := range fake.Attempts() {
+		attempts := fake.Attempts()
+		statuses := make([]string, 0, len(attempts))
+		for _, a := range attempts {
 			env := decodeEnvelope(a.payload)
 			var payload StatusPayload
 			Expect(json.Unmarshal(env.Data, &payload)).To(Succeed())
@@ -302,7 +328,7 @@ var _ = Describe("Publish lifecycle", func() {
 	It("closes the underlying NATS connection (TC-U-416)", func() {
 		var closed bool
 		p := newPublisher(&fakeJS{}, func() { closed = true }, discardLogger)
-		p.Close()
+		Expect(p.Close()).To(Succeed())
 		Expect(closed).To(BeTrue())
 	})
 })
