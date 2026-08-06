@@ -21,21 +21,31 @@ a *mocked provider backend only*. It validates the `osac-sp` ↔
 QE's, tracked separately, and gated on Milestone 4/5 landing.
 
 **What's asserted in this phase, concretely:** registration success,
-health-check propagation, and — as of REQ-E2E-090/100 below — Cluster and
-VM CRUD dispatch (Milestone 3/4). NATS status-event round-trips
-(Milestone 5) are **still not yet assertable**, since that milestone has no
-implementation yet at all (§6 continues to track it as an explicit
-follow-up).
+health-check propagation, Cluster and VM CRUD dispatch (Milestone 3/4,
+REQ-E2E-090/100), and — as of REQ-E2E-110 below — version-matrix
+enforcement over real HTTP (Milestone 6). NATS status-event round-trips
+(Milestone 5) are **still not yet assertable**, since that milestone's own
+async publish path has no `osac-sp`-side REST surface to assert against
+over HTTP (§6 continues to track it as an explicit follow-up — Milestone 5
+was, however, included in the throwaway combined-branch validation run
+below, proving it doesn't crash-loop or otherwise destabilize the stack
+this suite's other assertions depend on; see DD-146 for the
+`DCM_NATS_URL` manifest gap that run surfaced and fixed).
 
-**Note on Milestone 3/4 sequencing:** REQ-E2E-090/100's test cases were
+**Note on Milestone 3/4/6 sequencing:** REQ-E2E-090/100's test cases were
 validated against a throwaway local branch merging this branch with
 [#13](https://github.com/dcm-project/osac-service-provider/pull/13)/[#14](https://github.com/dcm-project/osac-service-provider/pull/14)
 before being added here (evidence: the passing run linked from the PR that
 introduced these requirements) — `osac-sp`'s own REST CRUD handlers aren't
 on `main` yet, so this branch's *own* CI cannot exercise them until those
-two PRs merge. The requirements/test cases are specified now regardless,
-per this repo's spec-first convention, rather than waiting for the review
-backlog to clear.
+two PRs merge. REQ-E2E-110/111 (Milestone 6, version matrix) follow the
+same pattern: validated against a second throwaway branch additionally
+combining [#26](https://github.com/dcm-project/osac-service-provider/pull/26)
+(M6, which itself already contains M3) and
+[#25](https://github.com/dcm-project/osac-service-provider/pull/25) (M5) —
+see DD-146 for the passing run. The requirements/test cases are specified
+now regardless, per this repo's spec-first convention, rather than waiting
+for the review backlog to clear.
 
 **Reference documents:**
 
@@ -55,6 +65,9 @@ backlog to clear.
 - `internal/mockprovider/config.go` — the exact env-var contract this phase's
   `osac-mock-provider` manifest must satisfy (`MOCK_GRPC_ADDRESS`,
   `MOCK_OIDC_ADDRESS`)
+- [`osac-sp-m6-version-matrix.spec.md`](./osac-sp-m6-version-matrix.spec.md) —
+  Milestone 6, the source of REQ-E2E-110/111's underlying behavior
+  (REQ-VERSION-080)
 - [Design Decisions](../decisions/osac-sp.decisions.md) — new decisions for
   this work continue from wherever Phase 1's `DD-13x` left off on this branch
 
@@ -93,6 +106,7 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | Component | Env var | Value |
 |---|---|---|
 | `osac-service-provider` | `DCM_REGISTRATION_URL` | `http://dcm-control-plane:8080/api/v1alpha1` |
+| `osac-service-provider` | `DCM_NATS_URL` | `nats://dcm-nats:4222` (unused until Milestone 5 merges, see DD-146) |
 | `osac-service-provider` | `SP_ENDPOINT` | `http://osac-service-provider:8080` |
 | `osac-service-provider` | `SP_OSAC_FULFILLMENT_ADDRESS` | `osac-mock-provider:9090` |
 | `osac-service-provider` | `SP_OSAC_OIDC_ISSUER_URL` | `http://osac-mock-provider:9091` |
@@ -117,6 +131,8 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | REQ-E2E-091 | Cluster `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-DELETE-020 | MUST | Milestone 3 |
 | REQ-E2E-100 | The e2e suite MUST exercise a full VM CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend, asserting the created object reaches the mock's terminal ready status (`RUNNING`) without any polling for convergence — the real mock resolves `Create` synchronously to `COMPUTE_INSTANCE_STATE_RUNNING` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 4 (VM CRUD); see sequencing note above |
 | REQ-E2E-101 | VM `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMDELETE-020 | MUST | Milestone 4 |
+| REQ-E2E-110 | Cluster `Create` MUST reject a request whose `spec.version` is absent from the advertised version-translation matrix with `400`/`INVALID_ARGUMENT`, over real HTTP against the real mock backend, and the rejected request MUST never reach `osac-mock-provider` (no partial side effect) | MUST | Milestone 6 (version matrix); mirrors `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-080; see sequencing note above |
+| REQ-E2E-111 | An explicit `provider_hints.osac.release_image` override on Cluster `Create` MUST bypass version-matrix validation, over real HTTP against the real mock backend, even for a `spec.version` otherwise absent from the matrix | MUST | Milestone 6; mirrors `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-080's bypass clause |
 
 ---
 
@@ -182,6 +198,24 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
   the created object, `Delete` returns `204`, a subsequent `Get` returns
   `404`, and a second `Delete` of the same id still returns `204`
 
+##### AC-E2E-070: Version-matrix enforcement round-trips over real HTTP
+
+- **Validates:** REQ-E2E-110, REQ-E2E-111
+- **Given** the healthy stack from AC-E2E-010, running `osac-sp` built with
+  Milestone 6's version-matrix wiring (which itself requires Milestone 3's
+  Cluster CRUD handlers)
+- **When** the e2e suite `POST`s a Cluster create request whose `spec.version`
+  is absent from the advertised matrix and carries no `release_image`
+  override
+- **Then** the response is `400` with an RFC 7807 body whose `type` is
+  `INVALID_ARGUMENT`, and a subsequent `List` never contains the rejected
+  id (proving the mock backend was never called)
+- **And when** the same request instead carries an explicit
+  `provider_hints.osac.release_image` override
+- **Then** `Create` succeeds (`201`, `status: ACTIVE`) despite the
+  otherwise-unsupported version, proving the override bypasses the matrix
+  check end-to-end, not just in `internal/cluster`'s own unit tests
+
 ---
 
 ## 5. Non-Functional Requirements
@@ -203,7 +237,7 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
   asserted — no `osac-sp` REST surface exposes them (they're OSAC-internal
   to VM's network resolution), so there's nothing over HTTP to assert
   against.
-- **NATS status-event round-trip** — Milestone 5, not yet designed.
+- **NATS status-event round-trip** — Milestone 5 ([#25](https://github.com/dcm-project/osac-service-provider/pull/25)) is implemented, but publishes async CloudEvents onto a shared NATS subject with no `osac-sp`-side REST surface to assert delivery against; a real assertion belongs to whichever component subscribes and renders status (likely `control-plane` or a future consumer), not this suite. Included in the throwaway combined-branch validation (DD-146) only as a "doesn't destabilize the stack" smoke check, not as a behavioral TC.
 - **Real `fulfillment-service` + real Keycloak** (Tier B, closing the
   auth-claims-fidelity gap identified after Phase 1 — see
   [#19](https://github.com/dcm-project/osac-service-provider/pull/19)'s

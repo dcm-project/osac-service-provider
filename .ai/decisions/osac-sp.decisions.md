@@ -856,3 +856,50 @@ This is exactly the class of gap this M3/M4 e2e validation work exists to
 catch before it reaches a real deployment.
 
 **Related requirements:** REQ-MOCK-120, REQ-GET-020 (M3)
+
+---
+
+## DD-146: `test/e2e/manifests/osac-service-provider.yaml` gains `DCM_NATS_URL`, ahead of Milestone 5 landing
+
+**Decision:** `osac-service-provider`'s e2e manifest now sets
+`DCM_NATS_URL=nats://dcm-nats:4222` unconditionally (pointing at
+`control-plane`'s chart's headless `dcm-nats` Service, confirmed against
+that chart's own `templates/nats.yaml` — `StatefulSet`/`Service` name
+`{{ dcm.fullname }}-nats`, client port `4222`). Added now, on this branch
+(M3/M4 only, no M5), even though nothing on this branch's own dependency
+graph requires it yet — `caarlos0/env` ignores env vars a `struct` doesn't
+declare, so this is a no-op until Milestone 5 merges, at which point it's
+already correct and nobody has to remember to add it.
+
+**Rationale:** found by running a second, more thorough throwaway
+combined-branch validation (`scratch/e2e-m6-all-prs`, deleted after
+validation, never opened as a PR) for Milestone 6 — this time combining
+*all four* outstanding runtime PRs (this branch's e2e harness + M3 + M4 +
+[#25](https://github.com/dcm-project/osac-service-provider/pull/25) (M5) +
+[#26](https://github.com/dcm-project/osac-service-provider/pull/26) (M6,
+which already contains M3)), a superset of the M3+M4+M6 combination
+DD-115 (on the M6 branch) already validated. `internal/config.DCMConfig`
+(M5) made `NATS_URL` a required, fail-fast env var
+(`env:"NATS_URL,notEmpty"`) — but no e2e manifest anywhere sets it, since
+M5's own branch never touches `test/e2e/`. First run
+([31068615958](https://github.com/dcm-project/osac-service-provider/actions/runs/31068615958))
+failed before the suite even started: `osac-service-provider` crash-looped
+on `environment variable "DCM_NATS_URL" should not be empty`, and the
+`kubectl wait --for=condition=Available` readiness step timed out. Fixed
+by adding the env var (this decision); re-run
+([31068930733](https://github.com/dcm-project/osac-service-provider/actions/runs/31068930733))
+passed 12/12 specs — the 10 pre-existing TCs plus two new ones written for
+this validation, `TC-E2E-110`/`TC-E2E-111` (registered in
+`osac-sp-e2e-suite.test-plan.md` §6, backed by new `REQ-E2E-110/111`/
+`AC-E2E-070` in the spec), proving Milestone 6's version-matrix rejection
+and `release_image`-override bypass both round-trip correctly over real
+HTTP against a real `control-plane` + real `osac-mock-provider` — not just
+the bufconn fakes M6's own unit/integration tests use. This is a distinct,
+real cross-milestone integration gap this suite exists specifically to
+catch (same category as DD-145) — worth fixing here proactively rather
+than leaving it to be rediscovered as a fresh CI failure the day #25 or
+#26 actually merges.
+
+**Related requirements:** REQ-E2E-110, REQ-E2E-111 (this branch);
+REQ-VERSION-080 (`osac-sp-m6-version-matrix.spec.md`, M6);
+REQ-PUBLISH-010/DD-071 (`DCM_NATS_URL`'s own contract, M5)

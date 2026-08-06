@@ -81,7 +81,26 @@ Requires `osac-sp` built with Milestone 3 ([#13](https://github.com/dcm-project/
 
 ---
 
-## 6. Coverage Matrix
+## 6. Version-matrix validation (Milestone 6)
+
+Requires `osac-sp` built with Milestone 6's
+([#26](https://github.com/dcm-project/osac-service-provider/pull/26))
+version-translation matrix wiring, which itself already contains Milestone
+3's Cluster CRUD handlers — not yet on `main`. Validated pre-merge against a
+second throwaway local branch additionally combining this suite with #26 and
+Milestone 5 ([#25](https://github.com/dcm-project/osac-service-provider/pull/25)),
+on top of the same base already described in §5's note; evidence: DD-146,
+including a passing CI run of 12/12 specs (the 10 pre-existing TCs plus
+these 2). This branch's own CI will not go green on these until #26 merges.
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-E2E-110 | Cluster Create rejects an unsupported Kubernetes version, over real HTTP | REQ-E2E-110, AC-E2E-070 | `POST /api/v1alpha1/clusters?id=<unique>` with `spec.version` set to a value absent from the matrix (e.g. `"1.99"`) and no `release_image` override; assert `400` with an RFC 7807 body whose `type == "INVALID_ARGUMENT"`; `GET` (list) and assert the id is absent — proving the rejection happened before any dispatch to `osac-mock-provider`. |
+| TC-E2E-111 | An explicit `release_image` override bypasses version-matrix validation, over real HTTP | REQ-E2E-111, AC-E2E-070 | Same request shape as TC-E2E-110, but with `provider_hints.osac.release_image` set to an explicit non-empty value; assert `201` with `status == "ACTIVE"` (no polling, REQ-MOCK-030) despite the otherwise-unsupported version; clean up with `DELETE` (`204`). |
+
+---
+
+## 7. Coverage Matrix
 
 | Spec Topic | REQ Count | AC Count | TC-E2E | Notes |
 |---|---|---|---|---|
@@ -91,4 +110,5 @@ Requires `osac-sp` built with Milestone 3 ([#13](https://github.com/dcm-project/
 | CI failure-mode hygiene | REQ-E2E-040, 070 | AC-E2E-040 | 1 (TC-E2E-080) | Manual/opt-in variant, not run on every PR (would otherwise double the job's steady-state runtime for a check that doesn't need re-proving every merge). |
 | Cluster CRUD (Milestone 3) | REQ-E2E-090, 091 | AC-E2E-050 | 2 (TC-E2E-090, 091) | Gated on #13 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
 | VM CRUD (Milestone 4) | REQ-E2E-100, 101 | AC-E2E-060 | 2 (TC-E2E-100, 101) | Gated on #14 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
-| **Total** | 12 | 6 | **12** | NATS status-event round-trips (Milestone 5) remain the only tracked follow-up (spec §6) — no implementation exists yet to test. |
+| Version-matrix validation (Milestone 6) | REQ-E2E-110, 111 | AC-E2E-070 | 2 (TC-E2E-110, 111) | Gated on #26 landing on `main`; pre-validated against a second throwaway combined branch (see §6's note, DD-146). |
+| **Total** | 14 | 7 | **14** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. |
