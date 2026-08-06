@@ -1060,3 +1060,64 @@ outside a real `kind` run — not a code defect). This is the same
 the merged tree instead of the standalone branch — proving the failing
 checks are 100% attributable to merge order, not to any defect introduced
 by M5.
+
+### Re-validation (2026-08-06): `scratch/m3-m4-m5-demo` — a kept (not throwaway) branch for the OSAC PoC demo
+
+Unlike the two validations above, this merge is deliberately **not**
+discarded: `scratch/m3-m4-m5-demo` is pushed to `origin` and used directly as
+the demo's deployable artifact (no new PRs per the team's in-flight-PR
+moratorium), which is also why this note exists at all this time — the
+prior two validations' own worktrees were thrown away per their own text,
+taking a first draft of this same evidence with them (see the "why does
+DD-075 not have any conflict-resolution detail" investigation earlier this
+session — nothing was lost from `main` or this repo; it simply lived only in
+a since-deleted disposable worktree from a different branch's tree, and this
+branch (created fresh off `main`) hadn't merged M5 yet at the time).
+
+Merged in order: `feat/milestone-3-cluster-crud` (`origin`, commit `640caaa`),
+`feat/milestone-4-vm-crud` (`origin`, commit `0afb49d`), `feat/milestone-5-status-reporting`
+(`origin`, commit `1adc5ec`) — same SHAs as the original DD-075 validation.
+Conflicts matched DD-075's prediction exactly:
+
+- **M3+M4 merge** (10 conflicted files): `.ai/decisions/osac-sp.decisions.md`
+  and `api/v1alpha1/openapi.yaml` were pure structural/additive conflicts
+  (both branches appended non-overlapping content at the same anchor point);
+  resolved by reconstructing `openapi.yaml` programmatically (Python
+  string-splice of M4's unique paths/schemas/tag/parameter into M3's already-
+  merged tree, verified via `yaml.safe_load` before writing) rather than
+  hand-editing 27 zigzagged conflict markers, since the two branches'
+  parallel-shaped diffs caused git's LCS-based algorithm to interleave
+  unrelated Cluster/VM content rather than cleanly separating it. The 4
+  `*.gen.go`/`client.gen.go` files were resolved by regenerating
+  (`make generate-api`) against the fixed spec, not hand-merged.
+  `oapi-codegen` then prefixed the now-colliding `ClusterStatus`/`VMStatus`
+  enum values (`DELETED`/`FAILED`/`DELETING` exist in both) and **all**
+  `ErrorType` values (colliding with `ClusterStatus.UNAVAILABLE`), exactly as
+  DD-075 predicted — requiring call-site fixes in `internal/vm/status.go`,
+  `internal/grpcerror/classify.go`, and ~10 test files that referenced the
+  bare pre-collision names. `cmd/osac-service-provider/main.go`/
+  `main_unit_test.go` and `internal/apiserver/server_{integration,unit}_test.go`
+  needed hand merges combining both branches' `apiHandler`/test-double
+  wiring (Cluster + VM forwarding side by side) — `main_unit_test.go`'s two
+  `Describe` blocks were also zigzag-interleaved by git's diff for the same
+  parallel-shape reason as `openapi.yaml`, resolved the same way (extract
+  each side's clean full text via `git show :2:`/`:3:`, splice rather than
+  hand-resolve markers). `go vet` then caught two stale test fixtures
+  (`internal/handlers/cluster/fixture_test.go`,
+  `internal/handlers/vm/fixture_test.go`) missing the sibling milestone's
+  stub methods on their local `realHandler` — fixed by adding a `stubVM`/
+  `stubCluster` type to each, mirroring the pattern `internal/apiserver`'s
+  own test doubles already used.
+- **M5 merge** (3 conflicted files): trivial by comparison — `.ai/decisions/...`
+  and `.ai/test-plans/osac-sp-unit.test-plan.md` were the same
+  additive-append pattern (combined by hand, no scripting needed);
+  `cmd/osac-service-provider/main.go` conflicted only in its `import` block
+  (`internal/vm` vs. `internal/statuspoll`/`internal/statuspublisher`) — the
+  function-body wiring merged automatically clean.
+
+Post-merge, on `scratch/m3-m4-m5-demo` at this note's HEAD: `go build ./...`,
+`go vet ./...`, `gofmt -l .` all clean; `golangci-lint run ./...` reports
+**0 issues**; `make generate-api` against the merged spec is byte-identical
+(no generator drift); `ginkgo -r --race --cover` is green across all 15
+suites, composite coverage **98.6%** (matching the original DD-075
+validation's 98.7% to within normal variance).
