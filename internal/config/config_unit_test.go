@@ -22,9 +22,12 @@ var allEnvVars = []string{
 	"SP_OSAC_TLS_CERT_FILE",
 	"SP_OSAC_PROBE_TIMEOUT",
 	"DCM_REGISTRATION_URL",
+	"DCM_NATS_URL",
 	"SP_ENDPOINT",
 	"SP_PROVIDER_CLUSTER_NAME",
 	"SP_PROVIDER_VM_NAME",
+	"SP_STATUS_POLL_INTERVAL",
+	"SP_STATUS_RESYNC_EVERY",
 }
 
 func clearEnv() {
@@ -40,6 +43,7 @@ func setRequiredEnv() {
 	_ = os.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 	_ = os.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "s3cr3t")
 	_ = os.Setenv("DCM_REGISTRATION_URL", "https://control-plane.example.com/api/v1alpha1")
+	_ = os.Setenv("DCM_NATS_URL", "nats://nats.example.com:4222")
 	_ = os.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 }
 
@@ -58,6 +62,8 @@ var _ = Describe("Configuration", func() {
 		_ = os.Setenv("SP_OSAC_PROBE_TIMEOUT", "9s")
 		_ = os.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster-custom")
 		_ = os.Setenv("SP_PROVIDER_VM_NAME", "osac-sp-vm-custom")
+		_ = os.Setenv("SP_STATUS_POLL_INTERVAL", "45s")
+		_ = os.Setenv("SP_STATUS_RESYNC_EVERY", "20")
 
 		cfg, err := config.Load()
 		Expect(err).NotTo(HaveOccurred())
@@ -76,10 +82,14 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(9 * time.Second))
 
 		Expect(cfg.DCM.RegistrationURL).To(Equal("https://control-plane.example.com/api/v1alpha1"))
+		Expect(cfg.DCM.NATSURL).To(Equal("nats://nats.example.com:4222"))
 
 		Expect(cfg.Provider.Endpoint).To(Equal("https://osac-sp.example.com"))
 		Expect(cfg.Provider.ClusterName).To(Equal("osac-sp-cluster-custom"))
 		Expect(cfg.Provider.VMName).To(Equal("osac-sp-vm-custom"))
+
+		Expect(cfg.Status.PollInterval).To(Equal(45 * time.Second))
+		Expect(cfg.Status.ResyncEvery).To(Equal(20))
 	})
 
 	// TC-U-002: Applies documented defaults when optional vars are unset
@@ -97,6 +107,8 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(5 * time.Second))
 		Expect(cfg.Provider.ClusterName).To(Equal("osac-sp-cluster"))
 		Expect(cfg.Provider.VMName).To(Equal("osac-sp-vm"))
+		Expect(cfg.Status.PollInterval).To(Equal(30 * time.Second))
+		Expect(cfg.Status.ResyncEvery).To(Equal(10))
 	})
 
 	// TC-U-003: Fails fast when a required field is missing (table-driven)
@@ -115,6 +127,7 @@ var _ = Describe("Configuration", func() {
 		Entry("SP_OSAC_OIDC_CLIENT_ID", "SP_OSAC_OIDC_CLIENT_ID"),
 		Entry("SP_OSAC_OIDC_CLIENT_SECRET", "SP_OSAC_OIDC_CLIENT_SECRET"),
 		Entry("DCM_REGISTRATION_URL", "DCM_REGISTRATION_URL"),
+		Entry("DCM_NATS_URL", "DCM_NATS_URL"),
 		Entry("SP_ENDPOINT", "SP_ENDPOINT"),
 	)
 
