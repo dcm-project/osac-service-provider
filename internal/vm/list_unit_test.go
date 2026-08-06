@@ -101,16 +101,16 @@ var _ = Describe("Service.List (Topic 4.3 VM List)", func() {
 	})
 
 	// Supplementary: a malformed page_token (not one this SP itself ever
-	// issued) is rejected with an error rather than silently defaulting to
-	// offset 0.
+	// issued) is rejected as InvalidArgument (400), not left to fall
+	// through to a 500.
 	It("rejects a page_token that isn't valid base64", func() {
 		_, err := f.svc.List(context.Background(), v1alpha1.ListVMsParams{PageToken: util.Ptr("not-valid-base64!!!")})
-		Expect(err).To(HaveOccurred())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
 	})
 
 	It("rejects a page_token that decodes to non-numeric content", func() {
 		// base64 for the literal string "not-a-number".
 		_, err := f.svc.List(context.Background(), v1alpha1.ListVMsParams{PageToken: util.Ptr("bm90LWEtbnVtYmVy")})
-		Expect(err).To(HaveOccurred())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
 	})
 })
