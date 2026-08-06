@@ -359,19 +359,22 @@ values (and regenerated code) change — no handler logic changes.
 
 **Status: proposed, not yet ratified.** Milestone 5 has not started — no
 spec exists yet, and per this repo's own spec-first/test-plan-first gate, no
-`REQ-*`/`AC-*` or `TC-*` exist for it either. The four entries below
-(`DD-200`–`DD-203`) are numbered in a block well clear of Milestone 3's
+`REQ-*`/`AC-*` or `TC-*` exist for it either. The two entries below
+(`DD-200`–`DD-201`) are numbered in a block well clear of Milestone 3's
 (`DD-080`..`DD-111`, on `feat/milestone-3-cluster-crud`, unmerged as of this
 writing) and Milestone 4's (`DD-080`..`DD-086`, on
 `feat/milestone-4-vm-crud`, unmerged as of this writing) independently-
 numbered, not-yet-merged decisions, specifically to avoid a numbering
-collision when those two branches eventually land. They record research
-findings and recommendations produced ahead of M5's official start (see
-`.ai/exploration/m5-status-reporting-research.md`, local-only, for the full
-evidence trail), so that M5's actual spec can adopt or override them
-deliberately rather than re-deriving the same research. **Renumber into the
+collision when those two branches eventually land. **Renumber into the
 normal sequence (and drop "proposed" framing) once M5's spec formally
 starts** — these are not a substitute for that gate.
+
+Two further research findings (dependency versions to pin, and a
+contract-test gap for the CloudEvents `data` payload) came out of the same
+research pass but are implementation guidance, not durable architectural
+decisions — they live in `.ai/exploration/m5-status-reporting-research.md`
+(local-only) instead, for whoever writes M5's actual spec to verify against
+current reality at that time.
 
 ## DD-200: NATS broker URL env var — recommend `DCM_NATS_URL`, not `SP_NATS_URL`
 
@@ -412,62 +415,5 @@ silently dropping work). Recommend `js.Publish` wrapped in the same kind of
 indefinite-retry loop, matching `kubevirt-service-provider`'s transport
 choice (not `acm-cluster-service-provider`'s) for consistency with this
 repo's own convention, not that sibling's.
-
-**Related requirements:** none yet — M5 not started.
-
----
-
-## DD-202: NATS/CloudEvents dependency versions
-
-**Decision (proposed):** when M5 adds these dependencies, pin
-`github.com/nats-io/nats.go` (+ its `jetstream` subpackage) to `v1.50.0` and
-`github.com/cloudevents/sdk-go/v2` to `v2.16.2`.
-
-**Rationale:** `v1.50.0` matches `control-plane` and
-`acm-cluster-service-provider` exactly (both current as of this research);
-`kubevirt-service-provider` is one minor version behind at `v1.49.0`, with
-no reason to match the stale one. `v2.16.2` matches both `control-plane`
-(the consumer) and `kubevirt-service-provider` exactly. Recommend building
-the CloudEvents envelope with the SDK (`cloudevents.NewEvent()`,
-`SetSource`/`SetType`/`SetTime`) rather than hand-rolling a plain struct the
-way `acm-cluster-service-provider` does — the SDK guarantees envelope-level
-spec compliance for free, and `control-plane` already depends on it for
-parsing, so this is zero net-new dependency risk to the ecosystem. This only
-protects the envelope, not the `data` payload shape — see DD-203 for that.
-Go toolchain `1.25.5` already matches this repo and all three sibling repos
-checked; no compatibility concern.
-
-**Related requirements:** none yet — M5 not started.
-
----
-
-## DD-203: Require a real producer-side contract test for the `data` payload from day one
-
-**Decision (proposed):** M5's spec must require at least one test that
-validates this SP's own real, marshaled CloudEvents `data` JSON against the
-canonical schema
-([`service-provider-status-reporting.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#3-cloudevents-format))
-directly — not merely a hand-rolled struct literal asserted against itself.
-
-**Rationale:** traced why `kubevirt-service-provider`'s VM status payload
-diverged from the canonical spec (missing `message`, `timestamp` in the
-wrong place — [kubevirt-service-provider#35](https://github.com/dcm-project/kubevirt-service-provider/issues/35))
-without any test failing in either that repo or `control-plane`, across
-every test tier in both. The gap generalizes org-wide: every
-subsystem/e2e-labeled suite in the project stubs out every DCM-owned
-sibling service it touches (`wiremock` standing in for any real SP or for
-`placement-manager`); no repo runs a real cross-process test of any
-DCM-to-DCM contract; filed as an org-wide policy issue,
-[control-plane#40](https://github.com/dcm-project/control-plane/issues/40),
-with a concrete shared-fixture design proposal. Unlike the REST/CRUD
-contract (protected by shared `openapi.yaml` codegen even without dynamic
-e2e coverage), the CloudEvents/NATS contract M5 implements has no
-equivalent static safety net — four independently hand-typed structs
-across four repos, no shared schema. This makes M5 the one milestone in
-this repo most exposed to this class of gap; the spec should require a
-contract test from the start rather than defer it as a nice-to-have. If
-`control-plane#40`'s shared-fixture proposal has landed by the time M5's
-implementation starts, depend on it directly instead of writing a
-bespoke test.
 
 **Related requirements:** none yet — M5 not started.
