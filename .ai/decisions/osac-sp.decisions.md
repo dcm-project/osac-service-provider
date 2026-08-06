@@ -718,4 +718,25 @@ milestone (`NewRegistrar`'s unreachable client-construction error branch;
 touched (`internal/cluster`, `internal/handlers/cluster`,
 `internal/config`), are 100% covered.
 
+Additionally validated against the real kind-based e2e suite
+(`osac-sp-e2e-suite.spec.md`, `e2e/crud-coverage`), which cannot run
+standalone on this branch either (it needs the REST handlers this branch's
+own base, M3, adds — same reasoning as `#24`'s own throwaway-branch
+technique): a throwaway branch (`scratch/e2e-m6-validation`, deleted after
+validation, never opened as a PR) combining `e2e/crud-coverage` + `#14` (M4)
++ this branch (M6, which already contains M3) —
+[passing run](https://github.com/dcm-project/osac-service-provider/actions/runs/31063141766),
+10/10 specs, including both `TC-E2E-090..101` CRUD suites — proves this
+milestone's version-matrix wiring (Cluster `Create`'s `release_image`
+translation and the advertised `kubernetes_supported_versions`) round-trips
+correctly against a real `control-plane` + real `osac-mock-provider`, not
+just the bufconn fakes this branch's own unit/integration tests use.
+Building that combined tree reproduced the exact "real, structural
+conflict" `#24` already flagged for M3+M4's eventual real merge
+(`api/v1alpha1/openapi.yaml` merge + `make generate-api` +
+`ClusterStatus`/`VMStatus`/`ErrorType` enum-prefix collision + per-package
+stub embeds for the other milestone's CRUD methods) — confirms that
+guidance was accurate and no new M6-specific integration risk exists beyond
+what `#24` already documented.
+
 **Related requirements:** None directly — process/workflow decision.
