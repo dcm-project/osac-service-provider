@@ -40,7 +40,11 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 	})
 
 	// TC-U-200 (REQ-CREATE-010/020/025, AC-CREATE-010): Create translates
-	// and dispatches the full field set with exact values.
+	// and dispatches the full field set with exact values. The fake
+	// template's node-set key ("compute", fixture_test.go's
+	// defaultNodeSetKey) is deliberately distinct from templateID
+	// ("default-hcp") to prove Create uses the resolved key, not the
+	// template ID.
 	It("translates the full field set and dispatches exact values to Clusters/Create (TC-U-200)", func() {
 		_, err := f.svc.Create(context.Background(), "X", baseSpec())
 		Expect(err).NotTo(HaveOccurred())
@@ -51,10 +55,68 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 
 		Expect(obj.GetId()).To(Equal("X"))
 		Expect(obj.GetSpec().GetTemplate()).To(Equal("default-hcp"))
-		Expect(obj.GetSpec().GetNodeSets()).To(HaveKey("default-hcp"))
-		Expect(obj.GetSpec().GetNodeSets()["default-hcp"].GetSize()).To(Equal(int32(3)))
+		Expect(obj.GetSpec().GetNodeSets()).To(HaveKey(defaultNodeSetKey))
+		Expect(obj.GetSpec().GetNodeSets()[defaultNodeSetKey].GetSize()).To(Equal(int32(3)))
 		Expect(obj.GetMetadata().GetName()).To(Equal("foo"))
 		Expect(obj.GetSpec().GetReleaseImage()).To(Equal("quay.io/openshift-release-dev/ocp-release:4.16.0-multi"))
+	})
+
+	// TC-U-200b (REQ-CREATE-080): the node-set key comes from
+	// ClusterTemplates/Get, not from templateID — proven here with a key
+	// that looks nothing like a template ID at all.
+	It("resolves the node-set key via ClusterTemplates/Get instead of assuming templateID (TC-U-200b)", func() {
+		f.templates.getFunc = func(req *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+			Expect(req.GetId()).To(Equal("default-hcp"))
+			return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+				NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"gpu-workers": {}},
+			}}, nil
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).NotTo(HaveOccurred())
+
+		nodeSets := f.fake.LastCreateCall().GetObject().GetSpec().GetNodeSets()
+		Expect(nodeSets).To(HaveKey("gpu-workers"))
+		Expect(nodeSets).NotTo(HaveKey("default-hcp"))
+	})
+
+	// TC-U-200c (REQ-CREATE-090): a template with more than one node-set
+	// key is rejected before Clusters/Create is ever called.
+	It("rejects a template with more than one node-set key (TC-U-200c)", func() {
+		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+			return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+				NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}, "gpu": {}},
+			}}, nil
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// TC-U-200d (REQ-CREATE-090): a template with zero node-set keys is
+	// rejected the same way — there's nothing to apply nodes.worker.count
+	// to.
+	It("rejects a template with zero node-set keys (TC-U-200d)", func() {
+		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+			return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{}}, nil
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// TC-U-200e (REQ-CREATE-100): an unknown template_id is a 400, not the
+	// 404 a raw NotFound passthrough would produce.
+	It("rejects an unknown template_id as InvalidArgument, not NotFound (TC-U-200e)", func() {
+		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+			return nil, grpcstatus.Error(codes.NotFound, "template not found")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
 	// TC-U-201 (REQ-CREATE-030, AC-CREATE-020): ownership labels are set
@@ -94,6 +156,10 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(*result.Id).To(Equal("X"))
 		Expect(result.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 		Expect(f.fake.GetCallCount()).To(Equal(1))
+		// The retried path echoes version too — same request, same
+		// spec.version, shouldn't return a different body shape than the
+		// first-time path (SC-M3-002).
+		Expect(result.Version).To(HaveValue(Equal("1.29")))
 	})
 
 	// TC-U-203 (REQ-CREATE-070, AC-CREATE-060): worker CPU/memory/storage
@@ -107,7 +173,7 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		_, err := f.svc.Create(context.Background(), "X", spec)
 		Expect(err).NotTo(HaveOccurred())
 
-		nodeSet := f.fake.LastCreateCall().GetObject().GetSpec().GetNodeSets()["default-hcp"]
+		nodeSet := f.fake.LastCreateCall().GetObject().GetSpec().GetNodeSets()[defaultNodeSetKey]
 		Expect(nodeSet.GetHostType()).To(Equal(""))
 	})
 
