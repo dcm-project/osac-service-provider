@@ -122,6 +122,20 @@ func (s *minimalClustersServer) Delete(context.Context, *publicv1.ClustersDelete
 	return &publicv1.ClustersDeleteResponse{}, nil
 }
 
+// minimalClusterTemplatesServer backs Create's REQ-CREATE-080 template
+// lookup with a single-node-set template, so this test can stay focused on
+// proving request routing rather than node-set resolution (that's
+// internal/cluster's own test scope).
+type minimalClusterTemplatesServer struct {
+	publicv1.UnimplementedClusterTemplatesServer
+}
+
+func (s *minimalClusterTemplatesServer) Get(context.Context, *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+	return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+		NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}},
+	}}, nil
+}
+
 var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 	// TC-U-098: each of apiHandler's 4 forwarding methods reaches the real
 	// internal/cluster.Service (through clusterhandlers.Handler), proving
@@ -133,6 +147,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		grpcSrv := grpc.NewServer()
 		fake := &minimalClustersServer{}
 		publicv1.RegisterClustersServer(grpcSrv, fake)
+		publicv1.RegisterClusterTemplatesServer(grpcSrv, &minimalClusterTemplatesServer{})
 		go func() { _ = grpcSrv.Serve(lis) }()
 		defer grpcSrv.Stop()
 
@@ -145,7 +160,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = conn.Close() }()
 
-		svc := cluster.New(publicv1.NewClustersClient(conn))
+		svc := cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn))
 		h := &apiHandler{cluster: clusterhandlers.NewHandler(svc, slog.New(slog.DiscardHandler))}
 		ctx := context.Background()
 

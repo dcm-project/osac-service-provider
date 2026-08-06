@@ -132,22 +132,66 @@ func (s *fakeClustersServer) GetKubeconfigCallCount() int {
 	return len(s.getKubeconfigCalls)
 }
 
+// fakeClusterTemplatesServer backs Create's REQ-CREATE-080 node-set-key
+// lookup. Its default Get response defines a single node-set key
+// ("compute") deliberately distinct from any templateID a test uses,
+// proving Create never assumes key == templateID.
+type fakeClusterTemplatesServer struct {
+	publicv1.UnimplementedClusterTemplatesServer
+
+	mu sync.Mutex
+
+	getFunc func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error)
+
+	getCalls []*publicv1.ClusterTemplatesGetRequest
+}
+
+func (s *fakeClusterTemplatesServer) Get(_ context.Context, req *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+	s.mu.Lock()
+	s.getCalls = append(s.getCalls, req)
+	fn := s.getFunc
+	s.mu.Unlock()
+	if fn != nil {
+		return fn(req)
+	}
+	return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+		NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{defaultNodeSetKey: {}},
+	}}, nil
+}
+
+func (s *fakeClusterTemplatesServer) GetCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.getCalls)
+}
+
+// defaultNodeSetKey is the node-set key fixtures resolve to by default —
+// deliberately not equal to any templateID value a test uses (e.g.
+// "default-hcp"), so a test that asserted NodeSets["default-hcp"] would
+// fail loudly instead of silently passing against the old key==templateID
+// bug.
+const defaultNodeSetKey = "compute"
+
 // fixture bundles a real, in-process gRPC server (bufconn-bound) hosting a
-// fakeClustersServer, and a cluster.Service dialed against it through a real
-// publicv1.ClustersClient — no hand-rolled client-interface fake, per the
-// established M2 convention of exercising the real generated client code.
+// fakeClustersServer and a fakeClusterTemplatesServer, and a cluster.Service
+// dialed against it through real publicv1 clients — no hand-rolled
+// client-interface fake, per the established M2 convention of exercising
+// the real generated client code.
 type fixture struct {
-	svc    *cluster.Service
-	fake   *fakeClustersServer
-	conn   *grpc.ClientConn
-	server *grpc.Server
+	svc       *cluster.Service
+	fake      *fakeClustersServer
+	templates *fakeClusterTemplatesServer
+	conn      *grpc.ClientConn
+	server    *grpc.Server
 }
 
 func newFixture() *fixture {
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
+	templates := &fakeClusterTemplatesServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	publicv1.RegisterClusterTemplatesServer(grpcSrv, templates)
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -159,10 +203,11 @@ func newFixture() *fixture {
 	Expect(err).NotTo(HaveOccurred())
 
 	return &fixture{
-		svc:    cluster.New(publicv1.NewClustersClient(conn)),
-		fake:   fake,
-		conn:   conn,
-		server: grpcSrv,
+		svc:       cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn)),
+		fake:      fake,
+		templates: templates,
+		conn:      conn,
+		server:    grpcSrv,
 	}
 }
 

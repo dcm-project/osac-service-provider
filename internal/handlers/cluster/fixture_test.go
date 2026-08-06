@@ -113,6 +113,19 @@ func (s *fakeClustersServer) GetCallCount() int {
 	return len(s.getCalls)
 }
 
+// fakeClusterTemplatesServer backs Create's REQ-CREATE-080 node-set-key
+// lookup for this package's handler-level tests, which don't otherwise
+// care about node-set resolution — a single fixed key is enough here.
+type fakeClusterTemplatesServer struct {
+	publicv1.UnimplementedClusterTemplatesServer
+}
+
+func (s *fakeClusterTemplatesServer) Get(context.Context, *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+	return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+		NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}},
+	}}, nil
+}
+
 // discardLogger silences handler logging (e.g. httperror.WriteResponse's
 // JSON-encode-failure branch) during tests.
 var discardLogger = slog.New(slog.DiscardHandler)
@@ -133,6 +146,7 @@ func newFixture() *fixture {
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -143,7 +157,7 @@ func newFixture() *fixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn))
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn))
 	return &fixture{
 		handler: clusterhandlers.NewHandler(svc, discardLogger),
 		fake:    fake,
@@ -196,6 +210,7 @@ func newIntegrationFixture() *integrationFixture {
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -206,7 +221,7 @@ func newIntegrationFixture() *integrationFixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn))
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn))
 	h := &realHandler{Handler: clusterhandlers.NewHandler(svc, discardLogger)}
 	strict := oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(discardLogger),

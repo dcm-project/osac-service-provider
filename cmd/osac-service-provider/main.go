@@ -115,7 +115,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	healthHandler := health.NewHandler(osacBootstrap, time.Now(), version)
-	clusterSvc := cluster.New(publicv1.NewClustersClient(osacBootstrap.Conn()))
+	clusterSvc := cluster.New(publicv1.NewClustersClient(osacBootstrap.Conn()), publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()))
 	clusterHandler := clusterhandlers.NewHandler(clusterSvc, logger)
 	handler := &apiHandler{Handler: healthHandler, cluster: clusterHandler}
 	strictAdapter := oapigen.NewStrictHandlerWithOptions(handler, nil, oapigen.StrictHTTPServerOptions{
