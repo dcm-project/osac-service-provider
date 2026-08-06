@@ -17,10 +17,9 @@ import (
 // Unlike Cluster's MapStatus, there is no UNAVAILABLE or DEGRADED value in
 // this 8-value vocabulary (no conditions are consulted) — any error other
 // than NotFound (including Unavailable/DeadlineExceeded) maps to FAILED
-// (AC-VMSTATUS-020). No current call site invokes MapStatus with a non-nil
-// err — Get/Create/Delete all intercept NotFound/AlreadyExists before
-// reaching here — kept and independently tested (SC-M4-00x) for a future
-// async polling caller.
+// (AC-VMSTATUS-020). The err branch is unreachable in this milestone's
+// synchronous call sites — kept and tested for Milestone 5's async
+// polling. See SC-M4-003 for why.
 //
 // The generated constant names are currently bare (v1alpha1.RUNNING, not
 // v1alpha1.VMStatusRUNNING) because oapi-codegen only prefixes enum

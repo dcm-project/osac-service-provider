@@ -27,17 +27,11 @@ func (h *Handler) CreateVM(ctx context.Context, req oapigen.CreateVMRequestObjec
 // validateCreateRequest implements REQ-VMCREATE-060's request-shape
 // validation, returning a synthetic gRPC InvalidArgument error — mapped to
 // 400 by the same shared mapError as any OSAC-originated error
-// (REQ-VMERR-030) — before ever dispatching to OSAC. Both req.Params.Id
-// and req.Body.Spec are pointers that can genuinely be nil: the "id" query
-// parameter and the body's "spec" property are schema-optional (AEP-133
-// compliance, DD-125), so the router's generated ServerInterfaceWrapper
-// does not reject a wholly-absent "id" (or an empty JSON object body)
-// ahead of this handler ever running. This is the sole enforcement point
-// for the id/spec/template_id/instance_type presence checks;
-// boot-disk-presence and disk-capacity-parseability are translation-
-// inherent validations that live in internal/vm instead (see
-// internal/vm/translate.go's own comment) and are simply propagated raw
-// through Create's error return below.
+// (REQ-VMERR-030) — before ever dispatching to OSAC. This is the sole
+// enforcement point for "id"/"spec"/"template_id"/"instance_type", which
+// are schema-optional per DD-125 (AEP-133). Boot-disk-presence and
+// disk-capacity-parseability are translation-inherent validations that
+// live in internal/vm instead (see translate.go).
 func validateCreateRequest(req oapigen.CreateVMRequestObject) error {
 	switch {
 	case req.Params.Id == nil || *req.Params.Id == "":
