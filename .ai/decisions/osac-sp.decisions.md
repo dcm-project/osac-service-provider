@@ -501,11 +501,12 @@ OSAC).
 ## DD-124: Default Network Provisioning is stateless (List-then-create-on-miss every Create), not a cached per-tenant mapping store
 
 **Decision:** On every VM Create, the SP calls `Subnets/List` filtered by
-`this.metadata.labels["dcm.io/managed-by"] == "dcm"`. If a matching subnet
-exists, its `id` is reused. If not, the SP creates a `VirtualNetwork`
-(fixed CIDR `10.200.0.0/16`, IPv4-only, `network_class` omitted so the
-platform default is used) and a `Subnet` under it (fixed CIDR
-`10.200.0.0/20`), both tagged with the same ownership labels as
+`dcm.io/managed-by == "dcm" && dcm.io/service-type == "vm-default-network"`
+(both labels, not managed-by alone — see the note appended below). If a
+matching subnet exists, its `id` is reused. If not, the SP creates a
+`VirtualNetwork` (fixed CIDR `10.200.0.0/16`, IPv4-only, `network_class`
+omitted so the platform default is used) and a `Subnet` under it (fixed
+CIDR `10.200.1.0/24`), both tagged with the same ownership labels as
 Cluster/ComputeInstance resources, then polls both (`Get`, 500ms interval,
 15s total timeout) until `READY` before using the new subnet's `id`. No
 local ID-mapping/cache store is introduced.
@@ -546,6 +547,15 @@ hardcoded constants, consistent with `Bootstrap`'s existing
 `internal/osac/bootstrap.go`).
 
 **Related requirements:** REQ-VMNET-010 through REQ-VMNET-050
+
+**Update (review finding):** the original filter checked only
+`dcm.io/managed-by == "dcm"`, reusing the same `ownershipFilter` constant
+`ComputeInstances/List` uses. That's too broad for this specific lookup —
+it's meant to find one particular shared subnet, not just any DCM-managed
+one — so a future DCM-managed subnet created for an unrelated purpose could
+have been mistaken for the default network. Fixed to also require
+`dcm.io/service-type == "vm-default-network"`, its own filter distinct from
+`ComputeInstances/List`'s.
 
 ---
 

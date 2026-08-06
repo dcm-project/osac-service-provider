@@ -33,6 +33,15 @@ var _ = Describe("Default Network Provisioning (Topic 4.5)", func() {
 		attachments := f.fake.LastCreateCall().GetObject().GetSpec().GetNetworkAttachments()
 		Expect(attachments).To(HaveLen(1))
 		Expect(attachments[0].GetSubnet()).To(Equal("subnet-existing"))
+
+		// REQ-VMNET-010: the filter must scope to both ownership labels,
+		// not managed-by alone — otherwise a differently-purposed
+		// DCM-managed subnet could be mistaken for the shared default one.
+		calls := f.subnets.ListCalls()
+		Expect(calls).To(HaveLen(1))
+		Expect(calls[0].GetFilter()).To(Equal(
+			`this.metadata.labels["dcm.io/managed-by"] == "dcm" && this.metadata.labels["dcm.io/service-type"] == "vm-default-network"`,
+		))
 	})
 
 	// TC-U-341 (REQ-VMNET-020/030, AC-VMNET-020): no existing subnet — a

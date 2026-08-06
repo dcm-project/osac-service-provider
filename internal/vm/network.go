@@ -26,6 +26,15 @@ const (
 	ownerReferenceAnnotation = "osac.openshift.io/owner-reference"
 )
 
+// defaultNetworkFilter is the CEL filter applied to the default-subnet
+// lookup in resolveDefaultSubnet (REQ-VMNET-010) — scoped to both
+// dcm.io/managed-by and dcm.io/service-type, not list.go's
+// package-wide ownershipFilter (managed-by only, scoped to
+// ComputeInstances/List), so a differently-purposed DCM-managed subnet is
+// never mistaken for the shared default one.
+var defaultNetworkFilter = fmt.Sprintf(`this.metadata.labels[%q] == %q && this.metadata.labels[%q] == %q`,
+	labelManagedBy, managedByValue, labelServiceType, defaultNetworkServiceType)
+
 // defaultNetworkLabels returns the two ownership labels REQ-VMNET-020/030
 // document for the shared default network resources. No dcm.io/instance-id
 // label is set here (see ownershipLabels for the per-VM equivalent).
@@ -42,7 +51,7 @@ func defaultNetworkLabels() map[string]string {
 // and wait for both to become READY (REQ-VMNET-020/030/040) before
 // returning the resolved subnet id.
 func (s *Service) resolveDefaultSubnet(ctx context.Context) (string, error) {
-	listResp, err := s.subnets.List(ctx, &publicv1.SubnetsListRequest{Filter: util.Ptr(ownershipFilter)})
+	listResp, err := s.subnets.List(ctx, &publicv1.SubnetsListRequest{Filter: util.Ptr(defaultNetworkFilter)})
 	if err != nil {
 		return "", err
 	}

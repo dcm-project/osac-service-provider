@@ -452,7 +452,7 @@ mapping store.
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-VMNET-010 | Before every `ComputeInstances/Create` call, the SP MUST call `Subnets/List` with CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm"`. If at least one result is returned, the SP MUST use the first result's `id` as the resolved subnet and MUST NOT create a new `VirtualNetwork`/`Subnet` | MUST | DD-124 |
+| REQ-VMNET-010 | Before every `ComputeInstances/Create` call, the SP MUST call `Subnets/List` with CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm" && this.metadata.labels["dcm.io/service-type"] == "vm-default-network"` — scoped to both labels, not managed-by alone, so a differently-purposed DCM-managed subnet is never mistaken for the shared default one. If at least one result is returned, the SP MUST use the first result's `id` as the resolved subnet and MUST NOT create a new `VirtualNetwork`/`Subnet` | MUST | DD-124 |
 | REQ-VMNET-020 | If `Subnets/List` returns zero results, the SP MUST call `VirtualNetworks/Create` with `spec.ipv4_cidr="10.200.0.0/16"`, `spec.capabilities.enable_ipv4=true`, `spec.network_class` omitted, and **two** ownership labels: `dcm.io/managed-by="dcm"` and `dcm.io/service-type="vm-default-network"`. **No** `dcm.io/instance-id` label is set — unlike Create's per-VM ownership labels (REQ-VMCREATE-050), this network is shared across every VM, not owned by the one whose Create call happened to trigger its provisioning, so there is no single VM id to attribute it to (see SC-M4-001) | MUST | DD-124 |
 | REQ-VMNET-030 | After a successful `VirtualNetworks/Create`, the SP MUST call `Subnets/Create` with `spec.virtual_network` set to the new `VirtualNetwork`'s `id`, `spec.ipv4_cidr="10.200.1.0/24"`, the same two ownership labels as REQ-VMNET-020, and `metadata.annotations["osac.openshift.io/owner-reference"]` set to the `VirtualNetwork`'s `id` | MUST | DD-124 |
 | REQ-VMNET-040 | The SP MUST poll (`Get`, `500ms` interval, `15s` total timeout, bounded by the request's context) both the new `VirtualNetwork` and `Subnet` until both report `READY`, before using the `Subnet`'s `id`. If the timeout elapses first, the SP MUST return an error that maps to `502 Bad Gateway` (§4.7) and MUST NOT call `ComputeInstances/Create` | MUST | DD-124 |
@@ -680,6 +680,22 @@ a `size_gib` field, no name/identifier of any kind (verified directly
 against `compute_instance_type.proto`). This is a real, permanent
 information loss on the OSAC side, not an SP oversight; there is no OSAC
 field to preserve it in.
+
+### SC-M4-003: Status mapper's `Unavailable`/`NotFound` rules are async-only in this milestone — synchronous Get/Create/Delete always resolve those two gRPC outcomes as HTTP errors first
+
+**Related requirements:** REQ-VMSTATUS-020, REQ-VMGET-020, REQ-VMERR-010
+
+REQ-VMSTATUS-020's rules 1 (`Unavailable`/`DeadlineExceeded` → `FAILED`)
+and 2 (`NotFound` → `DELETED`) are part of the mapper's own contract,
+exercised directly as pure-function unit tests, but are not reachable
+through this milestone's synchronous Get/Create/Delete handlers:
+REQ-VMGET-020 intercepts a `NotFound` from `ComputeInstances/Get` into HTTP
+`404`, and REQ-VMERR-010 intercepts `Unavailable`/`DeadlineExceeded` into
+HTTP `502`, before either outcome would reach the mapper. This is the same
+treatment Cluster's mapper gets in M3 (SC-M3-003) for the identical
+reason: both rules become reachable only once Milestone 5 adds the async
+status-polling loop; until then they are forward-compatible dead code for
+the synchronous surface.
 
 ---
 
