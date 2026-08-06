@@ -489,42 +489,23 @@ is a `400` — is unchanged; it is now enforced entirely by
 `internal/handlers/cluster`'s own `validateCreateRequest`, not by the
 OpenAPI `required` keyword.
 
-**Rationale:** CI's `check-aep` job (`spectral` against
-[aep-dev/aep-openapi-linter](https://github.com/aep-dev/aep-openapi-linter))
-failed PR #13 with two `aep-133` errors once the first `POST` was added to
-this repo's schema (Milestones 1-2 had no create operations, so this never
-triggered before): `aep-133-required-params` ("a create operation must not
-have any required parameters other than path parameters") on the `id`
-query param, and `aep-133-request-body` ("the request body is not an AEP
-resource") on `ClusterCreateRequest`. Confirmed both are structural,
-schema-level lint rules with no bearing on actual wire behavior — nothing
-in `control-plane`'s real dispatch envelope (DD-080: `?id=` query param,
-`{"spec": {...}}` body) requires `required: true`/a separate wrapper type
-specifically; both are this repo's own prior schema choices, not an
-external constraint. Cross-checked the two sibling SPs this project's own
-conventions point to
+**Rationale:** CI's `check-aep` job flagged two `aep-133` violations once
+the first `POST` landed in this repo's schema: a required `id` query param,
+and a request body that isn't an AEP resource (`ClusterCreateRequest`).
+Both are schema-level lint rules, not a wire-format constraint —
+`control-plane`'s real dispatch envelope (DD-080) doesn't need either.
+Matches the sibling SPs'
 ([`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider),
 [`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider))
-and found both already use exactly this shape for their own `Create`
-operations (schema-optional `id`, request body `$ref`s the resource type
-directly) — this is the established, already-precedented fix, not a new
-pattern invented for this repo.
+existing shape for `Create`, so this isn't a new pattern.
 
-Deliberately did **not** copy the sibling SPs' further behavior of having
-the server generate a UUID when `id` is omitted (their docs: "If omitted,
-the server generates a UUID"): REQ-CREATE-010 is explicit that
-`control-plane` always supplies `id` and this SP does not mint its own —
-introducing auto-generation would be new, spec-first-gated behavior with no
-driving requirement, not a compliance fix. Also deliberately kept `Cluster`'s
-existing `required: [id, status]` unchanged (rather than dropping to
-`required: [spec]`, `status`'s treatment in the sibling SPs) specifically to
-avoid `Status` becoming a pointer — an invasive, unjustified-for-this-fix
-blast radius across every already-tested `internal/cluster`/
-`internal/handlers/cluster` file that constructs or compares `.Status`
-directly. The new `spec` property was added as non-required (a pointer,
-`*ClusterSpec`) instead — satisfying `aep-133-request-body` (verified
-locally with `spectral lint`, 0 errors) while touching only
-`internal/handlers/cluster/create.go` and its own tests.
+Kept `Cluster`'s `required: [id, status]` as-is (didn't drop to the
+siblings' `required: [spec]`) to avoid making `Status` a pointer across
+every file that already compares it directly — the new `spec` property is
+its own pointer instead, satisfying `aep-133-request-body` without that
+blast radius. Also didn't copy the siblings' server-side UUID generation
+when `id` is omitted — REQ-CREATE-010 already guarantees `control-plane`
+always supplies one.
 
 **Related requirements:** REQ-CREATE-010, REQ-CREATE-060
 
@@ -537,38 +518,15 @@ test` (previously omitted `check-aep`), and the `check-aep` target itself now
 runs `npx --yes @stoplight/spectral-cli lint ...` instead of assuming a
 bare `spectral` binary is already on `PATH`.
 
-**Rationale:** Root-caused PR #13's `check-aep` CI failure (DD-110) after the
-user asked whether it reflected a missed spec change or an un-preflighted
-`control-plane` change — it was neither. Three compounding facts made the
-AEP-133 violation reach CI undetected instead of being caught during local
-development:
-
-1. `check-aep` has been a CI gate since Milestone 1 (`.github/workflows/
-   check-aep.yaml`, added in the M1 scaffold PR), but was never a prerequisite
-   of `make check` — the one local command this project's own workflow
-   (`CLAUDE.md`) documents as the pre-push gate. It was a same-repo `Makefile`
-   target that the standard local check simply never ran.
-2. Its only local invocation path assumed a bare `spectral` binary already on
-   `PATH` — nothing this repo provisions — versus CI, which self-installs it
-   fresh every run (`npm install -g @stoplight/spectral-cli`, unpinned, per
-   `dcm-project/shared-workflows`' reusable `check-aep.yaml`). Confirmed via
-   the GitHub API that this is CI's actual install step, not a documented
-   local setup requirement anywhere in this repo.
-3. Milestones 1-2 defined zero `POST`/create operations (only `GET /health`),
-   so AEP-133's create-specific rules (`aep-133-required-params`,
-   `aep-133-request-body`) had never had a chance to fire in this repo before
-   PR #13's Create endpoint — this was a dormant gap, not a regression of
-   something that previously worked.
-
-None of DD-080's contract-shape research (reading `control-plane`'s actual
-dispatch code) was wrong or stale; it simply was never cross-checked against
-the AEP linter, because no step in the spec-first workflow calls that out and
-the local tooling to do so had friction (missing binary) even for someone who
-remembered to try. Switching to `npx` removes the friction (zero-setup, and
-version-drifts alongside CI's own unpinned install rather than a
-locally-frozen version); adding it to `check: fmt vet lint check-aep test`
-removes the "have to remember a separate target" failure mode. Verified
-`make check-aep` and the full `make check` both pass locally post-fix.
+**Rationale:** `check-aep` was a CI gate since Milestone 1 but never a
+prerequisite of `make check` — the local pre-push command `CLAUDE.md`
+documents — and its local invocation assumed a bare `spectral` binary on
+`PATH`, which nothing in this repo provisions (CI self-installs it fresh
+every run). AEP-133's create-specific rules had also never had a chance to
+fire before PR #13's Create endpoint (Milestones 1-2 had no `POST`s), so
+this was a dormant gap, not a regression. `npx` removes the missing-binary
+friction; adding `check-aep` to `make check`'s prerequisite list removes the
+"forgot to run the separate target" failure mode.
 
 **Related requirements:** REQ-CREATE-010, REQ-CREATE-060 (DD-110); process
 fix has no REQ-* of its own — it is tooling/workflow, not product behavior.
