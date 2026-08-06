@@ -33,9 +33,21 @@ type ServerInterface interface {
 	// GetCluster Get cluster details
 	// (GET /api/v1alpha1/clusters/{clusterId})
 	GetCluster(w http.ResponseWriter, r *http.Request, clusterId ClusterIdPath)
+	// ListVMs List virtual machines
+	// (GET /api/v1alpha1/vms)
+	ListVMs(w http.ResponseWriter, r *http.Request, params ListVMsParams)
+	// CreateVM Create a virtual machine
+	// (POST /api/v1alpha1/vms)
+	CreateVM(w http.ResponseWriter, r *http.Request, params CreateVMParams)
 	// GetVMsHealth VM Provider Health Check
 	// (GET /api/v1alpha1/vms/health)
 	GetVMsHealth(w http.ResponseWriter, r *http.Request)
+	// DeleteVM Delete a virtual machine
+	// (DELETE /api/v1alpha1/vms/{vmId})
+	DeleteVM(w http.ResponseWriter, r *http.Request, vmId VMIdPath)
+	// GetVM Get virtual machine details
+	// (GET /api/v1alpha1/vms/{vmId})
+	GetVM(w http.ResponseWriter, r *http.Request, vmId VMIdPath)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -72,9 +84,33 @@ func (_ Unimplemented) GetCluster(w http.ResponseWriter, r *http.Request, cluste
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListVMs List virtual machines
+// (GET /api/v1alpha1/vms)
+func (_ Unimplemented) ListVMs(w http.ResponseWriter, r *http.Request, params ListVMsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateVM Create a virtual machine
+// (POST /api/v1alpha1/vms)
+func (_ Unimplemented) CreateVM(w http.ResponseWriter, r *http.Request, params CreateVMParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetVMsHealth VM Provider Health Check
 // (GET /api/v1alpha1/vms/health)
 func (_ Unimplemented) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteVM Delete a virtual machine
+// (DELETE /api/v1alpha1/vms/{vmId})
+func (_ Unimplemented) DeleteVM(w http.ResponseWriter, r *http.Request, vmId VMIdPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetVM Get virtual machine details
+// (GET /api/v1alpha1/vms/{vmId})
+func (_ Unimplemented) GetVM(w http.ResponseWriter, r *http.Request, vmId VMIdPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -232,11 +268,142 @@ func (siw *ServerInterfaceWrapper) GetCluster(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListVMs operation middleware
+func (siw *ServerInterfaceWrapper) ListVMs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListVMsParams
+
+	// ------------- Optional query parameter "page_token" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_token", r.URL.Query(), &params.PageToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_token"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "max_page_size" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "max_page_size", r.URL.Query(), &params.MaxPageSize, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "max_page_size"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "max_page_size", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListVMs(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateVM operation middleware
+func (siw *ServerInterfaceWrapper) CreateVM(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateVMParams
+
+	// ------------- Optional query parameter "id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "id", r.URL.Query(), &params.Id, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateVM(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetVMsHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetVMsHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteVM operation middleware
+func (siw *ServerInterfaceWrapper) DeleteVM(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "vmId" -------------
+	var vmId VMIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "vmId", chi.URLParam(r, "vmId"), &vmId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "vmId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteVM(w, r, vmId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVM operation middleware
+func (siw *ServerInterfaceWrapper) GetVM(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "vmId" -------------
+	var vmId VMIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "vmId", chi.URLParam(r, "vmId"), &vmId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "vmId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVM(w, r, vmId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -370,6 +537,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1alpha1/clusters/{clusterId}", wrapper.GetCluster)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1alpha1/vms", wrapper.ListVMs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1alpha1/vms", wrapper.CreateVM)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1alpha1/vms/{vmId}", wrapper.DeleteVM)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1alpha1/vms/{vmId}", wrapper.GetVM)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1alpha1/clusters/health", wrapper.GetClustersHealth)
@@ -751,6 +930,177 @@ func (response GetCluster502ApplicationProblemPlusJSONResponse) VisitGetClusterR
 	return err
 }
 
+type ListVMsRequestObject struct {
+	Params ListVMsParams
+}
+
+type ListVMsResponseObject interface {
+	VisitListVMsResponse(w http.ResponseWriter) error
+}
+
+type ListVMs200JSONResponse VirtualMachineList
+
+func (response ListVMs200JSONResponse) VisitListVMsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVMs401ApplicationProblemPlusJSONResponse Error
+
+func (response ListVMs401ApplicationProblemPlusJSONResponse) VisitListVMsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVMs403ApplicationProblemPlusJSONResponse Error
+
+func (response ListVMs403ApplicationProblemPlusJSONResponse) VisitListVMsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVMs500ApplicationProblemPlusJSONResponse Error
+
+func (response ListVMs500ApplicationProblemPlusJSONResponse) VisitListVMsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListVMs502ApplicationProblemPlusJSONResponse Error
+
+func (response ListVMs502ApplicationProblemPlusJSONResponse) VisitListVMsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateVMRequestObject struct {
+	Params CreateVMParams
+	Body   *CreateVMJSONRequestBody
+}
+
+type CreateVMResponseObject interface {
+	VisitCreateVMResponse(w http.ResponseWriter) error
+}
+
+type CreateVM201JSONResponse VirtualMachine
+
+func (response CreateVM201JSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateVM400ApplicationProblemPlusJSONResponse Error
+
+func (response CreateVM400ApplicationProblemPlusJSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateVM401ApplicationProblemPlusJSONResponse Error
+
+func (response CreateVM401ApplicationProblemPlusJSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateVM403ApplicationProblemPlusJSONResponse Error
+
+func (response CreateVM403ApplicationProblemPlusJSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateVM500ApplicationProblemPlusJSONResponse Error
+
+func (response CreateVM500ApplicationProblemPlusJSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateVM502ApplicationProblemPlusJSONResponse Error
+
+func (response CreateVM502ApplicationProblemPlusJSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetVMsHealthRequestObject struct {
 }
 
@@ -786,6 +1136,170 @@ func (response GetVMsHealth500ApplicationProblemPlusJSONResponse) VisitGetVMsHea
 	return err
 }
 
+type DeleteVMRequestObject struct {
+	VmId VMIdPath `json:"vmId"`
+}
+
+type DeleteVMResponseObject interface {
+	VisitDeleteVMResponse(w http.ResponseWriter) error
+}
+
+type DeleteVM204Response struct {
+}
+
+func (response DeleteVM204Response) VisitDeleteVMResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteVM401ApplicationProblemPlusJSONResponse Error
+
+func (response DeleteVM401ApplicationProblemPlusJSONResponse) VisitDeleteVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteVM403ApplicationProblemPlusJSONResponse Error
+
+func (response DeleteVM403ApplicationProblemPlusJSONResponse) VisitDeleteVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteVM500ApplicationProblemPlusJSONResponse Error
+
+func (response DeleteVM500ApplicationProblemPlusJSONResponse) VisitDeleteVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteVM502ApplicationProblemPlusJSONResponse Error
+
+func (response DeleteVM502ApplicationProblemPlusJSONResponse) VisitDeleteVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVMRequestObject struct {
+	VmId VMIdPath `json:"vmId"`
+}
+
+type GetVMResponseObject interface {
+	VisitGetVMResponse(w http.ResponseWriter) error
+}
+
+type GetVM200JSONResponse VirtualMachine
+
+func (response GetVM200JSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVM401ApplicationProblemPlusJSONResponse Error
+
+func (response GetVM401ApplicationProblemPlusJSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVM403ApplicationProblemPlusJSONResponse Error
+
+func (response GetVM403ApplicationProblemPlusJSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVM404ApplicationProblemPlusJSONResponse Error
+
+func (response GetVM404ApplicationProblemPlusJSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVM500ApplicationProblemPlusJSONResponse Error
+
+func (response GetVM500ApplicationProblemPlusJSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVM502ApplicationProblemPlusJSONResponse Error
+
+func (response GetVM502ApplicationProblemPlusJSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// ListClusters List clusters
@@ -803,9 +1317,21 @@ type StrictServerInterface interface {
 	// GetCluster Get cluster details
 	// (GET /api/v1alpha1/clusters/{clusterId})
 	GetCluster(ctx context.Context, request GetClusterRequestObject) (GetClusterResponseObject, error)
+	// ListVMs List virtual machines
+	// (GET /api/v1alpha1/vms)
+	ListVMs(ctx context.Context, request ListVMsRequestObject) (ListVMsResponseObject, error)
+	// CreateVM Create a virtual machine
+	// (POST /api/v1alpha1/vms)
+	CreateVM(ctx context.Context, request CreateVMRequestObject) (CreateVMResponseObject, error)
 	// GetVMsHealth VM Provider Health Check
 	// (GET /api/v1alpha1/vms/health)
 	GetVMsHealth(ctx context.Context, request GetVMsHealthRequestObject) (GetVMsHealthResponseObject, error)
+	// DeleteVM Delete a virtual machine
+	// (DELETE /api/v1alpha1/vms/{vmId})
+	DeleteVM(ctx context.Context, request DeleteVMRequestObject) (DeleteVMResponseObject, error)
+	// GetVM Get virtual machine details
+	// (GET /api/v1alpha1/vms/{vmId})
+	GetVM(ctx context.Context, request GetVMRequestObject) (GetVMResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -982,6 +1508,65 @@ func (sh *strictHandler) GetCluster(w http.ResponseWriter, r *http.Request, clus
 	}
 }
 
+// ListVMs operation middleware
+func (sh *strictHandler) ListVMs(w http.ResponseWriter, r *http.Request, params ListVMsParams) {
+	var request ListVMsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListVMs(ctx, request.(ListVMsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListVMs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListVMsResponseObject); ok {
+		if err := validResponse.VisitListVMsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateVM operation middleware
+func (sh *strictHandler) CreateVM(w http.ResponseWriter, r *http.Request, params CreateVMParams) {
+	var request CreateVMRequestObject
+
+	request.Params = params
+
+	var body CreateVMJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateVM(ctx, request.(CreateVMRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateVM")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateVMResponseObject); ok {
+		if err := validResponse.VisitCreateVMResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetVMsHealth operation middleware
 func (sh *strictHandler) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
 	var request GetVMsHealthRequestObject
@@ -999,6 +1584,58 @@ func (sh *strictHandler) GetVMsHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetVMsHealthResponseObject); ok {
 		if err := validResponse.VisitGetVMsHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteVM operation middleware
+func (sh *strictHandler) DeleteVM(w http.ResponseWriter, r *http.Request, vmId VMIdPath) {
+	var request DeleteVMRequestObject
+
+	request.VmId = vmId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteVM(ctx, request.(DeleteVMRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteVM")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteVMResponseObject); ok {
+		if err := validResponse.VisitDeleteVMResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetVM operation middleware
+func (sh *strictHandler) GetVM(w http.ResponseWriter, r *http.Request, vmId VMIdPath) {
+	var request GetVMRequestObject
+
+	request.VmId = vmId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetVM(ctx, request.(GetVMRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetVM")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetVMResponseObject); ok {
+		if err := validResponse.VisitGetVMResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

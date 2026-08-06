@@ -26,10 +26,11 @@ import (
 // fakeServerInterface satisfies oapigen.ServerInterface with a swappable
 // health implementation shared by both routes (DD-010/REQ-HLT-015), per the
 // unit test plan's convention of registering handlers directly rather than
-// going through the strict adapter/business logic. Embeds oapigen.Unimplemented
-// so the Milestone 3 Cluster CRUD methods (out of scope for these
-// generic-server-behavior tests) are satisfied with a 501 stub rather than
-// needing a duplicate hand-rolled no-op per method.
+// going through the strict adapter/business logic. oapigen.Unimplemented is
+// embedded so the non-health routes (Cluster CRUD from Milestone 3, VM CRUD
+// from Milestone 4) are satisfied with a 501 stub rather than needing a
+// duplicate hand-rolled no-op per method — this package's tests exercise
+// only health.
 type fakeServerInterface struct {
 	oapigen.Unimplemented
 	getHealth func(w http.ResponseWriter, r *http.Request)
