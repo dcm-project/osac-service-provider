@@ -739,4 +739,33 @@ stub embeds for the other milestone's CRUD methods) — confirms that
 guidance was accurate and no new M6-specific integration risk exists beyond
 what `#24` already documented.
 
+**Update — second, more thorough validation round:** the above proved M6
+against M3/M4/M6 combined, but left two gaps: M5 (status
+reporting/NATS, `#25`) was never in the mix, and no e2e case yet exercised
+this milestone's actual *behavior* (version rejection / override bypass)
+over real HTTP — only its *side effects* (release_image translation was
+inferred from `TC-E2E-090`'s successful `Create`, not asserted directly).
+Closed both in a second throwaway branch (`scratch/e2e-m6-all-prs`,
+deleted after validation, never opened as a PR), combining
+`e2e/crud-coverage` + `#14` (M4) + `#25` (M5) + this branch (M6, already
+containing M3) — a superset of the run above. Two new e2e specs were
+added for this run and are now registered for real in
+`e2e/crud-coverage`'s own spec/test-plan (`REQ-E2E-110/111`,
+`AC-E2E-070`, `TC-E2E-110`/`TC-E2E-111` — see that branch's own DD-146):
+one asserting Cluster `Create` rejects an unsupported `spec.version` with
+`400`/`INVALID_ARGUMENT` and never dispatches to the mock backend, one
+asserting an explicit `provider_hints.osac.release_image` override
+bypasses that rejection end-to-end. First run
+([31068615958](https://github.com/dcm-project/osac-service-provider/actions/runs/31068615958))
+failed — not from anything M6-specific, but from a real M5×e2e
+integration gap (M5 made `DCM_NATS_URL` a required config value; no e2e
+manifest set it, so `osac-service-provider` crash-looped). Fixed on
+`e2e/crud-coverage` (DD-146 there); re-run
+([31068930733](https://github.com/dcm-project/osac-service-provider/actions/runs/31068930733))
+passed **12/12 specs** — all 10 from the first round plus both new
+version-matrix scenarios — confirming this milestone's behavior, not just
+its wiring, round-trips correctly over real HTTP against a real
+`control-plane` + real `osac-mock-provider` + real M5 status-publishing
+running alongside it.
+
 **Related requirements:** None directly — process/workflow decision.
