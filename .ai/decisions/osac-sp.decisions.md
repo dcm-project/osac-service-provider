@@ -594,3 +594,29 @@ Results on the merged tree:
 Conclusion: M5's own branch is merge-clean against M3+M4 as of the above
 SHAs. The M5 PR can be opened now per DD-075, with this note (and these
 SHAs) linked as evidence, flagged blocked on #13/#14 for actual merge.
+
+### Re-confirmation (2026-08-06): PR #25's own `ci/build`/`lint` failures are this same, expected DD-075 state, not a regression
+
+`ci/build` ([run 31049778266](https://github.com/dcm-project/osac-service-provider/actions/runs/31049778266))
+and `lint` ([run 31049776667](https://github.com/dcm-project/osac-service-provider/actions/runs/31049776667))
+both fail on this PR's own branch, exactly as DD-075 predicted:
+`internal/statuspoll/poller.go` directly imports `internal/cluster`/
+`internal/vm` (M3/M4 packages), which simply don't exist on `main` — this
+branch is deliberately *not* stacked on M3/M4 (DD-075's own rationale), so
+these two checks cannot go green until `#13`/`#14` merge, full stop. This
+is the identical failure mode already reasoned through above; it is not a
+new bug and no code change to M5 fixes it.
+
+Re-confirmed today, independently of the merge worktree above, by
+re-checking out this branch's exact evidence commit
+(`1169b82`, from the M6-adjacent throwaway validation branch
+`scratch/e2e-m6-all-prs`, which additionally layered M6 — `#26` — on top of
+this same M3+M4+M5 base): `make build`, `make vet`, and `make lint`
+(`golangci-lint run ./...`) all pass with **0 issues**, and
+`ginkgo -r --race` is green across all 19 non-e2e suites (only the `test/e2e`
+suite itself fails locally, and only because `CONTROL_PLANE_URL` isn't set
+outside a real `kind` run — not a code defect). This is the same
+`ci/build`/`lint` job definition PR #25 itself runs, just executed against
+the merged tree instead of the standalone branch — proving the failing
+checks are 100% attributable to merge order, not to any defect introduced
+by M5.
