@@ -3,8 +3,10 @@ package cluster
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"strconv"
+
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
@@ -68,14 +70,17 @@ func encodePageToken(offset int32) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(int(offset))))
 }
 
+// decodePageToken returns a synthetic gRPC InvalidArgument error on a
+// malformed token — mapError (§4.6) needs a real gRPC code to route this to
+// 400 rather than falling through to its default 500 case.
 func decodePageToken(token string) (int32, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return 0, fmt.Errorf("invalid page_token: %w", err)
+		return 0, grpcstatus.Errorf(codes.InvalidArgument, "invalid page_token: %v", err)
 	}
 	n, err := strconv.Atoi(string(raw))
 	if err != nil {
-		return 0, fmt.Errorf("invalid page_token: %w", err)
+		return 0, grpcstatus.Errorf(codes.InvalidArgument, "invalid page_token: %v", err)
 	}
 	return int32(n), nil
 }
