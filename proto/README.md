@@ -26,6 +26,18 @@ Milestone 1:
 - `osac/public/v1/capabilities_service.proto`
 - `osac/public/v1/authn_capabilities_type.proto`
 
+Milestone 3 additionally vendors, at the same pinned commit:
+
+- `osac/public/v1/cluster_templates_service.proto`
+- `osac/public/v1/cluster_template_type.proto`
+
+Needed by Create's node-set-key resolution: `Cluster.spec.node_sets`' keys
+are per-template and not derivable from `template_id`, so the SP calls
+`ClusterTemplates/Get` to discover them (see
+[#12](https://github.com/dcm-project/osac-service-provider/pull/12)'s
+DD-110/SC-M3-004 for the full rationale — this branch predates that fix and
+will pick up its own copy of the decision on rebase).
+
 Milestone 2:
 
 - `osac/public/v1/clusters_service.proto`
