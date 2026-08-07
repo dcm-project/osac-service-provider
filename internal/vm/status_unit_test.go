@@ -25,6 +25,12 @@ var _ = Describe("MapStatus (Topic 4.6 Status Mapping)", func() {
 		Entry("gRPC DeadlineExceeded", grpcstatus.Error(codes.DeadlineExceeded, "timed out"), (*publicv1.ComputeInstanceStatus)(nil), v1alpha1.VMStatusFAILED),
 		Entry("gRPC NotFound", grpcstatus.Error(codes.NotFound, "no such compute instance"), (*publicv1.ComputeInstanceStatus)(nil), v1alpha1.VMStatusDELETED),
 		Entry("gRPC PermissionDenied (defensive default for any other error code)", grpcstatus.Error(codes.PermissionDenied, "denied"), (*publicv1.ComputeInstanceStatus)(nil), v1alpha1.VMStatusFAILED),
+		// UNSPECIFIED (proto3's zero-value) maps to PROVISIONING, not FAILED
+		// (DD-129): it is the real, normal state for several seconds between
+		// ComputeInstance creation and osac-operator's first reconcile pass,
+		// not a genuine anomaly — verified live against a real
+		// fulfillment-service/osac-operator.
+		Entry("state=UNSPECIFIED", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_UNSPECIFIED}, v1alpha1.VMStatusPROVISIONING),
 		Entry("state=STARTING", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STARTING}, v1alpha1.VMStatusPROVISIONING),
 		Entry("state=RUNNING", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING}, v1alpha1.VMStatusRUNNING),
 		Entry("state=FAILED", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_FAILED}, v1alpha1.VMStatusFAILED),
@@ -32,7 +38,6 @@ var _ = Describe("MapStatus (Topic 4.6 Status Mapping)", func() {
 		Entry("state=STOPPING", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STOPPING}, v1alpha1.VMStatusSTOPPING),
 		Entry("state=STOPPED", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STOPPED}, v1alpha1.VMStatusSTOPPED),
 		Entry("state=PAUSED", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_PAUSED}, v1alpha1.VMStatusPAUSED),
-		Entry("state=UNSPECIFIED", nil, &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_UNSPECIFIED}, v1alpha1.VMStatusFAILED),
 	)
 
 	// TC-U-351 (AC-VMSTATUS-020): a connectivity failure is never

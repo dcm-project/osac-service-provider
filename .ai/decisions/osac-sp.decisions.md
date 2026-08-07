@@ -1855,8 +1855,7 @@ resulting `ComputeInstance`/VM state.
 
 **Related requirements:** correctness fix to Milestone 4's
 `REQ-VMCREATE-*` (SC-M4-002's spike conclusion was incomplete, not the
-implementation — no REQ/AC text changes needed). **Action item:** port to
-PR #14 alongside DD-080/081 before merge.
+implementation — no REQ/AC text changes needed).
 
 ---
 
@@ -1983,3 +1982,56 @@ conflates "not yet reported" with "genuinely anomalous" under one
 either/or).
 
 **Related requirements:** `REQ-STATUS-020`, `AC-STATUS-010`.
+
+---
+
+## DD-129: `COMPUTE_INSTANCE_STATE_UNSPECIFIED` maps to `PROVISIONING`, not `FAILED`
+
+**Context:** the DCM-first demo-journey recording showed `dcm sp resource
+list` reporting `FAILED` for a VM immediately after a successful `Create`,
+self-correcting to `PROVISIONING`/`RUNNING` a few seconds later.
+
+**Root cause:** `REQ-VMSTATUS-020`'s original rule (10) mapped "anything
+else, including `COMPUTE_INSTANCE_STATE_UNSPECIFIED`" to `FAILED` as a
+"defensive default," per
+[`service-provider-status-reporting.md#vm-status`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#vm-status)'s
+either/or guidance for ambiguous states ("default to the closest active
+state **or** `FAILED` if functionality is impaired"). This was a
+deliberate, spec'd, and tested choice (`TC-U-350`), not an oversight —
+but it was written and verified entirely against hand-written fakes
+(this milestone's Tier A methodology), never against a real
+`fulfillment-service`/`osac-operator` pair.
+
+**Verified (live, real infra):** timed the transition on a real
+`ComputeInstance` create — `dcm sp resource list` showed `FAILED` at
+T+0.1s and T+2.6s, then self-corrected to `PROVISIONING` by T+5.2s.
+`COMPUTE_INSTANCE_STATE_UNSPECIFIED` is proto3's structural zero-value
+(`compute_instance_type.proto`'s own comment: "Unspecified indicates
+that the state is unknown"), and is the normal, universal state every
+`ComputeInstance` briefly holds between creation and `osac-operator`'s
+first reconcile pass — not a genuine anomaly. Mapping it to `FAILED`
+therefore produced a false failure on every single VM creation, not just
+a rare edge case.
+
+**Also confirmed systemic, not VM-specific:** `internal/cluster/status.go`
+(Milestone 3, PR #13) has the identical unhandled-default gap for
+`CLUSTER_STATE_UNSPECIFIED` (same proto zero-value comment, same
+either/or guidance, same `FAILED` resolution) — ported the equivalent fix
+there too (`CLUSTER_STATE_UNSPECIFIED` → `PROGRESSING`).
+
+**Decision:** `REQ-VMSTATUS-020` now maps `COMPUTE_INSTANCE_STATE_UNSPECIFIED`
+→ `PROVISIONING` (rule 3, ahead of `STARTING`), matching the "closest
+active state" half of the upstream guidance instead of the `FAILED` half.
+`internal/vm/status.go` gained an explicit case for it, plus an explicit
+(previously default-only) case for `COMPUTE_INSTANCE_STATE_FAILED` for
+clarity. The `default` branch remains, now scoped to genuinely
+future/unmodeled enum values only.
+
+**Upstream gap flagged:** filed issues against `osac-project` (proto
+`*_STATE_UNSPECIFIED` enum comments don't document temporal semantics —
+"unknown" doesn't say whether it's transient-at-creation or a genuine
+anomaly) and `dcm-project/enhancements` (`service-provider-status-reporting.md`'s
+ambiguous-state guidance conflates the two cases under one either/or with
+no criteria for which applies).
+
+**Related requirements:** `REQ-VMSTATUS-020`, `AC-VMSTATUS-010`.

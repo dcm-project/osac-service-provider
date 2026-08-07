@@ -28,6 +28,13 @@ import (
 // triggers oapi-codegen's cross-schema collision-avoidance, same as
 // ClusterStatus's own pre-existing collision with ErrorType's UNAVAILABLE.
 // Expected, not a regression (DD-075).
+//
+// COMPUTE_INSTANCE_STATE_UNSPECIFIED (proto3's zero-value) maps to
+// PROVISIONING, not the catch-all FAILED default (DD-129): verified live
+// against a real fulfillment-service/osac-operator, it is the normal state
+// for every ComputeInstance for several seconds between creation and
+// osac-operator's first reconcile pass — not a genuine anomaly. Treating it
+// as FAILED produced a false failure on every single VM creation.
 func MapStatus(err error, status *publicv1.ComputeInstanceStatus) v1alpha1.VMStatus {
 	if err != nil {
 		if grpcstatus.Code(err) == codes.NotFound {
@@ -37,10 +44,14 @@ func MapStatus(err error, status *publicv1.ComputeInstanceStatus) v1alpha1.VMSta
 	}
 
 	switch status.GetState() {
+	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_UNSPECIFIED:
+		return v1alpha1.VMStatusPROVISIONING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STARTING:
 		return v1alpha1.VMStatusPROVISIONING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING:
 		return v1alpha1.VMStatusRUNNING
+	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_FAILED:
+		return v1alpha1.VMStatusFAILED
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_DELETING:
 		return v1alpha1.VMStatusDELETING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STOPPING:
