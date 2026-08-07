@@ -69,8 +69,8 @@ func toOSACComputeInstance(id string, spec v1alpha1.VMSpec) (*publicv1.ComputeIn
 	}
 
 	osacSpec := &publicv1.ComputeInstanceSpec{
-		Template:        spec.ProviderHints.Osac.TemplateId,
-		InstanceType:    util.Ptr(spec.ProviderHints.Osac.InstanceType),
+		Template:        &publicv1.ComputeInstanceTemplateReference{Name: spec.ProviderHints.Osac.TemplateId},
+		InstanceType:    &publicv1.InstanceTypeReference{Name: spec.ProviderHints.Osac.InstanceType},
 		Image:           &publicv1.ComputeInstanceImage{SourceType: imageSourceType, SourceRef: spec.GuestOs.Type},
 		BootDisk:        bootDisk,
 		AdditionalDisks: additionalDisks,

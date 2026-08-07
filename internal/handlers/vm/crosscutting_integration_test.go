@@ -33,7 +33,7 @@ var _ = Describe("Default Network Provisioning, Status, and Error mapping (integ
 		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
 		attachments := f.fake.LastCreateCall().GetObject().GetSpec().GetNetworkAttachments()
 		Expect(attachments).To(HaveLen(1))
-		Expect(attachments[0].GetSubnet()).To(Equal("subnet-new"))
+		Expect(attachments[0].GetSubnet().GetId()).To(Equal("subnet-new"))
 	})
 
 	// TC-I-341 (REQ-VMNET-040, AC-VMNET-040): network provisioning timeout
@@ -83,7 +83,7 @@ var _ = Describe("Default Network Provisioning, Status, and Error mapping (integ
 		Expect(f.subnets.CreateCallCount()).To(Equal(0))
 		attachments := f.fake.LastCreateCall().GetObject().GetSpec().GetNetworkAttachments()
 		Expect(attachments).To(HaveLen(1))
-		Expect(attachments[0].GetSubnet()).To(Equal("subnet-existing"))
+		Expect(attachments[0].GetSubnet().GetId()).To(Equal("subnet-existing"))
 	})
 
 	// TC-I-350 (REQ-VMSTATUS-020, AC-VMSTATUS-020): status precedence —

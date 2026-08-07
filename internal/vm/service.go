@@ -93,7 +93,7 @@ func (s *Service) Create(ctx context.Context, id string, spec v1alpha1.VMSpec) (
 	if err != nil {
 		return v1alpha1.VirtualMachine{}, err
 	}
-	obj.Spec.NetworkAttachments = []*publicv1.NetworkAttachment{{Subnet: subnetID}}
+	obj.Spec.NetworkAttachments = []*publicv1.NetworkAttachment{{Subnet: &publicv1.SubnetLocalReference{Id: subnetID}}}
 
 	resp, err := s.computeInstances.Create(ctx, &publicv1.ComputeInstancesCreateRequest{Object: obj})
 	if err != nil {

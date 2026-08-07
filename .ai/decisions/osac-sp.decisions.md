@@ -1121,3 +1121,738 @@ Post-merge, on `scratch/m3-m4-m5-demo` at this note's HEAD: `go build ./...`,
 (no generator drift); `ginkgo -r --race --cover` is green across all 15
 suites, composite coverage **98.6%** (matching the original DD-075
 validation's 98.7% to within normal variance).
+
+## DD-076: External (pre-existing) AAP instance for the OSAC demo, bootstrapped by a one-off Job with a manually-minted gateway token — not `osac-installer`'s bundled AAP automation
+
+**Context:** the demo environment (`osac-demo-dcm` namespace, shared dev OCP
+cluster, not a throwaway `kind`/CI cluster) already has a fully-licensed,
+independently-managed AAP 2.7 instance running in the
+`ansible-automation-platform` namespace. `osac-installer`'s `osac-aap` Helm
+subchart assumes it is deploying and owning a *fresh, in-cluster* AAP
+instance: its `create-api-token` hook shells out to `oc` against a
+same-cluster AAP route/secret it created itself, and its `bootstrap-job`
+hardcodes in-cluster hostnames for the org/project/job-template config-as-code
+run — neither can be redirected to an external, independently-managed AAP via
+Helm values alone. Reinstalling a second AAP just for this demo was rejected
+as wasteful (real subscription/license consumption, longer setup, and a
+second thing to keep patched) when a working one already exists on the same
+cluster.
+
+**Decision:** disable all of `osac-installer`'s AAP automation
+(`aapOperator.enabled=false`, `aap.aap.instance.enabled=false`,
+`aap.bootstrap.enabled=false`, `aap.apiToken.create=false`,
+`aap.instanceGroups.publishTemplates.enabled=false` in
+`values/osac-demo-dcm/values.yaml`) and instead run the same underlying
+config-as-code payload (`osac.config_as_code.configure`, from the
+`osac-aap` collection, using the `ghcr.io/osac-project/osac-aap:latest` EE
+image directly as a plain Kubernetes `batch/v1` Job) against the existing
+external AAP's Controller API, pointed at it via `AAP_HOSTNAME`/
+`AAP_USERNAME`/`AAP_PASSWORD` env vars (the last two from a manually-created
+`aap-admin-creds` Secret in `osac-demo-dcm`) plus `AAP_VALIDATE_CERTS=false`
+(cluster-internal CA not in the job pod's trust store).
+
+**Problem encountered and root-caused:** the first bootstrap Job run
+completed all 753 tasks but created **nothing** — the actual object-creation
+calls for every resource type (organizations, projects, execution
+environments, job templates, workflows, schedules) each failed with
+`Failed to get token: HTTP Error 404: Not Found` from
+`infra.aap_configuration.collect_async_status`, which every `controller_*`/
+`gateway_*` role in the bundled collection calls after firing its own
+`async: 1000, poll: 0` create/update task, to poll for completion. Traced
+this to `ansible.controller` 4.6.11 (bundled in the EE image;
+`infra.aap_configuration` 4.4.0) — its `authenticate()` in
+`controller_api.py` unconditionally POSTs to
+`{api_path()}v2/tokens/` (i.e. `/api/controller/v2/tokens/`) to exchange
+username/password for a session token, but this AAP 2.7 instance's
+gateway-fronted Controller genuinely 404s that path (confirmed directly:
+`curl -u admin:*** -X OPTIONS https://<aap>/api/controller/v2/tokens/` → 404,
+while `https://<aap>/api/gateway/v1/tokens/` → 200) — a version-skew bug
+between this collection version and AAP 2.7's gateway-mediated auth routing
+(same family as upstream reports like
+[`redhat-cop/infra.aap_configuration#1219`](https://github.com/redhat-cop/infra.aap_configuration/issues/1219)
+and [`ansible/awx#15727`](https://github.com/ansible/awx/issues/15727)). No
+`CONTROLLER_OPTIONAL_API_URLPATTERN_PREFIX` env-var override helps, since the
+`v2/tokens/` suffix is hardcoded and the working gateway endpoint's path
+shape (`/api/gateway/v1/tokens/`, no `v2`) doesn't fit that prefix-substitution
+pattern anyway. The one exploratory workaround this repo tried before finding
+the real fix — passing `-e aap_configuration_collect_logs=true` to make the
+broken status check non-fatal — was insufficient: it let the *playbook* reach
+`PLAY RECAP` without aborting, but every actual create call was async-fired
+and then abandoned before its status (and, in practice, its actual server-side
+completion) could be confirmed, so real objects were still not reliably
+created (confirmed: a re-run under only that flag left `Projects` empty for
+the `osac` org even though the playbook "succeeded").
+
+**Real fix:** `ansible.controller`'s `ControllerAPIModule.__init__` skips
+`authenticate()` entirely whenever `controller_oauthtoken` is already set —
+`if not self.oauth_token and not self.authenticated: self.authenticate()`.
+Every `infra.aap_configuration` role forwards a generic `aap_token` role
+variable straight through as `controller_oauthtoken` (alongside
+`aap_username`/`aap_password` → `controller_username`/`controller_password`,
+which then simply go unused once a token is present) — this is a documented,
+first-class alternate auth path (`infra.aap_configuration.dispatch`'s own
+`meta/argument_specs.yml`: *"Either username/password or oauthtoken need to
+be specified"*), not a hack. So the bootstrap Job's entrypoint script now
+mints its own short-lived token directly against the **working** gateway
+endpoint (`POST /api/gateway/v1/tokens/` with HTTP Basic auth — confirmed by
+inspection to be a completely independent code path from the broken
+`ansible.controller`-internal one) before invoking Ansible, then passes it
+through as `-e aap_token=<token>`. This was verified end-to-end both
+in isolation (the gateway-minted token successfully authenticated a manual
+`GET /api/controller/v2/organizations/` call with `Authorization: Bearer`)
+and via a full bootstrap re-run: `PLAY RECAP` shows `failed=0 ignored=0`
+(the only remaining `FAILED - RETRYING` lines in the log are normal
+async-poll-not-done-yet retries, e.g. waiting on the `osac` project's git
+clone, all of which resolve to `ok`/`changed` on a later poll — not the
+token bug), and every expected object now exists when queried directly via
+the Controller API: the `osac` organization; the `osac` project
+(`status: successful`, i.e. its SCM sync from
+`github.com/osac-project/osac` actually completed); the `osac-ee` execution
+environment; all 24 `osac-*` job templates including the
+`osac-create-compute-instance`/`osac-delete-compute-instance` pair this demo
+needs; and both hosted-cluster workflow job templates.
+
+Kept as a `bash`-in-`args:` step (not `command:`, which was tried first and
+broke — it replaces the EE image's own `ENTRYPOINT`
+(`/opt/builder/bin/entrypoint dumb-init`), which is what sets up a writable
+`HOME`/`.ansible` dir for the container's actual (arbitrary, OpenShift-
+assigned) UID; skipping it makes even `ansible-playbook --version`-level
+startup fail with `Permission denied: '/.ansible'`).
+
+**Scope note:** this is purely an artifact of *this demo's* choice to reuse
+an existing, independently-managed AAP instance rather than let
+`osac-installer` deploy its own — it says nothing about `osac-installer`'s
+bundled-AAP path itself (untouched, unexercised, presumably fine for its
+intended fresh-cluster use case), and the underlying collection-version/
+gateway-auth incompatibility is upstream `ansible.controller`/AAP-gateway
+territory, not an `osac-sp` or `osac-installer` defect — recorded here only
+because reproducing it cost real debugging time and the next person pointing
+this repo's demo tooling at a different pre-existing AAP instance will hit
+the identical wall.
+
+**Related requirements:** none (demo/infra-only; no `osac-sp` REQ-*/AC-*
+touched by this decision).
+
+---
+
+## DD-077: `osac-installer` demo deployment isolated into `osac-demo-dcm`, with two local chart patches for shared-cluster coexistence
+
+**Context:** the demo runs on a shared, long-lived dev OCP cluster that
+already hosts unrelated workloads and cluster-scoped operators (its own
+`cert-manager`, a `keycloak` namespace used by another team, ACM/MCE, etc.),
+not a disposable cluster provisioned fresh for this demo. `osac-installer`'s
+three-phase Helm install (`install-operators` → `install-prereqs` →
+`install-osac`) makes several assumptions that don't hold on a shared
+cluster: that it owns cluster-wide singletons it deploys (cert-manager), that
+its own `keycloak` namespace name is free, and that AAP is either bundled or
+absent (see DD-076) rather than pre-existing and independently owned.
+
+**Decision:** deploy OSAC entirely within a single dedicated
+`osac-demo-dcm` namespace (plus one Keycloak-only sibling namespace, below),
+via a custom `values/osac-demo-dcm/values.yaml` (based on
+`osac-installer`'s own first-party, CI-tested `values/vmaas-ci/values.yaml`
+reference config) that: disables `certManager.enabled` (cluster already has
+one) while still enabling `trustManager.enabled`/`caIssuer.enabled` scoped to
+a new `default-ca` `ClusterIssuer` (avoids colliding with whatever
+`ClusterIssuer`(s) the existing cert-manager already owns); disables
+`lvms.enabled` (storage already provided) and `metallb.enabled` (Routes are
+used instead of LoadBalancer Services); disables `mce.enabled` (RHACM/MCE is
+only needed for `ClusterOrder`/Agent-based cluster fulfillment, out of scope
+for this VM-only demo — see the `ComputeInstance` vs. `ClusterOrder` distinction
+in the top-level exploration notes) and `kafka.enabled` (metering out of
+scope); and enables `cnv.enabled` (OpenShift Virtualization, required for
+`ComputeInstance`/KubeVirt `VirtualMachine` objects, not already present on
+this cluster).
+
+Two upstream chart bugs surfaced by this shared-cluster deployment needed
+local patches to `/tmp/osac-explore/osac/osac-installer` (not upstreamed —
+these are exploration-only clones, not this repo's own code, so no
+`osac-sp` REQ-*/AC-* is affected):
+
+1. **Keycloak namespace collision.** `osac-prereqs`'s Phase 2 Keycloak
+   resources (`charts/osac-prereqs/templates/keycloak/resources.yaml`, the
+   `create-controller-credentials`/`wait-keycloak` hooks, and
+   `wait-keycloak.sh`) all hardcode the namespace name `keycloak`. The
+   shared cluster already has an unrelated `keycloak` namespace owned by
+   another team, so Phase 2 failed outright:
+   `Namespace "keycloak" in namespace "" exists and cannot be imported into
+   the current release`. Patched all of the above to read a new
+   `keycloak.namespace` value (defaulting to `keycloak` to preserve upstream
+   behavior when unset) instead of the literal string, including the
+   in-cluster DNS name (`keycloak.{{ $kcNamespace }}.svc.cluster.local`) and
+   the `password-generator` init container's inline `oc get/create secret
+   -n keycloak` commands, which still had the namespace hardcoded even after
+   the main resource namespaces were parameterized (caught by
+   `keycloak-database-0` looping in `Init:CrashLoopBackOff` after the first,
+   partial patch — a second pass fixed the remaining hardcoded reference).
+   `values/osac-demo-dcm/values.yaml` sets `keycloak.namespace:
+   osac-demo-dcm-keycloak`.
+2. **CNV configuration job OOMKilled.** `osac-prereqs`'s `configure-cnv`
+   hook Job was OOMKilled at its default 256Mi memory limit — the
+   `HyperConverged` CRD's schema is large enough that applying/patching it
+   exceeded that budget on this cluster's CNV/CSV version. Raised to 768Mi in
+   `charts/osac-prereqs/templates/hooks/configure-cnv.yaml`.
+
+A `trust-manager` webhook race (`install-prereqs` briefly failing with
+`no endpoints available for service "trust-manager"` because the webhook
+was called before the pod's endpoints were ready) was not a code/config bug —
+just retried once `trust-manager` reported ready.
+
+Phase 3 (`install-osac`) itself needed two more fixes, both applied as
+`values/osac-demo-dcm/values.yaml` overrides (no chart patches needed this
+time):
+
+3. **`osac-operator` OOMKilled at its default 128Mi memory limit.**
+   `multicluster-runtime`'s per-GVK informer caches for every CRD this
+   operator watches (regardless of whether that CRD's own controller toggle
+   is on) add up to more than 128Mi at this cluster's steady state. Raised
+   via `operator.resources.limits.memory=512Mi` /
+   `requests.memory=128Mi` (same class of fix as `configure-cnv`'s OOM,
+   item 2 above).
+4. **`osac-operator` crash-looped (`Exit Code 1`, not OOM) with
+   `no kind is registered for the type v1alpha1.BareMetalInstance in scheme`
+   once the OOM was fixed.** Root-caused to an upstream `osac-operator`
+   inconsistency, not a demo-config problem:
+   `internal/controller/externalipattachment_controller.go`'s
+   `SetupWithManager` unconditionally sets up a watch on
+   `bmfov1alpha1.BareMetalInstance` whenever the **`networking`** controller
+   is enabled (external-IP attachments can target a ComputeInstance,
+   Cluster, *or* BareMetalInstance, so the reconciler always watches all
+   three), but `cmd/main.go` only calls
+   `bmfov1alpha1.AddToScheme(localScheme)` when the **separate**
+   `bareMetalInstance` controller flag is true (`main.go:198-199`) — so
+   `networking=true` + `bareMetalInstance=false` (our original, logically
+   correct-looking setting, since this demo does no bare-metal provisioning)
+   is a fatal combination the code doesn't defend against. The
+   `baremetalinstances.osac.openshift.io` CRD itself was never the problem —
+   confirmed present on the cluster the whole time (`bmfCrds`, the CRD-only
+   companion chart, installs unconditionally, unlike the actual
+   `bare-metal-fulfillment-operator` chart which is gated on `bmf.enabled`).
+   Workaround: set `operator.controllers.bareMetalInstance=true` anyway,
+   purely to get the scheme registered — the demo still does not exercise
+   any actual `BareMetalInstance` controller logic or provisioning.
+
+**Publishing templates to the fulfillment-service catalog (the
+`osac-publish-templates` AAP job template, normally auto-launched by
+`osac-installer`'s own `charts/osac/templates/hooks/publish-templates.yaml`
+post-install hook, disabled here via
+`aap.instanceGroups.publishTemplates.enabled=false` for the same
+bundled-AAP-hostname-assumption reason as `bootstrap.enabled`) needed three
+more fixes, launched manually by mirroring that disabled hook's own
+API sequence (list job template by name -> POST `.../launch/` -> poll
+`.../jobs/{id}/`) against the real AAP:**
+
+5. **Missing `template-publisher` identity plumbing end-to-end.** The
+   `osac-publish-templates-ig` container group (`credential: None`, i.e. no
+   custom Kubernetes-API credential/target-namespace override) schedules its
+   job pod in AAP's *own* namespace (`ansible-automation-platform`) by
+   default — confirmed by the first failure, `serviceaccount
+   "template-publisher" not found` in that namespace, not
+   `osac-demo-dcm`. `osac-aap/collections/.../config_as_code/README.md`
+   documents exactly this split-topology (AAP and OSAC on the same cluster
+   but different namespaces) as a first-class scenario, so the fix followed
+   it directly rather than improvising: (a) `ServiceAccount
+   template-publisher` created in **both** `ansible-automation-platform`
+   (the identity the job pod actually runs as, matching the container
+   group's `pod_spec_override.spec.serviceAccountName`) and `osac-demo-dcm`
+   (the identity whose token gets minted and presented to
+   fulfillment-service — `fulfillment-service`'s `grpc_authz_interceptor.go`
+   builds the expected identity as `system:serviceaccount:<the namespace
+   fulfillment-service itself is deployed in>:<name>`, per
+   `docs/AUTH.md`/`--emergency-service-accounts` help text, so the *target*
+   SA must live in `osac-demo-dcm`, not wherever the job pod runs); (b) a
+   `Role`/`RoleBinding` in `osac-demo-dcm` granting the
+   `ansible-automation-platform:template-publisher` actor a
+   `serviceaccounts/token` `create` on `resourceNames: ["template-publisher"]`
+   (cross-namespace TokenRequest, the same shape as
+   `osac-aap/config/base/template-publisher.yaml`'s self-token RBAC, just
+   split across namespaces); (c) manually created `ca-bundle` ConfigMap
+   (copied from `osac-demo-dcm`) and `publish-templates-ig` ConfigMap (both
+   normally templated by disabled chart pieces) in
+   `ansible-automation-platform`, since that's where the pod's
+   `envFrom`/volume mounts actually resolve from; (d) the ConfigMap sets
+   `OSAC_PUBLISH_TEMPLATES_NAMESPACE=osac-demo-dcm` explicitly (the
+   playbook's own default, `OSAC_PUBLISH_TEMPLATES_NAMESPACE_DEFAULT`, is
+   the job pod's *own* namespace via the downward API — wrong for this
+   split topology) and `OSAC_FULFILLMENT_SERVICE_URI` as the
+   fully-qualified in-cluster DNS name
+   (`https://fulfillment-internal-api.osac-demo-dcm.svc.cluster.local:8001`,
+   not the chart's own same-namespace-relative default).
+6. **`fulfillment-service`'s `emergencyServiceAccounts` allowlist defaulted
+   to `["admin"]` only** (`charts/service/values.yaml`) — our values file
+   never set `service.auth.emergencyServiceAccounts`, so even with (5)
+   fully fixed, the mint-a-token-and-call-fulfillment-service flow got a
+   clean `403 permission denied` (TLS/connectivity fine, authz not).
+   Added `template-publisher`, `osac-operator`, and
+   `osac-operator-controller-manager` (the latter two proactively, for
+   `osac-operator`'s own in-cluster calls to fulfillment-service) to
+   `service.auth.emergencyServiceAccounts`, matching `values/vmaas-ci`'s
+   reference list.
+7. **Upstream template/schema bug, out of scope to fix, worked around by
+   scope-narrowing.** With (5) and (6) fixed, template *discovery* and
+   *cluster*-template publishing both ran, but every `osac.templates.ocp_*`
+   cluster template failed fulfillment-service's protobuf validation with
+   `invalid value for string field hostType: {` — the templates' own YAML
+   defines `node_sets.<name>.host_type` as an object (`{name: "g5"}`) but
+   the current `cluster_templates` proto schema expects a plain string.
+   Ansible's default no-`ignore_errors` behavior means this aborts the
+   whole play before the *subsequent* (independent) ComputeInstance/
+   NetworkClass publish steps ever run — so the one artifact this VM-only
+   demo actually needs (`osac.templates.ocp_virt_vm`) never got published
+   either, as a side effect of a completely unrelated, out-of-scope
+   (`clusterOrder` controller is disabled) template bug. Rather than fork
+   `osac-project/osac` to patch/skip the cluster-template step, published
+   only what the demo needs directly: the `ocp_virt_vm` ComputeInstance
+   template and the default `cudn-net` NetworkClass, copied verbatim from
+   the job's own "Print ... templates found" debug output (same JSON the
+   playbook would have POSTed) and `POST`ed straight to
+   `/api/private/v1/compute_instance_templates` and
+   `/api/private/v1/network_classes` using a locally-minted
+   (`oc create token template-publisher -n osac-demo-dcm --duration=1h`)
+   token for the same trusted identity from fix 5/6 above. No cluster
+   templates are published or needed for this demo.
+
+**With templates published, exercising the actual VM-prerequisite chain
+(`VirtualNetwork` -> `Subnet`) surfaced two more gaps from the same root
+cause as fix 5 (the in-cluster `osac-aap` chart, which normally provisions
+all of this for a freshly-deployed AAP, was never applied since we're
+targeting the pre-existing external AAP):**
+
+8. **`osac-sa` ServiceAccount missing in `ansible-automation-platform`.**
+   Unlike `template-publisher` (a one-shot job identity), `osac-sa` is the
+   identity AAP's *operational* job templates run as when they mutate
+   cluster state on the demo's behalf (creating the `ClusterUserDefinedNetwork`
+   for a `VirtualNetwork`/`Subnet`, and later the `VirtualMachine` for a
+   `ComputeInstance`) — `charts/aap/templates/instance-groups.yaml`'s pod
+   spec hardcodes `serviceAccountName: osac-sa` for every non-publish
+   instance group. First `VirtualNetwork` reconcile attempt failed AAP-side
+   with `serviceaccount "osac-sa" not found`. Fixed the same way as
+   `template-publisher`: created `ServiceAccount osac-sa` in
+   `ansible-automation-platform` plus a `ClusterRoleBinding` to
+   `cluster-admin` (matching the scope these job templates need to create
+   arbitrary namespaced/cluster-scoped networking and compute objects;
+   narrowing this further was judged not worth the demo-timeline cost).
+9. **Missing per-instance-group `-ig` ConfigMap/Secret pairs.**
+   `charts/aap/templates/instance-groups.yaml` unconditionally renders
+   *empty* `network-fulfillment-ig`, `cluster-fulfillment-ig`, and
+   `storage-operations-ig` ConfigMap+Secret pairs whenever their respective
+   `instanceGroups.*.enabled` is `false` (and `compute-instance-operations-ig`
+   ships as a plain empty-by-default Secret example in
+   `osac-aap/config/base/`) — every job pod's `envFrom` references its pair
+   with `configMapRef: {optional: true}` but a *non-optional* `secretRef`,
+   so even a job that needs zero extra env vars still fails outright if the
+   Secret object doesn't exist at all. Because we skip the whole `osac-aap`
+   chart (fix 8's rationale), none of these pairs ever got created. Symptom:
+   AAP job 32 (`osac-create-virtual-network`) sat in `running` for 5+
+   minutes with empty stdout; `oc get pods -n ansible-automation-platform`
+   showed the actual worker pod stuck in `CreateContainerConfigError` /
+   `ContainerCreating` with the event `secret "network-fulfillment-ig" not
+   found`. Fixed by manually applying empty ConfigMap+Secret pairs for
+   `network-fulfillment-ig`, `compute-instance-operations-ig` (needed next,
+   for `ComputeInstance` creation), and `cluster-fulfillment-ig`, matching
+   exactly what the disabled chart's `{{ else }}` branch would have
+   rendered. Deleting the wedged pod let AAP's scheduler retry the job
+   against the now-valid pod spec without needing to relaunch it via the
+   API; job 32 completed successfully on that retry.
+
+**Related requirements:** none (demo/infra-only; no `osac-sp` REQ-*/AC-*
+touched by this decision).
+
+**With the `VirtualNetwork`/`Subnet` chain fully `Ready` (see DD-078 for the
+proto-pin that unblocked their status feedback), exercising `ComputeInstance`
+creation surfaced two more gaps, both in tenant storage-class resolution —
+unrelated to networking/AAP identity, but same "external, pre-existing
+infra reused instead of chart-provisioned" root cause:**
+
+10. **`lvms-vg1` StorageClass labeled for the wrong tenant name.**
+    `osac-operator`'s `label-storageclass` pre-install/pre-upgrade Helm hook
+    (`charts/operator/templates/hooks/label-storageclass.yaml`) unconditionally
+    labels the cluster's default StorageClass
+    `osac.openshift.io/tenant=Default osac.openshift.io/storage-tier=default`
+    — but `storage_controller.go`'s tenant-scoped resolution does an *exact*
+    match against the literal `Tenant` CR name, and fulfillment-service's
+    default tenant for system-created resources (ours) is `shared`, not
+    `Default`. Symptom: `Tenant "shared"` stuck with `ClusterStorageReady:
+    False` / `no StorageClass found for tenant "shared"`, and the
+    `osac-create-compute-instance` AAP job failing with `ComputeInstance
+    'vm-cfkbk' has no tenant_storage_classes available`. Fixed by relabeling:
+    `oc label sc lvms-vg1 osac.openshift.io/tenant=shared --overwrite`.
+    `Tenant "shared"` immediately resolved `status.storageClasses: [{name:
+    lvms-vg1, tier: default}]` and `ClusterStorageReady` flipped to `True`.
+11. **`STORAGE_REQUESTED_TIER` env var never set -- role's hardcoded `local`
+    default doesn't exist as a tier in this environment.**
+    `osac-aap/playbook_osac_create_compute_instance.yml` defaults
+    `_requested_storage_tier` to the literal string `local` (via
+    `lookup('env', 'STORAGE_REQUESTED_TIER') | default('local', true)`)
+    whenever that env var is unset -- and the only tier we have (per fix 10)
+    is `default`. This env var is meant to come from the (optional, per its
+    own `envFrom` entries) `compute-instance-operations-ig` or
+    `storage-operations-ig` Secret/ConfigMap pair -- both of which we'd only
+    created empty (fix 9, DD-077) since neither the aap chart's
+    `instance-groups.yaml` template nor our manual bootstrap populates a
+    tier value for a non-KubeVirt-default environment. Fixed by adding the
+    key directly: `oc create secret generic compute-instance-operations-ig
+    -n ansible-automation-platform --from-literal=STORAGE_REQUESTED_TIER=default`
+    (the same Secret object created empty in fix 9, now populated).
+
+**Related requirements:** none (demo/infra-only; no `osac-sp` REQ-*/AC-*
+touched by this decision).
+
+---
+
+## DD-078: Pin `fulfillment-service` to `v0.0.83` for the demo (proto
+wire-format version skew with `osac-operator`)
+
+**Context:** with fix 9 (DD-077) resolved, AAP job 32 completed and
+`osac-operator` correctly drove the `VirtualNetwork` CR's Kubernetes-level
+`status.phase` to `Ready`. However, the *separate* `virtualnetwork-feedback`
+reconciler — whose job is to push that status back to fulfillment-service so
+DCM/`osac-sp` can ever observe it — failed on every attempt (both `Get` and
+`Update` RPCs) with:
+
+```
+rpc error: code = Internal desc = grpc: failed to unmarshal the received
+message: proto: cannot parse invalid wire-format data
+```
+
+`fulfillment-grpc-server`'s own debug logs showed the `Get` call succeeding
+server-side (`"Sent unary response" ... code:"OK"`), confirming the failure
+was purely client-side (`osac-operator`) unmarshaling — the two binaries
+disagree on the wire schema for a message on this RPC path.
+
+**Root cause (via `dcm_code_search`/manual repo comparison across
+`osac-operator` and `fulfillment-service`, both cloned at `/tmp/osac-explore/
+osac/`):** both images were deployed as `:latest`, i.e. built independently
+from each repo's `main` HEAD with no cross-repo coordination. `osac-operator`
+vendors its private-API gRPC client stubs from a **tagged** BSR module
+(`osac-operator/buf.gen.yaml`: `buf.build/osac-project/private-api:v0.0.83`),
+which is only (re)published on a `fulfillment-service/vX.Y.Z` git tag —
+`v0.0.83` = commit `199ddbe1a` (2026-08-05 21:11 UTC). `fulfillment-service`
+PR #183 (`OSAC-3675`, commit `487e37bd8`, merged 2026-08-06 21:33 UTC —
+*after* `v0.0.83` but with no new tag cut since) changed
+`Cluster.spec.version` (and `ClusterTemplate...Defaults.version`) from a
+plain `string` (field 6) to an embedded `ClusterVersionReference` message,
+**reusing the same field number**. Both a string and an embedded message use
+protobuf wire type 2 (length-delimited), so the wire-level tag byte is
+identical either way; only the receiving side's compiled schema determines
+how those bytes get interpreted. `osac-installer/values/vmaas-ci/values.yaml`
+(the project's own CI reference config) confirms no coordinated pinning
+exists at the deployment layer either (`operator.image.tag: latest`,
+`service.images.service: ...:main`, both floating), and
+`.github/workflows/bump-submodules.yaml` in `osac-installer` documents that
+automated cross-repo pin-bumping was deliberately removed on the assumption
+that mono-repo colocation made it unnecessary — an assumption this incident
+disproves for floating `:latest`/`:main` tags specifically.
+
+**Decision:** pin `service.images.service` to
+`ghcr.io/osac-project/fulfillment-service:v0.0.83` (both a `v0.0.83` and a
+`sha-199ddbe` tag exist on `ghcr.io`) in
+`osac-installer/values/osac-demo-dcm/values.yaml`, applied via `helm upgrade
+--reuse-values -f values/osac-demo-dcm/values.yaml --set
+service.images.service=ghcr.io/osac-project/fulfillment-service:v0.0.83`.
+Left `osac-operator` on `:latest` since it's already the side pinned (via
+BSR) to the older, mutually-compatible contract. **Verified**: after the
+rollout, re-triggering the `VirtualNetwork` reconcile (annotation bump) shows
+`virtualnetwork-feedback` completing `Get`/`Update` with no error, and no
+further `wire-format` errors appear in `osac-operator` logs.
+
+**Scope note:** this is a demo/infra-only pin in a local values file, not a
+code change to `osac-sp` — no `osac-sp` REQ-*/AC-* touched. Worth raising
+upstream (`osac-project/osac-installer` or `fulfillment-service`) as a
+process gap: neither repo's CI (`check-generated-code.yaml`) verifies that
+`osac-operator`'s vendored client proto stays in sync with
+`fulfillment-service`'s *unreleased* `main` changes, so this kind of skew
+between two independently-tagged `:latest` images is currently invisible
+until it breaks a live feedback path like this one.
+
+**Related requirements:** none (demo/infra-only).
+
+---
+
+## DD-079: Fork+patch `osac-aap`'s `cudn_net` role to use `Secondary` CUDN role, not `NATGateway` (tenant network had zero egress, including to in-cluster services)
+
+**Context:** with fixes 1-11 (DD-076/077/078) resolved, `VirtualNetwork` and
+`Subnet` reconciled to `Ready`, and a `ComputeInstance` referencing that
+`Subnet` successfully drove a KubeVirt `VirtualMachine`/`VirtualMachineInstance`
+into existence with a running `virt-launcher` pod. It then stalled
+indefinitely: the CDI `importer-prime-*` pod (responsible for pulling the
+boot-disk container image, `quay.io/containerdisks/fedora:latest`) failed
+repeatedly with `failed to pull image: pinging container registry quay.io:
+... dial tcp ...: i/o timeout`.
+
+**Root cause (verified empirically, not by inspection alone):** the tenant
+namespace (`subnet-<id>`) that OSAC's `cudn_net` NetworkClass implementation
+strategy creates for each `Subnet` is selected by a
+`ClusterUserDefinedNetwork` (CUDN) hardcoded to `topology: Layer2, role:
+Primary` in `osac-aap/collections/ansible_collections/osac/templates/roles/
+cudn_net/defaults/main.yaml` (`default_layer2_role: Primary`). A `Primary`
+CUDN *replaces* the pod's default-network route for every pod in that
+namespace. Direct testing from a throwaway pod in the tenant namespace
+confirmed this was not merely "no internet access" but near-total isolation:
+DNS resolution for `quay.io` succeeded, but every TCP connect attempt to it
+timed out; the *same test against the cluster's own internal image registry
+Service ClusterIP* (confirmed reachable with `HTTP:200` from a pod on the
+normal default network in a sibling namespace) also timed out identically
+from the tenant namespace. Only `kubernetes.default.svc` (the API server)
+was reachable — evidently hardcoded as always-on regardless of CUDN role.
+This rules out "mirror the image into the internal registry" as a fix on
+its own: the pod has no route to *any* cluster-internal destination, not
+just external ones, so a local mirror would be equally unreachable.
+
+OSAC has a purpose-built `NATGateway`/`ExternalIP` API for tenant egress
+(`fulfillment-service/proto/{public,private}/osac/{public,private}/v1/
+nat_gateway_type.proto`), but tracing its implementation
+(`osac-operator/internal/controller/natgateway_controller.go` →
+`osac-aap/playbook_osac_create_nat_gateway.yml`, which dispatches to
+`osac.templates.{implementation_strategy}`, `tasks_from:
+create_nat_gateway`) showed it is **only implemented for the `netris`
+NetworkClass backend** — a real external SDN fabric-management platform
+requiring registered bare-metal switches/servers, a management VPC, and
+controller credentials (`osac-aap/docs/netris-integration.md`). The
+`cudn_net` role directory has no `create_nat_gateway.yaml`/
+`create_external_ip*.yaml` task at all, and no OVN-Kubernetes-native
+`EgressIP` CRD is referenced anywhere in `osac-aap` or `osac-operator`
+(repo-wide grep, zero hits). `NATGateway` is therefore a dead end for any
+purely KubeVirt/`cudn_net`-based OSAC deployment (which this demo, and
+plausibly any VM-only OSAC deployment, is) — not a "few more manual objects"
+fix like DD-076/077's AAP/RBAC gaps, but unimplemented functionality for
+this backend.
+
+**Decision:** forked `osac-project/osac` to `jordigilh/osac`
+(`fix/cudn-net-secondary-role` branch, commits `19bc10ef3` and `13586ff23`)
+and changed `cudn_net`'s hardcoded `default_layer2_role` from `Primary` to
+`Secondary`. `Secondary` attaches the UDN as an *additional* Multus
+interface rather than replacing the pod's default one, so pods keep normal
+cluster/internet egress on their primary interface. A second, dependent bug
+surfaced once the first fix was applied: `create_subnet.yaml` also
+unconditionally labels the namespace `k8s.ovn.org/primary-user-defined-network:
+""` regardless of role; OVN-Kubernetes treats the mere *presence* of that
+label as a promise that a valid `Primary` UDN backs the namespace, and
+`ovnk-controlplane` outright rejected CNI `ADD` for every pod in the
+namespace (`invalid primary network state ... required namespace label ...
+must both be present`) once the CUDN itself was `Secondary`. Fixed by
+gating that label on `default_layer2_role == 'Primary'` in the same commit
+series. Applied locally by re-pointing AAP's `osac` Project's `scm_url`/
+`scm_branch` at the fork/branch (`PATCH /api/controller/v2/projects/7/`) and
+triggering a project sync (`POST .../update/`) — no AAP execution-environment
+image rebuild needed, since playbook content is pulled from git per Project
+sync, not baked into the EE image.
+
+**Verified end-to-end** (recreating `Subnet`/CUDN from scratch after the
+fix, to force the namespace to be created fresh with the corrected labels):
+a `ComputeInstance` (`demo-vm-3`) reached KubeVirt `VirtualMachine` /
+`VirtualMachineInstance` phase `Running`, `READY=True`, with the
+`virt-launcher` pod healthy and the QEMU guest agent reporting
+`AgentConnected: True` (i.e. the Fedora guest OS itself booted, not just an
+empty domain shell) — timestamps and raw `oc`/pod-log evidence captured
+during the session. Deleted cleanly afterward (`ComputeInstance` → `VM`/
+`VMI`/pod all removed).
+
+**Known tradeoff accepted for the demo:** `osac-aap`'s `ocp_virt_vm` role
+only ever references the pod's primary network in the VM spec
+(`networks: [{name: default, pod: {}}]` — `create_build_spec.yaml`), with no
+explicit Multus/`networks` annotation pointing at the tenant UDN's
+`NetworkAttachmentDefinition`. So with `Secondary` role, the VM gets a real,
+egress-capable IP from the *cluster's default pod network* (observed:
+`10.134.1.130`), not from the tenant `Subnet`'s intended CIDR
+(`10.201.x.0/24`) — confirmed by the running VM's actual IP. The tenant
+network construct still gets created and reconciles to `Ready` (satisfying
+the `ComputeInstance.networkAttachments[].subnetRef` contract at the API
+level), but for `cudn_net`-backed VMs specifically, its "tenant isolation"
+property is currently cosmetic rather than functionally enforced on the VM's
+data path. Acceptable for this demo (visually indistinguishable — nobody
+inspects the VM's actual IP on camera) but **not** a fix suitable for
+production tenant-isolation guarantees; flagged here rather than silently
+glossed over.
+
+**Scope note:** this is a demo/infra-only fork+patch of `osac-aap`
+(upstream repo, not `osac-sp`) — no `osac-sp` REQ-*/AC-* touched. Worth
+raising upstream as two separate issues: (1) `Primary`-role CUDN gives
+`cudn_net`-backed tenant networks zero egress with no working mitigation
+(`NATGateway` unimplemented for this backend) — likely blocks any OSAC
+VM-as-a-Service deployment that isn't purely airgapped-with-a-reachable-
+mirror; (2) the `k8s.ovn.org/primary-user-defined-network` namespace label
+should be conditioned on `role`, independent of whether `Secondary` becomes
+the long-term default.
+
+**Related requirements:** none (demo/infra-only).
+
+---
+
+## DD-080: `osac-sp`'s vendored `ComputeInstance`/`Subnet`/`VirtualNetwork` reference fields were stale relative to the pinned `fulfillment-service:v0.0.83` — fixed by re-vendoring
+
+**Context:** first real `ComputeInstance` creation attempt via `osac-sp` during
+the DCM-CLI-first demo journey returned a masked `500` with no detail
+(`internal/handlers/vm/error.go` doesn't log the raw error for `500`s — a
+known observability gap, out of scope to fix here). Bypassing `osac-sp` and
+calling `fulfillment-service`'s public gRPC API directly with `grpcurl`
+(after obtaining a valid OIDC token) surfaced the real error one call at a
+time:
+
+1. `VirtualNetworks/Create` → `rpc error: code = Internal desc = failed to
+   determine assignable tenants` (see DD-081 — a separate, tenant-assignment
+   bug, fixed first so this investigation could proceed).
+2. With DD-081's fix applied, a raw `ComputeInstances/Create` call built to
+   mirror `osac-sp`'s exact wire shape failed to even *parse* via `grpcurl`:
+   `error getting request data: bad input: expecting start of JSON object:
+   '{' ; instead got osac.templates.ocp_virt_vm` — i.e. the field expected an
+   object, not the bare string `osac-sp` was sending.
+
+**Root cause:** `grpcurl describe osac.public.v1.ComputeInstanceSpec` against
+the live `v0.0.83` server showed `template`, `instance_type`, and
+`NetworkAttachment.subnet` are all typed as **reference messages**
+(`ComputeInstanceTemplateReference{id, name, project, shared}`,
+`InstanceTypeReference{...}`, `SubnetLocalReference{id, name}`) — not plain
+strings. The same is true of `SubnetSpec.virtual_network`
+(`VirtualNetworkLocalReference`) and `VirtualNetworkSpec.network_class`
+(`NetworkClassReference`). `osac-sp`'s vendored copies of
+`proto/osac/public/v1/{compute_instance_type,subnet_type,virtual_network_type}.proto`
+(per `proto/README.md`, these are *copied* snapshots, not a live `buf`
+dependency) predate this reference-wrapping refactor entirely — confirmed by
+diffing them against the `fulfillment-service/v0.0.83` git tag (`git
+checkout fulfillment-service/v0.0.83 -- proto/public/osac/public/v1/`), where
+the diff is empty for the *service* proto files but non-empty for exactly
+these three *type* files. `virtual_network_type.proto`'s staleness never
+surfaced functionally because `internal/vm/network.go`'s
+`provisionDefaultVirtualNetwork` never sets `network_class` (relies on the
+server-side default), but `subnet_type.proto`'s did — `provisionDefaultSubnet`
+always sets `virtual_network`, so `osac-sp`'s own default-subnet
+auto-provisioning carried the identical latent bug, just not yet exercised
+before this session (see "Verification" below for why it wasn't caught by
+CI: no test asserts against a real server's reflected schema, only against
+the vendored stub's own (self-consistently wrong) shape).
+
+**Decision:** re-vendored the three stale type files from the
+`fulfillment-service/v0.0.83` git tag verbatim (they were already byte-for-
+byte identical to `main` at that tag, i.e. this isn't a moving target — the
+divergence is entirely on `osac-sp`'s side), plus vendored two new
+transitively-required files that didn't exist in `osac-sp`'s `proto/` tree
+at all (`instance_type_type.proto`, `security_group_type.proto` — needed for
+`InstanceTypeReference` and `SecurityGroupLocalReference`). Ran `make
+generate-proto` (`buf generate`) to regenerate the five corresponding
+`internal/osacpb/.../*.pb.go` files, then fixed the four resulting Go
+compile errors:
+
+- `internal/vm/translate.go`: `Template`/`InstanceType` now built as
+  `&publicv1.ComputeInstanceTemplateReference{Name: ...}` /
+  `&publicv1.InstanceTypeReference{Name: ...}` (populated by **name**, not
+  `id` — `spec.ProviderHints.Osac.{TemplateId,InstanceType}` are
+  human-assigned names like `osac.templates.ocp_virt_vm` / `demo-small`,
+  never numeric OSAC-internal IDs; the reference message's own doc comments
+  and the OpenAPI spec's field descriptions confirm this).
+- `internal/vm/network.go`: `SubnetSpec.VirtualNetwork` now
+  `&publicv1.VirtualNetworkLocalReference{Id: vnetID}` (by `id` here, since
+  `vnetID` is the OSAC-assigned identifier returned from the just-completed
+  `VirtualNetworks/Create` call, not a name).
+- `internal/vm/service.go`: `NetworkAttachment.Subnet` now
+  `&publicv1.SubnetLocalReference{Id: subnetID}` (same reasoning — an
+  OSAC-assigned id from `resolveDefaultSubnet`).
+
+Updated the 6 unit/integration test assertions that compared these fields
+against bare strings (`network_unit_test.go`, `create_unit_test.go`,
+`internal/handlers/vm/{create,crosscutting}_integration_test.go`) to instead
+call `.GetId()`/`.GetName()` on the reference message. No test *behavior*
+changed — every assertion's intent (which id/name flows through to which
+call) is unchanged, only the accessor path. Full suite (15 suites, 350+
+specs) plus `make lint` pass clean after the fix.
+
+**Verification (live, not mocked):** after rebuilding and redeploying
+`osac-sp` with this fix, a direct `POST /api/v1alpha1/vms` call against the
+running pod (port-forwarded, real Keycloak-issued OIDC token, real
+`fulfillment-service`, real AAP) progressed past the field-shape rejection
+entirely — see DD-081 and the demo-journey validation work this unblocks.
+
+**Related requirements:** none new — this is a correctness fix to
+Milestone 4's existing `REQ-VMCREATE-*`/`REQ-VMNET-*` implementation
+(`feat/milestone-4-vm-crud`, PR #14), which was developed and merged against
+a proto snapshot that predates `fulfillment-service` `v0.0.83`. **Action
+item:** port this same fix to PR #14 before it merges, independent of the
+demo — every real `ComputeInstance` Create call through that PR's code today
+would hit the exact `bad input`-class failure this fixes (masked as an
+opaque `500` to the DCM caller), for ComputeInstance/Subnet/VirtualNetwork
+alike, not just the demo's default-network auto-provisioning path.
+
+---
+
+## DD-081: `osac-sp`'s Keycloak client had no tenant membership — `fulfillment-service`'s tenancy logic rejected every Create with "no assignable tenants"
+
+**Context:** the very first `VirtualNetworks/Create` call attempted through
+`osac-sp`'s real OIDC client (`client_credentials` grant against the
+installer-deployed Keycloak) failed fast (~15-25ms) with `rpc error: code =
+Internal desc = failed to determine assignable tenants` — traced (
+`fulfillment-service/internal/servers/generic_server.go:determineAssignedTenant`
+→ `internal/auth/default_tenancy_logic.go:DetermineAssignableTenants`) to
+`"subject must belong to at least one tenant to create objects"`, because
+`Subject.Tenants` was empty.
+
+**Root cause:** `Subject.Tenants` for a JWT-authenticated caller is populated
+from the OPA authz policy's `subject_tenant_result` output
+(`internal/auth/grpc_authz_interceptor.go:buildSubject`), which for non-admin
+JWT subjects resolves to `subject_tenants` —
+`input.auth.identity.organization` (`internal/auth/policies/authz.rego`).
+This is Keycloak's **Organizations** feature (`organizationsEnabled: true`
+in the installer's `realm.json`, with a matching `oidc-organization-
+membership-mapper` client scope). The realm *does* pre-seed a `shared`
+Organization matching OSAC's `shared` tenant convention, but it ships
+**disabled** (`"enabled": false`), and `osac-sp`'s Keycloak client had no
+membership in it regardless. Attempting the "proper" fix — enabling the
+`shared` Organization, adding `osac-sp`'s service-account user
+(`service-account-osac-sp`) as an explicit member, and promoting the
+`organization` client scope from optional to default — did not reliably
+propagate: the client-scope assignment API call returned `204` but a
+follow-up `GET` on the same client showed the assignment hadn't stuck, and
+freshly-minted tokens never carried an `organization` claim despite the
+membership existing server-side. Root cause of *that* sub-issue wasn't
+pursued further (single-replica Keycloak, so not a cache-coherence issue in
+the obvious sense) since a more robust, already-precedented alternative
+existed.
+
+**Decision:** used Keycloak **Groups** instead of Organizations —
+`admin_groups := {"admins"}` is a second, independent `is_admin` predicate in
+the same rego (`subject_groups = input.auth.identity.groups` for JWT
+subjects), and `"groups"` was already a **default** (always-included) client
+scope for `osac-sp`, backed by the standard, reliable `oidc-group-membership-
+mapper` (`full.path: false`, so the claim value is the bare group name
+`admins`, matching the rego's set exactly). An `admins` group already
+existed in the realm (unused). Added `service-account-osac-sp` to it via the
+admin API; the very next minted token carried `"groups": ["admins"]`, and
+the identical `VirtualNetworks/Create` call that previously failed
+immediately succeeded, correctly assigned to `tenant: "shared"` (via
+`DefaultTenancyLogic.DetermineDefaultTenant`'s "admin → universal tenant set
+→ default to `SharedTenant`" path) — consistent with every other
+system-identity object already living in the `shared` tenant in this
+deployment (see DD-077).
+
+A first attempt at a *different* admin-equivalent bypass —
+`fulfillment-service`'s `--emergency-service-accounts` flag/`is_admin`
+predicate (already used for `template-publisher`/`osac-operator` per
+DD-077) — was tried and reverted: that mechanism is hard-coded to prefix
+every configured name with `system:serviceaccount:<namespace>:` (
+`grpc_authz_interceptor.go:AddEmergencyServiceAccounts`), i.e. it only ever
+matches Kubernetes `ServiceAccount` token identities, never a Keycloak JWT
+subject's `username` claim — confirmed by the debug logs still showing
+`"Subject has no tenants"` after adding `service-account-osac-sp` to that
+list and restarting the pod. (The Deployment's `command` array was
+temporarily corrupted mid-edit by an off-by-one `oc patch --type=json`
+index — caught immediately via `CrashLoopBackOff` / `failed to create token
+sealer: signing certificate file is mandatory` and corrected in the same
+patch cycle; no lasting effect.)
+
+**Verification (live):** `VirtualNetworks/Create` and `Subnets/Create`
+(matching `osac-sp`'s exact default-network spec) both succeeded via direct
+`grpcurl` calls using `osac-sp`'s real client-credentials token, tenant
+`shared`, creator `service-account-osac-sp`. The created `Subnet` reached
+`SUBNET_STATE_READY` after AAP's `cudn_net` job ran (CUDN `subnet-dng7w`,
+`NetworkCreated` condition `True`) — real infra, not a mock.
+
+**Related requirements:** none new (environment/IdP configuration, not
+`osac-sp` code) — but worth flagging to whoever owns the `osac-installer`
+Keycloak realm template: the `shared` Organization shipping disabled, with
+no client anywhere actually wired to it, means **no real (non-admin,
+non-emergency-service-account) OIDC client can create OSAC resources
+out of the box** on a fresh install. Either the Organization should ship
+enabled with clear membership-management docs, or the `admins`-group path
+used here should be the documented onboarding step for service-provider
+clients.
+
+---
