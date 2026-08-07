@@ -52,8 +52,8 @@ var _ = Describe("VM Create (integration, real HTTP + router + bufconn OSAC fake
 		req := f.fake.LastCreateCall()
 		obj := req.GetObject()
 		Expect(obj.GetId()).To(Equal("X"))
-		Expect(obj.GetSpec().GetTemplate().GetName()).To(Equal("default-vm"))
-		Expect(obj.GetSpec().GetInstanceType().GetName()).To(Equal("standard-4-16"))
+		Expect(obj.GetSpec().GetTemplate().GetId()).To(Equal("default-vm"))
+		Expect(obj.GetSpec().GetInstanceType().GetId()).To(Equal("standard-4-16"))
 		Expect(obj.GetSpec().GetImage().GetSourceRef()).To(Equal("rhel-9"))
 		Expect(obj.GetSpec().GetBootDisk().GetSizeGib()).To(Equal(int32(100)))
 		Expect(obj.GetMetadata().GetLabels()).To(Equal(map[string]string{

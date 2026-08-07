@@ -57,8 +57,8 @@ var _ = Describe("Service.Create (Topic 4.1 VM Create)", func() {
 		obj := req.GetObject()
 
 		Expect(obj.GetId()).To(Equal("X"))
-		Expect(obj.GetSpec().GetTemplate().GetName()).To(Equal("default-vm"))
-		Expect(obj.GetSpec().GetInstanceType().GetName()).To(Equal("standard-4-16"))
+		Expect(obj.GetSpec().GetTemplate().GetId()).To(Equal("default-vm"))
+		Expect(obj.GetSpec().GetInstanceType().GetId()).To(Equal("standard-4-16"))
 		Expect(obj.GetSpec().GetImage().GetSourceRef()).To(Equal("rhel-9"))
 		Expect(obj.GetSpec().GetBootDisk().GetSizeGib()).To(Equal(int32(100)))
 		Expect(obj.GetMetadata().GetName()).To(Equal("foo"))
