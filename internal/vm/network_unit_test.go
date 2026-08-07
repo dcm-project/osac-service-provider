@@ -32,7 +32,7 @@ var _ = Describe("Default Network Provisioning (Topic 4.5)", func() {
 		Expect(f.subnets.CreateCallCount()).To(Equal(0))
 		attachments := f.fake.LastCreateCall().GetObject().GetSpec().GetNetworkAttachments()
 		Expect(attachments).To(HaveLen(1))
-		Expect(attachments[0].GetSubnet()).To(Equal("subnet-existing"))
+		Expect(attachments[0].GetSubnet().GetId()).To(Equal("subnet-existing"))
 
 		// REQ-VMNET-010: the filter must scope to both ownership labels,
 		// not managed-by alone — otherwise a differently-purposed
@@ -56,12 +56,12 @@ var _ = Describe("Default Network Provisioning (Topic 4.5)", func() {
 
 		vnetReq := f.vnets.LastCreateCall()
 		Expect(vnetReq.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.200.0.0/16"))
-		Expect(vnetReq.GetObject().GetSpec().GetNetworkClass()).To(Equal(""))
+		Expect(vnetReq.GetObject().GetSpec().GetNetworkClass()).To(BeNil())
 		Expect(vnetReq.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("dcm.io/managed-by", "dcm"))
 
 		newVnetID := "vnet-new"
 		subnetReq := f.subnets.LastCreateCall()
-		Expect(subnetReq.GetObject().GetSpec().GetVirtualNetwork()).To(Equal(newVnetID))
+		Expect(subnetReq.GetObject().GetSpec().GetVirtualNetwork().GetId()).To(Equal(newVnetID))
 		Expect(subnetReq.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.200.1.0/24"))
 		Expect(subnetReq.GetObject().GetMetadata().GetAnnotations()).To(HaveKeyWithValue("osac.openshift.io/owner-reference", newVnetID))
 	})

@@ -106,7 +106,7 @@ func (s *Service) provisionDefaultSubnet(ctx context.Context, vnetID string) (st
 				Annotations: map[string]string{ownerReferenceAnnotation: vnetID},
 			},
 			Spec: &publicv1.SubnetSpec{
-				VirtualNetwork: vnetID,
+				VirtualNetwork: &publicv1.VirtualNetworkLocalReference{Id: vnetID},
 				Ipv4Cidr:       util.Ptr(defaultSubnetCIDR),
 			},
 		},
