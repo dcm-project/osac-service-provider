@@ -17,6 +17,12 @@ import (
 // The err branch is unreachable in this milestone's synchronous call sites
 // — kept and tested for Milestone 5's async polling. See SC-M3-001/
 // SC-M3-003 for why.
+//
+// CLUSTER_STATE_UNSPECIFIED (proto3's zero-value) maps to PROGRESSING, not
+// the catch-all FAILED default (DD-129): it is the normal state for a
+// freshly-created Cluster before osac-operator's first reconcile pass, not
+// a genuine anomaly — see VM's identical fix (internal/vm/status.go) for
+// the live evidence this was verified against.
 func MapStatus(err error, status *publicv1.ClusterStatus) v1alpha1.ClusterStatus {
 	if err != nil {
 		switch grpcstatus.Code(err) {
@@ -27,6 +33,10 @@ func MapStatus(err error, status *publicv1.ClusterStatus) v1alpha1.ClusterStatus
 		default:
 			return v1alpha1.ClusterStatusFAILED
 		}
+	}
+
+	if status.GetState() == publicv1.ClusterState_CLUSTER_STATE_UNSPECIFIED {
+		return v1alpha1.ClusterStatusPROGRESSING
 	}
 
 	switch status.GetState() {

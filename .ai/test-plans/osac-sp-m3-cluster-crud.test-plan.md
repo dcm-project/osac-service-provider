@@ -104,7 +104,7 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-240 | Each precedence-rule input maps to its documented value | REQ-STATUS-010, REQ-STATUS-020, AC-STATUS-010 | Table-driven, one row per rule in REQ-STATUS-020: `Unavailable`→`UNAVAILABLE`; `NotFound`→`DELETED`; `state=FAILED`→`FAILED`; `state=DELETING`→`DELETING`; `state=DELETE_FAILED`→`FAILED`; `state=READY` (no conditions)→`ACTIVE`; `state=PROGRESSING`→`PROGRESSING`; `DEGRADED` condition `TRUE` + `state=READY`→`DEGRADED`; `state=UNSPECIFIED`→`FAILED`. Each row asserts the mapper's exact return value. |
+| TC-U-240 | Each precedence-rule input maps to its documented value | REQ-STATUS-010, REQ-STATUS-020, AC-STATUS-010 | Table-driven, one row per rule in REQ-STATUS-020: `Unavailable`→`UNAVAILABLE`; `NotFound`→`DELETED`; `state=UNSPECIFIED`→`PROGRESSING`; `state=FAILED`→`FAILED`; `state=DELETING`→`DELETING`; `state=DELETE_FAILED`→`FAILED`; `state=READY` (no conditions)→`ACTIVE`; `state=PROGRESSING`→`PROGRESSING`; `DEGRADED` condition `TRUE` + `state=READY`→`DEGRADED`. Each row asserts the mapper's exact return value. |
 | TC-U-241 | `FAILED` state takes precedence over a simultaneous `DEGRADED` condition | REQ-STATUS-020, AC-STATUS-020 | Call the mapper with `state=FAILED` **and** a `DEGRADED` condition `TRUE` present together; assert it returns exactly `FAILED`. |
 | TC-U-242 | Connectivity failure (`Unavailable`) is never conflated with a real `NotFound` | REQ-STATUS-020, AC-STATUS-030 | Call the mapper once with a gRPC `Unavailable` outcome and once with `NotFound`; assert the first returns exactly `UNAVAILABLE` and the second exactly `DELETED`. |
 

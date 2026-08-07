@@ -530,3 +530,46 @@ friction; adding `check-aep` to `make check`'s prerequisite list removes the
 
 **Related requirements:** REQ-CREATE-010, REQ-CREATE-060 (DD-110); process
 fix has no REQ-* of its own — it is tooling/workflow, not product behavior.
+
+---
+
+## DD-112: `CLUSTER_STATE_UNSPECIFIED` maps to `PROGRESSING`, not `FAILED`
+
+**Context:** ported from Milestone 4 (PR #14, `internal/vm/status.go`
+DD-129), found while recording the DCM-first demo-journey against real
+infrastructure. Milestone 4's VM mapper showed `FAILED` for several
+seconds immediately after every VM creation, self-correcting to
+`PROVISIONING`/`RUNNING` shortly after; `internal/cluster/status.go` has
+the identical unhandled-default gap for `CLUSTER_STATE_UNSPECIFIED`.
+
+**Root cause:** `REQ-STATUS-020`'s original rule (9) mapped "anything
+else, including `CLUSTER_STATE_UNSPECIFIED`" to `FAILED` as a "defensive
+default," per
+[`service-provider-status-reporting.md#cluster-status`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#cluster-status)'s
+either/or guidance for ambiguous states. This was deliberate and tested
+(`TC-U-240`), but — like VM's identical mapper — written and verified
+only against hand-written fakes, never against a real
+`fulfillment-service`/`osac-operator` pair. `CLUSTER_STATE_UNSPECIFIED`
+is proto3's structural zero-value (`cluster_type.proto`'s own comment:
+"Unspecified indicates that the state is unknown"), and is the normal
+state every `Cluster` briefly holds between creation and
+`osac-operator`'s first reconcile pass — not a genuine anomaly. This
+milestone's Cluster CRUD isn't exercised in the demo directly, but the
+same live-verified reasoning from DD-129 applies identically here.
+
+**Decision:** `REQ-STATUS-020` now maps `CLUSTER_STATE_UNSPECIFIED` →
+`PROGRESSING` (new rule 3, ahead of the `FAILED`/`DELETING`/
+`DELETE_FAILED` checks), matching the "closest active state" half of the
+upstream guidance instead of the `FAILED` half — mirroring
+`CLUSTER_STATE_PROGRESSING`'s own mapping. `internal/cluster/status.go`
+gained an explicit early-return for it. The `default` branch remains,
+now scoped to genuinely future/unmodeled enum values only.
+
+**Upstream gap flagged:** same two issues as DD-129 — filed against
+`osac-project` (proto `*_STATE_UNSPECIFIED` enum comments don't document
+temporal semantics) and `dcm-project/enhancements`
+(`service-provider-status-reporting.md`'s ambiguous-state guidance
+conflates "not yet reported" with "genuinely anomalous" under one
+either/or).
+
+**Related requirements:** `REQ-STATUS-020`, `AC-STATUS-010`.

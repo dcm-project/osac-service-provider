@@ -28,13 +28,17 @@ var _ = Describe("MapStatus (Topic 4.5 Status Mapping)", func() {
 		Entry("gRPC DeadlineExceeded", grpcstatus.Error(codes.DeadlineExceeded, "timed out"), (*publicv1.ClusterStatus)(nil), v1alpha1.ClusterStatusUNAVAILABLE),
 		Entry("gRPC NotFound", grpcstatus.Error(codes.NotFound, "no such cluster"), (*publicv1.ClusterStatus)(nil), v1alpha1.ClusterStatusDELETED),
 		Entry("gRPC PermissionDenied (defensive default for any other error code)", grpcstatus.Error(codes.PermissionDenied, "denied"), (*publicv1.ClusterStatus)(nil), v1alpha1.ClusterStatusFAILED),
+		// UNSPECIFIED (proto3's zero-value) maps to PROGRESSING, not FAILED
+		// (DD-129): it is the normal state for a freshly-created Cluster
+		// before osac-operator's first reconcile pass, not a genuine
+		// anomaly — see VM's identical, live-verified fix.
+		Entry("state=UNSPECIFIED", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_UNSPECIFIED}, v1alpha1.ClusterStatusPROGRESSING),
 		Entry("state=FAILED", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_FAILED}, v1alpha1.ClusterStatusFAILED),
 		Entry("state=DELETING", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_DELETING}, v1alpha1.ClusterStatusDELETING),
 		Entry("state=DELETE_FAILED", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_DELETE_FAILED}, v1alpha1.ClusterStatusFAILED),
 		Entry("state=READY, no conditions", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY}, v1alpha1.ClusterStatusACTIVE),
 		Entry("state=PROGRESSING", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_PROGRESSING}, v1alpha1.ClusterStatusPROGRESSING),
 		Entry("DEGRADED condition TRUE + state=READY", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY, Conditions: degradedTrue}, v1alpha1.ClusterStatusDEGRADED),
-		Entry("state=UNSPECIFIED", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_UNSPECIFIED}, v1alpha1.ClusterStatusFAILED),
 	)
 
 	// TC-U-241 (AC-STATUS-020): FAILED state takes precedence over a
