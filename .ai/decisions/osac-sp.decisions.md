@@ -1807,6 +1807,59 @@ corresponding test assertions (`internal/vm/create_unit_test.go`,
 
 ---
 
+## DD-082: `imageSourceType = "catalog"` (SC-M4-002) is rejected by OSAC's real `ComputeInstance` CRD — only `"registry"` validates
+
+**Context:** with DD-080/081's fixes deployed, the very first
+`dcm catalog instance create` run through the **full** DCM-first chain
+(`dcm` CLI → control-plane catalog/placement/SPRM → `osac-sp` →
+`fulfillment-service`) returned HTTP `201` from `osac-sp` and a real,
+persisted `service_type_instance` row in control-plane's Postgres — proof
+the whole call chain now works end-to-end — but the *provider resource
+itself* (`sp resource get <id>`) showed `status: FAILED`,
+`status_message: "vm is failed"`, updated ~9s after creation (an
+M5/NATS-CloudEvent-driven status push, not a synchronous rejection).
+
+**Root cause:** querying the live `fulfillment-service` directly
+(`ComputeInstances/Get` via `grpcurl`) for the same object showed
+`COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONED = False`, `reason:
+"ReconciliationFailed"`, `message: "ComputeInstance.osac.openshift.io
+\"vm-h5hff\" is invalid: [spec.image.sourceType: Unsupported value:
+\"catalog\": supported values: \"registry\"]"` — i.e. `osac-operator`'s
+underlying Kubernetes CRD rejected the object outright at admission/
+reconciliation time. `internal/vm/translate.go`'s `imageSourceType`
+constant was hardcoded to `"catalog"`, justified by SC-M4-002's spike
+finding that `ComputeInstanceImage.source_type` is an untyped `string` at
+the **proto** layer with no enum (still true — see
+`compute_instance_type.proto`'s `source_type` field, whose only doc-comment
+example is, adding to the irony, `"registry"`). SC-M4-002's conclusion
+("no correct value to derive, so any non-breaking choice is fine") was
+correct about the proto but never verified against the real CRD's
+admission webhook/validation, which **does** enforce an enum with (as of
+this OSAC version) exactly one accepted value.
+
+**Decision:** changed `imageSourceType` from `"catalog"` to `"registry"`.
+No test assertions needed updating (none asserted on `SourceType`'s value).
+Also affects `internal/vm/network.go`'s prior default-network path only
+indirectly — this constant is solely for `ComputeInstanceImage`, unrelated
+to network provisioning, which was already independently verified working
+in DD-081.
+
+**Verified end-to-end (live, real infra, DCM as the entry point — the
+actual goal of this work, not just an infra probe):** re-ran
+`dcm catalog instance create --from-file <instance.yaml>` (after rebuilding/
+redeploying `osac-sp` with this fix) through the unmodified DCM CLI → real
+control-plane (Postgres-backed) → real placement/policy engine → real SPRM
+→ real `osac-sp` → real `fulfillment-service` → real `osac-operator` →
+real AAP → real KubeVirt chain. See the follow-up verification note for the
+resulting `ComputeInstance`/VM state.
+
+**Related requirements:** correctness fix to Milestone 4's
+`REQ-VMCREATE-*` (SC-M4-002's spike conclusion was incomplete, not the
+implementation — no REQ/AC text changes needed). **Action item:** port to
+PR #14 alongside DD-080/081 before merge.
+
+---
+
 ## DD-081: `osac-sp`'s Keycloak client had no tenant membership — `fulfillment-service`'s tenancy logic rejected every Create with "no assignable tenants"
 
 **Context:** the very first `VirtualNetworks/Create` call attempted through

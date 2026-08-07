@@ -17,11 +17,18 @@ const (
 	managedByValue   = "dcm"
 	serviceTypeValue = "vm"
 
-	// imageSourceType is a fixed constant (SC-M4-002):
-	// ComputeInstanceImage.source_type has no enum or server-side
-	// validation, so there is no "correct" value to derive from DCM's
-	// spec.guest_os.type — this is a best-effort, non-breaking choice.
-	imageSourceType = "catalog"
+	// imageSourceType is a fixed constant (SC-M4-002): ComputeInstanceImage.
+	// source_type is an untyped string at the proto layer (no enum), but
+	// OSAC's underlying ComputeInstance CRD does enforce one, and "registry"
+	// is (as of this writing) its only accepted value — confirmed live
+	// against a real fulfillment-service/osac-operator: "catalog" (SC-M4-002's
+	// original choice) reconciled as
+	// COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONED=False/ReconciliationFailed,
+	// "spec.image.sourceType: Unsupported value: \"catalog\": supported
+	// values: \"registry\"". There is still no "correct" value derivable
+	// from DCM's spec.guest_os.type (SC-M4-002's premise), but "registry" is
+	// now a known-working one where "catalog" is a known-broken one.
+	imageSourceType = "registry"
 )
 
 // ownershipLabels returns the three dcm.io/* labels this SP always sets on
