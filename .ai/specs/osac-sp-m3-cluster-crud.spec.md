@@ -394,7 +394,7 @@ function must return exactly one value.
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-STATUS-010 | The status mapper MUST return exactly one of the 7 canonical values listed above for every Create/Get/List call | MUST | DD-090 |
-| REQ-STATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` (OSAC unreachable during polling) → `UNAVAILABLE`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `status.state == CLUSTER_STATE_FAILED` → `FAILED`; (4) `status.state == CLUSTER_STATE_DELETING` → `DELETING`; (5) `status.state == CLUSTER_STATE_DELETE_FAILED` → `FAILED`; (6) any condition with `type == CLUSTER_CONDITION_TYPE_DEGRADED` and `status == CONDITION_STATUS_TRUE` → `DEGRADED`; (7) `status.state == CLUSTER_STATE_READY` → `ACTIVE`; (8) `status.state == CLUSTER_STATE_PROGRESSING` → `PROGRESSING`; (9) anything else (including `CLUSTER_STATE_UNSPECIFIED`) → `FAILED` (defensive default) | MUST | SC-M3-001 (rules 4/5/6 are currently unreachable in practice, kept for forward compatibility) |
+| REQ-STATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` (OSAC unreachable during polling) → `UNAVAILABLE`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `status.state == CLUSTER_STATE_UNSPECIFIED` → `PROGRESSING`; (4) `status.state == CLUSTER_STATE_FAILED` → `FAILED`; (5) `status.state == CLUSTER_STATE_DELETING` → `DELETING`; (6) `status.state == CLUSTER_STATE_DELETE_FAILED` → `FAILED`; (7) any condition with `type == CLUSTER_CONDITION_TYPE_DEGRADED` and `status == CONDITION_STATUS_TRUE` → `DEGRADED`; (8) `status.state == CLUSTER_STATE_READY` → `ACTIVE`; (9) `status.state == CLUSTER_STATE_PROGRESSING` → `PROGRESSING`; (10) anything else (a future, not-yet-modeled enum value) → `FAILED` (defensive default) | MUST | SC-M3-001 (rules 5/6/7 are currently unreachable in practice, kept for forward compatibility); DD-129 — `UNSPECIFIED` is OSAC's proto3 zero-value, the normal state for a fresh Cluster before `osac-operator`'s first reconcile pass, not a genuine anomaly |
 | REQ-STATUS-030 | Create's response `status`, Get's `status`, and each List entry's `status` MUST all be computed by the same mapper implementation (no per-handler duplication) | MUST | |
 
 #### Configuration Introduced
@@ -409,9 +409,9 @@ mapper's exact return value (not "no error") for a specific input.
 ##### AC-STATUS-010: Each individual signal maps to its documented value
 
 - **Validates:** REQ-STATUS-010, REQ-STATUS-020
-- **Given** each of the following inputs, in turn: gRPC `Unavailable`; gRPC `NotFound`; `state=FAILED`; `state=DELETING`; `state=DELETE_FAILED`; `state=READY` with no conditions; `state=PROGRESSING`; a `DEGRADED` condition `TRUE` with `state=READY`; `state=UNSPECIFIED`
+- **Given** each of the following inputs, in turn: gRPC `Unavailable`; gRPC `NotFound`; `state=UNSPECIFIED`; `state=FAILED`; `state=DELETING`; `state=DELETE_FAILED`; `state=READY` with no conditions; `state=PROGRESSING`; a `DEGRADED` condition `TRUE` with `state=READY`
 - **When** the mapper is called with each
-- **Then** it returns exactly `UNAVAILABLE`, `DELETED`, `FAILED`, `DELETING`, `FAILED`, `ACTIVE`, `PROGRESSING`, `DEGRADED`, `FAILED` respectively — one assertion per input, not a single "no panic" check
+- **Then** it returns exactly `UNAVAILABLE`, `DELETED`, `PROGRESSING`, `FAILED`, `DELETING`, `FAILED`, `ACTIVE`, `PROGRESSING`, `DEGRADED` respectively — one assertion per input, not a single "no panic" check
 
 ##### AC-STATUS-020: `FAILED` state takes precedence over a simultaneous `DEGRADED` condition
 
