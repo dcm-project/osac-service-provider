@@ -1772,6 +1772,39 @@ would hit the exact `bad input`-class failure this fixes (masked as an
 opaque `500` to the DCM caller), for ComputeInstance/Subnet/VirtualNetwork
 alike, not just the demo's default-network auto-provisioning path.
 
+**Addendum (found one call-site deeper, during the actual DCM-first demo
+journey):** fixing the wire-format shape above was necessary but not
+sufficient — `translate.go`'s initial fix populated
+`ComputeInstanceTemplateReference{Name: ...}` /
+`InstanceTypeReference{Name: ...}` from
+`spec.ProviderHints.Osac.{TemplateId,InstanceType}`, which was itself wrong:
+those DCM-supplied strings (`osac.templates.ocp_virt_vm`, `demo-small`) are
+OSAC's **`id`** field, not `metadata.name`. Proven against the live server —
+`ComputeInstanceTemplates/List` returned `{"id": "osac.templates.ocp_virt_vm",
+"metadata": {"name": "ocp-virt-vm", ...}}` for the exact template DD-077
+published — `id` and `metadata.name` are two independent, differently-valued
+fields for this resource type (confirmed *not* a coincidental collision by
+checking `InstanceTypes/List` too, where `id`/`metadata.name` happen to be
+equal ("demo-small") — which is exactly why this went undetected by the
+`InstanceType` half of the same bug). Sending `Name:` caused fulfillment-
+service's reference-resolution to correctly, silently fail to find any
+object — `reference validation failed: object.spec.template:
+ComputeInstanceTemplate "osac.templates.ocp_virt_vm" not found` — a 400, not
+the wire-shape 500, so it read at first as "a different, new bug" until
+traced back to the same reference-message change. Fixed by switching both
+fields to `Id:` in the same struct literal (`internal/vm/translate.go`);
+DCM's own field naming (`OSACVMProviderHints.template_id`/`.instance_type`
+in `openapi.yaml` — literally named "_id") was already the semantic hint
+this should have used from the start. Verified directly against the live
+`fulfillment-service` via `grpcurl` (`ComputeInstances/Create` with
+`template: {id: "osac.templates.ocp_virt_vm"}`, `instance_type: {id:
+"demo-small"}`) progressing cleanly past reference resolution into the next,
+unrelated validation stage (`network_attachments` required) — proof the
+fix is correct, independent of redeploying `osac-sp` itself. Updated the 2
+corresponding test assertions (`internal/vm/create_unit_test.go`,
+`internal/handlers/vm/create_integration_test.go`) from `.GetName()` to
+`.GetId()`.
+
 ---
 
 ## DD-081: `osac-sp`'s Keycloak client had no tenant membership — `fulfillment-service`'s tenancy logic rejected every Create with "no assignable tenants"

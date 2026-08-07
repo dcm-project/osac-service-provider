@@ -69,8 +69,15 @@ func toOSACComputeInstance(id string, spec v1alpha1.VMSpec) (*publicv1.ComputeIn
 	}
 
 	osacSpec := &publicv1.ComputeInstanceSpec{
-		Template:        &publicv1.ComputeInstanceTemplateReference{Name: spec.ProviderHints.Osac.TemplateId},
-		InstanceType:    &publicv1.InstanceTypeReference{Name: spec.ProviderHints.Osac.InstanceType},
+		// Reference.Id (not Name): OSAC's own template/instance-type IDs
+		// (e.g. "osac.templates.ocp_virt_vm") are independent of, and
+		// commonly differ from, the object's metadata.name (e.g.
+		// "ocp-virt-vm") — confirmed against a live fulfillment-service
+		// (DD-080 addendum). DCM's own field names (template_id,
+		// instance_type — see OSACVMProviderHints in openapi.yaml) already
+		// signal "id", matching OSAC's id semantics, not its metadata.name.
+		Template:        &publicv1.ComputeInstanceTemplateReference{Id: spec.ProviderHints.Osac.TemplateId},
+		InstanceType:    &publicv1.InstanceTypeReference{Id: spec.ProviderHints.Osac.InstanceType},
 		Image:           &publicv1.ComputeInstanceImage{SourceType: imageSourceType, SourceRef: spec.GuestOs.Type},
 		BootDisk:        bootDisk,
 		AdditionalDisks: additionalDisks,
