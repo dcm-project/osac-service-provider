@@ -614,3 +614,130 @@ calls `internal/grpcerror.Classify` and constructs the operation-specific
 switch statement.
 
 **Related requirements:** REQ-VMERR-010, REQ-VMERR-020, REQ-VMERR-030
+
+---
+
+## DD-127: `ComputeInstance`/`Subnet`/`VirtualNetwork` reference fields must be `Reference` messages populated by `id`, not bare strings or `name`
+
+**Context:** found live, against real infra (`fulfillment-service`
+`v0.0.83`, real `osac-operator`, real AAP), while validating this
+milestone's code end-to-end for a demo recording (see the sibling
+`osac-sp` decisions/exploration around a scratch `scratch/m3-m4-m5-demo`
+branch — not part of this repo's git history on this branch, but the
+source of this fix). Two independent bugs, both in the same call path,
+surfaced back-to-back:
+
+**Bug 1 — wire-format shape.** `internal/vm/{translate,network,service}.go`
+populated `ComputeInstanceSpec.template`/`.instance_type`,
+`SubnetSpec.virtual_network`, and `NetworkAttachment.subnet` with bare Go
+strings. The proto contract for all four fields is actually a `Reference`
+message type (`ComputeInstanceTemplateReference`,
+`InstanceTypeReference`, `VirtualNetworkLocalReference`,
+`SubnetLocalReference`) — confirmed via `grpcurl describe` against a live
+`fulfillment-service` and by diffing this repo's vendored
+`proto/osac/public/v1/*.proto` files against the `fulfillment-service`
+`v0.0.83` tag, which showed this repo's copies were stale relative to
+that tag. Sending a bare string for a message-typed field fails
+`grpcurl`/proto decoding outright; through `osac-sp`'s own generated
+client it instead silently produced a wire payload
+`fulfillment-service` couldn't unmarshal correctly. Fixed by re-vendoring
+`compute_instance_type.proto`, `subnet_type.proto`,
+`virtual_network_type.proto` (plus two newly-required transitive
+dependencies, `instance_type_type.proto` and `security_group_type.proto`)
+from the `fulfillment-service` `v0.0.83` tag, regenerating the Go stubs,
+and wrapping every affected string in its `Reference` type
+(`&publicv1.VirtualNetworkLocalReference{Id: vnetID}` etc.) at the three
+call sites.
+
+**Bug 2 — `Id` vs `Name`.** The initial fix for Bug 1 populated
+`ComputeInstanceTemplateReference{Name: ...}` /
+`InstanceTypeReference{Name: ...}` from
+`spec.ProviderHints.Osac.{TemplateId,InstanceType}`. This is wrong:
+those DCM-supplied strings (e.g. `osac.templates.ocp_virt_vm`,
+`demo-small`) are OSAC's **`id`** field, not `metadata.name` — proven
+against a live server (`ComputeInstanceTemplates/List` returned
+`{"id": "osac.templates.ocp_virt_vm", "metadata": {"name":
+"ocp-virt-vm"}}` — `id` and `metadata.name` differ for this resource
+type; `InstanceTypes/List` happens to have them equal, which is why only
+the template half of this bug was initially visible). Sending `Name:`
+caused fulfillment-service's reference resolution to silently fail to
+find any object (`reference validation failed: object.spec.template:
+ComputeInstanceTemplate "osac.templates.ocp_virt_vm" not found`) — a
+400, not Bug 1's 500, so it read as a distinct issue until traced back to
+the same reference-message change. DCM's own field naming
+(`OSACVMProviderHints.template_id`/`.instance_type` in `openapi.yaml` —
+literally named "_id") was already the semantic hint this should have
+used from the start. Fixed by switching both fields to `Id:` in
+`internal/vm/translate.go`.
+
+**Decision:** `internal/vm/translate.go`, `internal/vm/network.go`, and
+`internal/vm/service.go` now populate `ComputeInstanceSpec.template`/
+`.instance_type` by `Id` (DCM-supplied provider-hint strings are OSAC
+ids, never names), and `SubnetSpec.virtual_network`/
+`NetworkAttachment.subnet` by `Id` (OSAC-assigned ids returned from this
+package's own prior `Create` calls). Updated the corresponding unit/
+integration test assertions (`internal/vm/{network,create}_unit_test.go`,
+`internal/handlers/vm/{create,crosscutting}_integration_test.go`) from
+bare-string/`.GetName()` comparisons to `.GetId()`. No test *behavior*
+changed — only the accessor path each assertion uses.
+
+While diagnosing the live 500 this bug produced, also found and fixed a
+related observability gap: `internal/handlers/vm/error.go`'s 500-class
+error handling replaced the detail message with a generic string
+(correctly, to avoid leaking internals to the caller) but never logged
+the original error anywhere, making it impossible to see the real cause
+from the server side either. Added a `slog.Error` call before masking.
+
+**Verified (live, real infra, not mocked):** direct `grpcurl` calls
+against a live `fulfillment-service` (`ComputeInstances/Create` with
+`template: {id: "osac.templates.ocp_virt_vm"}`, `instance_type: {id:
+"demo-small"}`) progressed cleanly past reference resolution into the
+next, unrelated validation stage (`network_attachments` required) —
+proof the fix is correct independent of `osac-sp` itself. Full suite
+(11 suites, this branch) plus `make lint` pass clean after the fix.
+
+**Related requirements:** none new — this is a correctness fix to this
+milestone's existing `REQ-VMCREATE-*`/`REQ-VMNET-*` implementation, which
+was developed and merged against a proto snapshot that predates
+`fulfillment-service` `v0.0.83`. Every real `ComputeInstance`/`Subnet`/
+`VirtualNetwork` `Create` call through this code, before this fix, hit
+this class of failure (masked as an opaque `500` to the DCM caller).
+
+---
+
+## DD-128: `imageSourceType = "catalog"` (SC-M4-002) is rejected by OSAC's real `ComputeInstance` CRD — only `"registry"` validates
+
+**Context:** found live, immediately after DD-127's fixes, during the same
+end-to-end validation session: a `ComputeInstance` create returned
+`HTTP 201` from `osac-sp` but the underlying provider resource settled
+into `status: FAILED`. Querying the live `fulfillment-service` directly
+(`ComputeInstances/Get` via `grpcurl`) showed
+`COMPUTE_INSTANCE_CONDITION_TYPE_PROVISIONED = False`, `reason:
+"ReconciliationFailed"`, `message: "ComputeInstance.osac.openshift.io
+\"vm-h5hff\" is invalid: [spec.image.sourceType: Unsupported value:
+\"catalog\": supported values: \"registry\"]"` — `osac-operator`'s
+underlying Kubernetes CRD rejected the object outright at admission/
+reconciliation time.
+
+**Root cause:** `internal/vm/translate.go`'s `imageSourceType` constant
+was hardcoded to `"catalog"`, per SC-M4-002's spike finding that
+`ComputeInstanceImage.source_type` is an untyped `string` at the
+**proto** layer with no enum (still true — `compute_instance_type.proto`'s
+`source_type` field has no enum, and its only doc-comment example is,
+adding to the irony, `"registry"`). SC-M4-002's conclusion ("no correct
+value to derive, so any non-breaking choice is fine") was correct about
+the proto but was never verified against the real CRD's admission
+validation, which **does** enforce an enum with (as of this OSAC
+version) exactly one accepted value.
+
+**Decision:** changed `imageSourceType` from `"catalog"` to `"registry"`.
+No test assertions needed updating (none asserted on `SourceType`'s
+value).
+
+**Verified (live, real infra):** re-ran a `ComputeInstance` create (after
+rebuilding/redeploying `osac-sp` with this fix) and confirmed the
+resulting provider resource reconciled past the image-validation stage.
+
+**Related requirements:** correctness fix to this milestone's
+`REQ-VMCREATE-*` (SC-M4-002's spike conclusion was incomplete, not the
+implementation — no REQ/AC text changes needed).
