@@ -21,6 +21,13 @@ import (
 // synchronous call sites — kept and tested for Milestone 5's async
 // polling. See SC-M4-003 for why.
 //
+// COMPUTE_INSTANCE_STATE_UNSPECIFIED (proto3's zero-value) maps to
+// PROVISIONING, not the catch-all FAILED default (DD-129): verified live
+// against a real fulfillment-service/osac-operator, it is the normal state
+// for every ComputeInstance for several seconds between creation and
+// osac-operator's first reconcile pass — not a genuine anomaly. Treating it
+// as FAILED produced a false failure on every single VM creation.
+//
 // The generated constant names are currently bare (v1alpha1.RUNNING, not
 // v1alpha1.VMStatusRUNNING) because oapi-codegen only prefixes enum
 // constants with their type name on a genuine cross-schema collision, and
@@ -42,10 +49,14 @@ func MapStatus(err error, status *publicv1.ComputeInstanceStatus) v1alpha1.VMSta
 	}
 
 	switch status.GetState() {
+	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_UNSPECIFIED:
+		return v1alpha1.PROVISIONING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STARTING:
 		return v1alpha1.PROVISIONING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING:
 		return v1alpha1.RUNNING
+	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_FAILED:
+		return v1alpha1.FAILED
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_DELETING:
 		return v1alpha1.DELETING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STOPPING:

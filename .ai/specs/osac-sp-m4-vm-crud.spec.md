@@ -517,7 +517,7 @@ DELETED`. This is a **separate** vocabulary from Cluster's 7-value one
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-VMSTATUS-010 | The status mapper MUST return exactly one of the 8 canonical values listed above for every Create/Get/List call | MUST | DD-121 |
-| REQ-VMSTATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` → `FAILED`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `state == COMPUTE_INSTANCE_STATE_STARTING` → `PROVISIONING`; (4) `state == COMPUTE_INSTANCE_STATE_RUNNING` → `RUNNING`; (5) `state == COMPUTE_INSTANCE_STATE_FAILED` → `FAILED`; (6) `state == COMPUTE_INSTANCE_STATE_DELETING` → `DELETING`; (7) `state == COMPUTE_INSTANCE_STATE_STOPPING` → `STOPPING`; (8) `state == COMPUTE_INSTANCE_STATE_STOPPED` → `STOPPED`; (9) `state == COMPUTE_INSTANCE_STATE_PAUSED` → `PAUSED`; (10) anything else (including `COMPUTE_INSTANCE_STATE_UNSPECIFIED`) → `FAILED` (defensive default) | MUST | DD-121 — no condition-based step, unlike Cluster's mapper |
+| REQ-VMSTATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` → `FAILED`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `state == COMPUTE_INSTANCE_STATE_UNSPECIFIED` → `PROVISIONING`; (4) `state == COMPUTE_INSTANCE_STATE_STARTING` → `PROVISIONING`; (5) `state == COMPUTE_INSTANCE_STATE_RUNNING` → `RUNNING`; (6) `state == COMPUTE_INSTANCE_STATE_FAILED` → `FAILED`; (7) `state == COMPUTE_INSTANCE_STATE_DELETING` → `DELETING`; (8) `state == COMPUTE_INSTANCE_STATE_STOPPING` → `STOPPING`; (9) `state == COMPUTE_INSTANCE_STATE_STOPPED` → `STOPPED`; (10) `state == COMPUTE_INSTANCE_STATE_PAUSED` → `PAUSED`; (11) anything else (a future, not-yet-modeled enum value) → `FAILED` (defensive default) | MUST | DD-121, DD-129 — `UNSPECIFIED` is OSAC's proto3 zero-value, observed live to be the normal state for ~3-5s between `ComputeInstance` creation and `osac-operator`'s first reconcile pass, not a genuine anomaly; mapping it to `FAILED` produced a false failure on every VM creation |
 | REQ-VMSTATUS-030 | Create's response `status`, Get's `status`, and each List entry's `status` MUST all be computed by the same mapper implementation (no per-handler duplication) | MUST | |
 
 #### Configuration Introduced
@@ -529,9 +529,9 @@ None.
 ##### AC-VMSTATUS-010: Each individual signal maps to its documented value
 
 - **Validates:** REQ-VMSTATUS-010, REQ-VMSTATUS-020
-- **Given** each of the following inputs, in turn: gRPC `Unavailable`; gRPC `NotFound`; `state=STARTING`; `state=RUNNING`; `state=FAILED`; `state=DELETING`; `state=STOPPING`; `state=STOPPED`; `state=PAUSED`; `state=UNSPECIFIED`
+- **Given** each of the following inputs, in turn: gRPC `Unavailable`; gRPC `NotFound`; `state=UNSPECIFIED`; `state=STARTING`; `state=RUNNING`; `state=FAILED`; `state=DELETING`; `state=STOPPING`; `state=STOPPED`; `state=PAUSED`
 - **When** the mapper is called with each
-- **Then** it returns exactly `FAILED`, `DELETED`, `PROVISIONING`, `RUNNING`, `FAILED`, `DELETING`, `STOPPING`, `STOPPED`, `PAUSED`, `FAILED` respectively — one assertion per input
+- **Then** it returns exactly `FAILED`, `DELETED`, `PROVISIONING`, `PROVISIONING`, `RUNNING`, `FAILED`, `DELETING`, `STOPPING`, `STOPPED`, `PAUSED` respectively — one assertion per input
 
 ##### AC-VMSTATUS-020: Connectivity failure and a real 404 are never conflated
 

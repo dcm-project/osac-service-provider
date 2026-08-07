@@ -108,7 +108,7 @@ Identical to Milestone 3's rules — binding, not advisory:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-350 | Each precedence-rule input maps to its documented value | REQ-VMSTATUS-010, REQ-VMSTATUS-020, AC-VMSTATUS-010 | Table-driven, one row per rule: `Unavailable`→`FAILED`; `NotFound`→`DELETED`; `state=STARTING`→`PROVISIONING`; `state=RUNNING`→`RUNNING`; `state=FAILED`→`FAILED`; `state=DELETING`→`DELETING`; `state=STOPPING`→`STOPPING`; `state=STOPPED`→`STOPPED`; `state=PAUSED`→`PAUSED`; `state=UNSPECIFIED`→`FAILED`. Each row asserts the mapper's exact return value. |
+| TC-U-350 | Each precedence-rule input maps to its documented value | REQ-VMSTATUS-010, REQ-VMSTATUS-020, AC-VMSTATUS-010 | Table-driven, one row per rule: `Unavailable`→`FAILED`; `NotFound`→`DELETED`; `state=UNSPECIFIED`→`PROVISIONING`; `state=STARTING`→`PROVISIONING`; `state=RUNNING`→`RUNNING`; `state=FAILED`→`FAILED`; `state=DELETING`→`DELETING`; `state=STOPPING`→`STOPPING`; `state=STOPPED`→`STOPPED`; `state=PAUSED`→`PAUSED`. Each row asserts the mapper's exact return value. |
 | TC-U-351 | Connectivity failure and a real 404 are never conflated | REQ-VMSTATUS-020, AC-VMSTATUS-020 | Call the mapper once with a gRPC `Unavailable` outcome and once with `NotFound`; assert the first returns exactly `FAILED` and the second exactly `DELETED`. |
 
 ---
