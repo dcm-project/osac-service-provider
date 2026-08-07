@@ -51,6 +51,9 @@ func (h *Handler) mapError(err error) mappedError {
 	if status == http.StatusInternalServerError {
 		// Never leak a raw internal/gRPC error string for the catch-all
 		// case, matching apiserver.NewResponseErrorHandler's convention.
+		// Log the raw error server-side first, since it's otherwise
+		// discarded entirely once replaced by the generic detail below.
+		h.logger.Error("internal error handling VM request", "error", err)
 		detail = httperror.InternalDetail
 	}
 	return mappedError{logger: h.logger, status: status, errType: errType, title: title, detail: detail}
