@@ -49,7 +49,7 @@ paths:
         dispatches this with the resource `id` as a query parameter (its
         own generated identifier) and a body containing only `spec`
         (DD-080) — the request body schema is this same `Cluster` resource
-        type (AEP-133-compliant, DD-110), but `spec` is its only field
+        type (AEP-133-compliant, DD-113), but `spec` is its only field
         `control-plane` ever actually populates on the wire; every other
         `Cluster` field is absent from that request and simply unmarshals
         to its zero value, which this handler ignores. Idempotent on `id`:
@@ -65,7 +65,7 @@ paths:
             Caller-assigned resource identifier, set as OSAC's own
             `Cluster.id` (REQ-CREATE-020). Schema-optional per AEP-133 ("a
             create operation must not have any required parameters other
-            than path parameters" — DD-110); REQ-CREATE-010/060 still make
+            than path parameters" — DD-113); REQ-CREATE-010/060 still make
             it a hard runtime requirement, enforced by request validation
             (400 if absent/empty) rather than this field's own `required`
             flag, since control-plane always supplies it and this SP does
@@ -472,7 +472,7 @@ components:
           description: Human-readable message about the current status
         spec:
           description: >-
-            Request-only (DD-110): present when this schema is used as the
+            Request-only (DD-113): present when this schema is used as the
             Create request body (`POST /clusters`'s AEP-133-compliant
             request body, which is this same `Cluster` resource type).
             Never populated in a Get/List response — control-plane's own

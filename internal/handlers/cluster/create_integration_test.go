@@ -85,7 +85,7 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 
 	// TC-I-202 (REQ-CREATE-060, AC-CREATE-040/050): request validation is
 	// enforced at the real HTTP boundary. Both the id query parameter and
-	// the body's spec property are schema-optional (AEP-133, DD-110), so
+	// the body's spec property are schema-optional (AEP-133, DD-113), so
 	// the generated router wrapper accepts a request missing either one —
 	// this package's own validateCreateRequest is the sole enforcement
 	// point for both cases.

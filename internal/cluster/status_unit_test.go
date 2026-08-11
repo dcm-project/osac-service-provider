@@ -29,9 +29,9 @@ var _ = Describe("MapStatus (Topic 4.5 Status Mapping)", func() {
 		Entry("gRPC NotFound", grpcstatus.Error(codes.NotFound, "no such cluster"), (*publicv1.ClusterStatus)(nil), v1alpha1.ClusterStatusDELETED),
 		Entry("gRPC PermissionDenied (defensive default for any other error code)", grpcstatus.Error(codes.PermissionDenied, "denied"), (*publicv1.ClusterStatus)(nil), v1alpha1.ClusterStatusFAILED),
 		// UNSPECIFIED (proto3's zero-value) maps to PROGRESSING, not FAILED
-		// (DD-129): it is the normal state for a freshly-created Cluster
+		// (DD-112): it is the normal state for a freshly-created Cluster
 		// before osac-operator's first reconcile pass, not a genuine
-		// anomaly — see VM's identical, live-verified fix.
+		// anomaly — ported from VM's identical, live-verified fix (DD-129).
 		Entry("state=UNSPECIFIED", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_UNSPECIFIED}, v1alpha1.ClusterStatusPROGRESSING),
 		Entry("state=FAILED", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_FAILED}, v1alpha1.ClusterStatusFAILED),
 		Entry("state=DELETING", nil, &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_DELETING}, v1alpha1.ClusterStatusDELETING),

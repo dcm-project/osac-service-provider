@@ -18,7 +18,7 @@ import (
 
 // validCreateBody is a fully-populated, valid CreateClusterJSONRequestBody
 // satisfying every REQ-CREATE-060 required field. Individual tests mutate a
-// copy to omit exactly one field. Spec is a pointer (DD-110: the body's
+// copy to omit exactly one field. Spec is a pointer (DD-113: the body's
 // "spec" property is schema-optional per AEP-133, even though this SP
 // treats an absent one as a validation failure, not silent success).
 func validCreateBody() v1alpha1.CreateClusterJSONRequestBody {
@@ -45,7 +45,7 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 	})
 
 	// TC-U-205 (REQ-CREATE-060, AC-CREATE-040): a missing id query
-	// parameter (nil — DD-110's AEP-133 fix made this genuinely
+	// parameter (nil — DD-113's AEP-133 fix made this genuinely
 	// representable, since the router no longer rejects it upstream) is
 	// rejected before calling OSAC.
 	It("rejects a wholly-absent id before calling OSAC (TC-U-205)", func() {
@@ -82,7 +82,7 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 	})
 
 	// Supplementary to TC-U-206: a wholly-absent spec (nil — also newly
-	// representable per DD-110) is rejected the same as any other missing
+	// representable per DD-113) is rejected the same as any other missing
 	// required field, not a nil-pointer panic.
 	It("rejects a wholly-absent spec before calling OSAC", func() {
 		req := oapigen.CreateClusterRequestObject{

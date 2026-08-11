@@ -106,7 +106,7 @@ type ClientInterface interface {
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
 	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// type (AEP-133-compliant, DD-113), but `spec` is its only field
 	// `control-plane` ever actually populates on the wire; every other
 	// `Cluster` field is absent from that request and simply unmarshals
 	// to its zero value, which this handler ignores. Idempotent on `id`:
@@ -124,7 +124,7 @@ type ClientInterface interface {
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
 	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// type (AEP-133-compliant, DD-113), but `spec` is its only field
 	// `control-plane` ever actually populates on the wire; every other
 	// `Cluster` field is absent from that request and simply unmarshals
 	// to its zero value, which this handler ignores. Idempotent on `id`:
@@ -204,7 +204,7 @@ func (c *Client) ListClusters(ctx context.Context, params *ListClustersParams, r
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
 // (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// type (AEP-133-compliant, DD-113), but `spec` is its only field
 // `control-plane` ever actually populates on the wire; every other
 // `Cluster` field is absent from that request and simply unmarshals
 // to its zero value, which this handler ignores. Idempotent on `id`:
@@ -232,7 +232,7 @@ func (c *Client) CreateClusterWithBody(ctx context.Context, params *CreateCluste
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
 // (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// type (AEP-133-compliant, DD-113), but `spec` is its only field
 // `control-plane` ever actually populates on the wire; every other
 // `Cluster` field is absent from that request and simply unmarshals
 // to its zero value, which this handler ignores. Idempotent on `id`:
@@ -652,7 +652,7 @@ type ClientWithResponsesInterface interface {
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
 	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// type (AEP-133-compliant, DD-113), but `spec` is its only field
 	// `control-plane` ever actually populates on the wire; every other
 	// `Cluster` field is absent from that request and simply unmarshals
 	// to its zero value, which this handler ignores. Idempotent on `id`:
@@ -670,7 +670,7 @@ type ClientWithResponsesInterface interface {
 	// dispatches this with the resource `id` as a query parameter (its
 	// own generated identifier) and a body containing only `spec`
 	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
+	// type (AEP-133-compliant, DD-113), but `spec` is its only field
 	// `control-plane` ever actually populates on the wire; every other
 	// `Cluster` field is absent from that request and simply unmarshals
 	// to its zero value, which this handler ignores. Idempotent on `id`:
@@ -1135,7 +1135,7 @@ func (c *ClientWithResponses) ListClustersWithResponse(ctx context.Context, para
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
 // (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// type (AEP-133-compliant, DD-113), but `spec` is its only field
 // `control-plane` ever actually populates on the wire; every other
 // `Cluster` field is absent from that request and simply unmarshals
 // to its zero value, which this handler ignores. Idempotent on `id`:
@@ -1159,7 +1159,7 @@ func (c *ClientWithResponses) CreateClusterWithBodyWithResponse(ctx context.Cont
 // dispatches this with the resource `id` as a query parameter (its
 // own generated identifier) and a body containing only `spec`
 // (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
+// type (AEP-133-compliant, DD-113), but `spec` is its only field
 // `control-plane` ever actually populates on the wire; every other
 // `Cluster` field is absent from that request and simply unmarshals
 // to its zero value, which this handler ignores. Idempotent on `id`:

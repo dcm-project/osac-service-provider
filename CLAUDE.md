@@ -54,7 +54,7 @@ make check-generate-api  # Verify generated OpenAPI code is up to date (CI check
 make generate-proto      # Regenerate OSAC gRPC client from proto/ (buf; requires buf CLI)
 make check-generate-proto # Verify generated proto code is up to date (CI check)
 make generate            # generate-api + generate-proto
-make check-aep           # Validate OpenAPI spec against AEP standards (via npx, no local install needed; DD-111)
+make check-aep           # Validate OpenAPI spec against AEP standards (via npx, no local install needed; DD-114)
 ```
 
 ### Running specific tests

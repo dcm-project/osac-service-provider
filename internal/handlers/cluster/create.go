@@ -28,7 +28,7 @@ func (h *Handler) CreateCluster(ctx context.Context, req oapigen.CreateClusterRe
 // returning a synthetic gRPC InvalidArgument error — mapped to 400 by the
 // same shared mapError as any OSAC-originated error (REQ-ERR-030) — before
 // ever dispatching to OSAC. This is the sole enforcement point for "id"/
-// "spec", which are schema-optional per DD-110 (AEP-133).
+// "spec", which are schema-optional per DD-113 (AEP-133).
 func validateCreateRequest(req oapigen.CreateClusterRequestObject) error {
 	switch {
 	case req.Params.Id == nil || *req.Params.Id == "":

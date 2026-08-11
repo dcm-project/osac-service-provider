@@ -19,10 +19,11 @@ import (
 // SC-M3-003 for why.
 //
 // CLUSTER_STATE_UNSPECIFIED (proto3's zero-value) maps to PROGRESSING, not
-// the catch-all FAILED default (DD-129): it is the normal state for a
+// the catch-all FAILED default (DD-112): it is the normal state for a
 // freshly-created Cluster before osac-operator's first reconcile pass, not
-// a genuine anomaly — see VM's identical fix (internal/vm/status.go) for
-// the live evidence this was verified against.
+// a genuine anomaly — ported from VM's identical fix (internal/vm/status.go,
+// DD-129), which is where this was originally live-verified against real
+// infrastructure.
 func MapStatus(err error, status *publicv1.ClusterStatus) v1alpha1.ClusterStatus {
 	if err != nil {
 		switch grpcstatus.Code(err) {

@@ -477,7 +477,11 @@ than an assumed one.
 
 **Related requirements:** REQ-CREATE-040
 
-## DD-110: `POST /clusters` is schema-optional on `id` and its body is the `Cluster` resource itself, to satisfy AEP-133
+## DD-113: `POST /clusters` is schema-optional on `id` and its body is the `Cluster` resource itself, to satisfy AEP-133
+
+> Renumbered from this branch's original DD-110 — [#12](https://github.com/dcm-project/osac-service-provider/pull/12)
+> claimed DD-110 for the (unrelated) node-set-key-resolution decision while
+> this branch was in flight; see `proto/README.md`.
 
 **Decision:** The `id` query parameter on `POST /api/v1alpha1/clusters` is
 `required: false` in the OpenAPI schema, and the request body schema is
@@ -511,7 +515,10 @@ always supplies one.
 
 ---
 
-## DD-111: `check-aep` is now part of `make check`, invoked via `npx` instead of requiring a global `spectral` install
+## DD-114: `check-aep` is now part of `make check`, invoked via `npx` instead of requiring a global `spectral` install
+
+> Renumbered from this branch's original DD-111 for the same reason as
+> DD-113 above.
 
 **Decision:** `make check`'s prerequisite list is now `fmt vet lint check-aep
 test` (previously omitted `check-aep`), and the `check-aep` target itself now
@@ -528,12 +535,17 @@ this was a dormant gap, not a regression. `npx` removes the missing-binary
 friction; adding `check-aep` to `make check`'s prerequisite list removes the
 "forgot to run the separate target" failure mode.
 
-**Related requirements:** REQ-CREATE-010, REQ-CREATE-060 (DD-110); process
+**Related requirements:** REQ-CREATE-010, REQ-CREATE-060 (DD-113); process
 fix has no REQ-* of its own — it is tooling/workflow, not product behavior.
 
 ---
 
 ## DD-112: `CLUSTER_STATE_UNSPECIFIED` maps to `PROGRESSING`, not `FAILED`
+
+> [#12](https://github.com/dcm-project/osac-service-provider/pull/12) landed
+> the identical decision under the same number (DD-112) in the M3 baseline
+> spec, since this branch predates that fix — no renumbering needed here,
+> they'll converge on rebase.
 
 **Context:** ported from Milestone 4 (PR #14, `internal/vm/status.go`
 DD-129), found while recording the DCM-first demo-journey against real
