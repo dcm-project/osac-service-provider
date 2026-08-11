@@ -71,8 +71,9 @@ done, regardless of coverage percentage:
 | TC-U-204 | Version translation table covers each supported placeholder version | REQ-CREATE-025 | Table-driven over the placeholder version table (spec §4.1); also asserts an explicit `provider_hints.osac.release_image` override is used verbatim instead of the table lookup. No dedicated AC — covered by AC-CREATE-010's general translation assertion. |
 | TC-U-205 | Missing `id` query parameter is rejected before calling OSAC | REQ-CREATE-060, AC-CREATE-040 | Exercises AC-CREATE-040 at the `StrictServerInterface` handler layer (no OSAC call reached). |
 | TC-U-206 | Missing required spec field is rejected before calling OSAC | REQ-CREATE-060, AC-CREATE-050 | Exercises AC-CREATE-050 at the handler layer. |
-| TC-U-207 | Multi-node-set template is rejected before calling `Clusters/Create` | REQ-CREATE-090, AC-CREATE-070 | Exercises AC-CREATE-070 via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning two node-set keys; asserts `Clusters/Create` is never called. |
-| TC-U-208 | Invalid `template_id` maps `ClusterTemplates/Get`'s `NotFound` to 404 | REQ-CREATE-080, REQ-ERR-010, AC-CREATE-080 | Exercises AC-CREATE-080 via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning `NotFound`; asserts `Clusters/Create` is never called. |
+| TC-U-207 | Multi-node-set template is rejected before calling `Clusters/Create` | REQ-CREATE-090, AC-CREATE-070 | Exercises AC-CREATE-070's multi-key case via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning two node-set keys; asserts `Clusters/Create` is never called. |
+| TC-U-208 | Unknown `template_id` maps `ClusterTemplates/Get`'s `NotFound` to 400, not 404 | REQ-CREATE-100, REQ-ERR-010, AC-CREATE-080 | Exercises AC-CREATE-080 via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning `NotFound`; asserts `Clusters/Create` is never called. |
+| TC-U-209 | Zero-node-set template is rejected before calling `Clusters/Create` | REQ-CREATE-090, AC-CREATE-070 | Exercises AC-CREATE-070's zero-key case via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning an empty `node_sets` map; asserts `Clusters/Create` is never called. |
 
 ---
 
@@ -110,7 +111,7 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-240 | Each precedence-rule input maps to its documented value | REQ-STATUS-010, REQ-STATUS-020, AC-STATUS-010 | Exercises AC-STATUS-010, table-driven over all 9 REQ-STATUS-020 rules, calling the mapper directly (pure unit, no bufconn needed). Rules 1/2 (`Unavailable`/`NotFound`) and 4/5 (`DELETING`/`DELETE_FAILED`) are unit-only by design — see SC-M3-003/SC-M3-001. |
+| TC-U-240 | Each precedence-rule input maps to its documented value | REQ-STATUS-010, REQ-STATUS-020, AC-STATUS-010 | Exercises AC-STATUS-010, table-driven over all 10 REQ-STATUS-020 rules, calling the mapper directly (pure unit, no bufconn needed). Rules 1/2 (`Unavailable`/`NotFound`) and 5/6 (`DELETING`/`DELETE_FAILED`) are unit-only by design — see SC-M3-003/SC-M3-001. |
 | TC-U-241 | `FAILED` state takes precedence over a simultaneous `DEGRADED` condition | REQ-STATUS-020, AC-STATUS-020 | Exercises AC-STATUS-020 by calling the mapper directly with both signals present. |
 | TC-U-242 | Connectivity failure (`Unavailable`) is never conflated with a real `NotFound` | REQ-STATUS-020, AC-STATUS-030 | Exercises AC-STATUS-030 by calling the mapper directly for each outcome. Per SC-M3-003, this rule has no `TC-I` counterpart in M3 by design — REQ-GET-040/REQ-ERR-010 resolve both outcomes as sync HTTP errors before the mapper runs. |
 
@@ -134,7 +135,7 @@ done, regardless of coverage percentage:
 | TC-I-202 | Request validation is enforced at the real HTTP boundary | REQ-CREATE-060, AC-CREATE-040, AC-CREATE-050 | Real-HTTP counterpart of TC-U-205/206. |
 | TC-I-203 | Host-sizing hints are not forwarded as a `host_type` override, over real HTTP | REQ-CREATE-070, AC-CREATE-060 | Real-HTTP counterpart of TC-U-203. |
 | TC-I-204 | Multi-node-set template is rejected over real HTTP | REQ-CREATE-090, AC-CREATE-070 | Real-HTTP counterpart of TC-U-207. |
-| TC-I-205 | Invalid `template_id` returns 404 over real HTTP | REQ-CREATE-080, REQ-ERR-010, AC-CREATE-080 | Real-HTTP counterpart of TC-U-208. |
+| TC-I-205 | Unknown `template_id` returns 400, not 404, over real HTTP | REQ-CREATE-100, REQ-ERR-010, AC-CREATE-080 | Real-HTTP counterpart of TC-U-208. |
 
 ---
 
@@ -191,10 +192,10 @@ CRUD happy-path test would incidentally prove.
 
 | Spec Section | REQ Count | AC Count | TC-U (this file) | TC-I (this file) | Pyramid complete? |
 |---|---|---|---|---|---|
-| 4.1 Cluster Create | 9 | 8 | 9 (TC-U-200..208) | 6 (TC-I-200..205) | Yes — every AC has both tiers; AC-CREATE-030 covered by TC-U-202 (unit) + TC-I-201 (2 real sequential HTTP requests, per rule 3) |
+| 4.1 Cluster Create | 10 | 8 | 10 (TC-U-200..209) | 6 (TC-I-200..205) | Yes — every AC has both tiers; AC-CREATE-030 covered by TC-U-202 (unit) + TC-I-201 (2 real sequential HTTP requests, per rule 3); AC-CREATE-070's zero-key case (TC-U-209) is unit-only, same tier-split rationale as its multi-key case |
 | 4.2 Cluster Get | 4 | 3 | 3 (TC-U-210..212) | 3 (TC-I-210..212) | Yes |
 | 4.3 Cluster List | 4 | 3 | 3 (TC-U-220..222) | 3 (TC-I-220..222) | Yes |
 | 4.4 Cluster Delete | 4 | 3 | 3 (TC-U-230..232) | 3 (TC-I-230..232) | Yes — AC-DELETE-020 covered by TC-U-231 (unit) + TC-I-231 (2 real sequential HTTP requests, per rule 3) |
-| 4.5 Status Mapping | 3 | 3 | 3 (TC-U-240..242) | 1 dedicated (TC-I-240) + incidentally via TC-I-210/211/220 | Yes — AC-STATUS-020 has both tiers (TC-U-241 + TC-I-240); AC-STATUS-010's rules 1/2/4/5 and all of AC-STATUS-030 are unit-only by design, not an incomplete pyramid (SC-M3-001/SC-M3-003 — those gRPC outcomes are resolved as sync HTTP errors before the mapper runs in M3) |
+| 4.5 Status Mapping | 3 | 3 | 3 (TC-U-240..242) | 1 dedicated (TC-I-240) + incidentally via TC-I-210/211/220 | Yes — AC-STATUS-020 has both tiers (TC-U-241 + TC-I-240); AC-STATUS-010's rules 1/2/5/6 and all of AC-STATUS-030 are unit-only by design, not an incomplete pyramid (SC-M3-001/SC-M3-003 — those gRPC outcomes are resolved as sync HTTP errors before the mapper runs in M3) |
 | 4.6 Error Mapping | 3 | 2 | 2 (TC-U-250..251) | 1 dedicated (TC-I-250) + incidentally via TC-I-202/212/232 | Yes |
-| **Total** | **27** | **22** | **23** | **17** | |
+| **Total** | **28** | **22** | **24** | **17** | |

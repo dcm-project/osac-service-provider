@@ -508,3 +508,62 @@ the already-vendored `Clusters` service (M3 spec §1) — `internal/cluster`'s
 Create path now depends on two OSAC clients, not one.
 
 **Related requirements:** REQ-CREATE-080, REQ-CREATE-090
+
+---
+
+## DD-111: Unknown `template_id` maps to `400 Bad Request` (`InvalidArgument`), not `404`
+
+**Decision:** When `ClusterTemplates/Get(template_id)` returns gRPC
+`NotFound`, the SP returns `400 Bad Request` — not `404` — without calling
+`Clusters/Create`.
+
+**Rationale:** `template_id` is a value the caller supplied inside the
+request body, not a path-addressed resource the caller is directly
+operating on. `REQ-CREATE-060` already treats an absent/empty `template_id`
+as a `400`-worthy request-validation failure; treating a *present but
+nonexistent* `template_id` as a `404` instead would be an inconsistent split
+of the same underlying problem (a bad value in the caller's own request)
+across two different HTTP semantics depending on whether the value is empty
+or merely wrong. `404` stays reserved for `GET`/`DELETE` operating directly
+on a `Cluster` resource by its own `id` (REQ-GET-040), where the missing
+resource *is* the thing being addressed.
+
+**Related requirements:** REQ-CREATE-100
+
+---
+
+## DD-112: `CLUSTER_STATE_UNSPECIFIED` maps to `PROGRESSING`, not `FAILED`
+
+**Context:** ported forward from Milestone 4 (`internal/vm/status.go`,
+DD-129), found while recording the DCM-first demo-journey against real
+infrastructure. Milestone 4's VM mapper showed `FAILED` for several seconds
+immediately after every VM creation, self-correcting to
+`PROVISIONING`/`RUNNING` shortly after; this milestone's Cluster mapper has
+the identical unhandled-default gap for `CLUSTER_STATE_UNSPECIFIED`.
+
+**Root cause:** `REQ-STATUS-020`'s original rule mapped "anything else,
+including `CLUSTER_STATE_UNSPECIFIED`" to `FAILED` as a "defensive
+default," per
+[`service-provider-status-reporting.md#cluster-status`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#cluster-status)'s
+either/or guidance for ambiguous states. `CLUSTER_STATE_UNSPECIFIED` is
+proto3's structural zero-value (`cluster_type.proto`'s own comment:
+"Unspecified indicates that the state is unknown"), and is the normal state
+every `Cluster` briefly holds between creation and `osac-operator`'s first
+reconcile pass — not a genuine anomaly. This milestone's Cluster CRUD isn't
+exercised in the demo directly, but the same live-verified reasoning from
+DD-129 applies identically here.
+
+**Decision:** `REQ-STATUS-020` maps `CLUSTER_STATE_UNSPECIFIED` →
+`PROGRESSING` (rule 3, ahead of the `FAILED`/`DELETING`/`DELETE_FAILED`
+checks), matching the "closest active state" half of the upstream guidance
+instead of the `FAILED` half — mirroring `CLUSTER_STATE_PROGRESSING`'s own
+mapping. The mapper's `default` branch remains, now scoped to genuinely
+future/unmodeled enum values only.
+
+**Upstream gap flagged:** same two issues as DD-129 — filed against
+`osac-project` (proto `*_STATE_UNSPECIFIED` enum comments don't document
+temporal semantics) and `dcm-project/enhancements`
+(`service-provider-status-reporting.md`'s ambiguous-state guidance conflates
+"not yet reported" with "genuinely anomalous" under one either/or).
+
+**Related requirements:** REQ-STATUS-020

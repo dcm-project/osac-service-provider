@@ -27,8 +27,8 @@ confirmed scoping:
   concern (SC-001 originally noted "no cluster-create endpoint consumes it
   yet" — this milestone resolves that premise; see §4.1's translation table
   for the placeholder this milestone uses in its place).
-- Templates whose `node_sets` map defines more than one key — rejected with
-  `400` (REQ-CREATE-090); sizing a multi-node-set template needs a new
+- Templates whose `node_sets` map doesn't define exactly one key — rejected
+  with `400` (REQ-CREATE-090); sizing a multi-node-set template needs a new
   provider hint the enhancement doc doesn't define yet (SC-M3-004, DD-110).
 
 **Reference documents:**
@@ -86,6 +86,7 @@ control-plane (synchronous, direct REST — DD-080)
 |         |                                                     |
 |         v                                                     |
 |   publicv1.NewClustersClient(bootstrap.Conn())  <-- M2        |
+|   publicv1.NewClusterTemplatesClient(bootstrap.Conn())        |
 +--------------------------------------------------------------+
         |
         v
@@ -162,7 +163,8 @@ follows the [generic Cluster schema](https://github.com/dcm-project/enhancements
 | REQ-CREATE-060 | A request missing the `id` query parameter, or whose body fails required-field validation (`spec.version`, `spec.nodes.worker.count`, `spec.metadata.name`, or `spec.provider_hints.osac.template_id` absent/empty), MUST return `400 Bad Request` via the shared error-mapping topic (§4.6) without calling OSAC | MUST | |
 | REQ-CREATE-070 | The SP MUST NOT compute or send a `host_type` derived from `spec.nodes.worker.cpu`/`memory`/`storage` — those fields MUST be treated as informational only, with no corresponding OSAC field set from them | MUST | Node Sizing resolution |
 | REQ-CREATE-080 | Before dispatching `Clusters/Create`, the SP MUST call `ClusterTemplates/Get(template_id)` and use the returned `node_sets` map's key — never `template_id` itself, never a DCM-chosen name — to construct `spec.node_sets[key].size` from `nodes.worker.count` | MUST | DD-110 |
-| REQ-CREATE-090 | If `ClusterTemplates/Get(template_id)`'s `node_sets` map has more than one key, the SP MUST reject the request with `400 Bad Request` via the shared error-mapping topic (§4.6), without calling `Clusters/Create` — multi-node-set templates are out of scope for this milestone's single `nodes.worker.count` sizing dimension | MUST | DD-110 |
+| REQ-CREATE-090 | If `ClusterTemplates/Get(template_id)`'s `node_sets` map does not contain exactly one key (zero, or more than one), the SP MUST reject the request with `400 Bad Request` via the shared error-mapping topic (§4.6), without calling `Clusters/Create` — multi-node-set (and node-set-less) templates are out of scope for this milestone's single `nodes.worker.count` sizing dimension | MUST | DD-110 |
+| REQ-CREATE-100 | If `ClusterTemplates/Get(template_id)` returns gRPC `NotFound` (an unknown `template_id`), the SP MUST reject the request with `400 Bad Request` (`InvalidArgument`) via the shared error-mapping topic (§4.6), **not** `404` — an unresolvable value inside the caller's own request body is a request-validation failure (the same category as REQ-CREATE-060), not evidence of a missing SP-managed resource | MUST | DD-111 |
 
 #### Configuration Introduced
 
@@ -213,19 +215,19 @@ None — reuses Milestone 2's `Bootstrap.Conn()` (now also backing a
 - **When** processed
 - **Then** the fake's recorded `Clusters/Create` call's `node_sets[key].host_type` field is the empty string (the SP never sets it — OSAC's template fills it server-side)
 
-##### AC-CREATE-070: Multi-node-set templates are rejected without calling OSAC's Create
+##### AC-CREATE-070: Templates without exactly one node-set key are rejected without calling OSAC's Create
 
 - **Validates:** REQ-CREATE-090
-- **Given** a Create request referencing `template_id="multi-nodeset-template"`, and a fake `ClusterTemplatesServer` whose `Get("multi-nodeset-template")` returns `node_sets={"compute":{},"gpu":{}}` (two keys)
-- **When** processed
-- **Then** the response is `400 Bad Request` (RFC 9457, `type` exactly `.../invalid-argument`) and the fake OSAC server recorded **zero** `Clusters/Create` calls
+- **Given** two cases: (a) `template_id="multi-nodeset-template"` whose fake `ClusterTemplatesServer.Get` returns `node_sets={"compute":{},"gpu":{}}` (two keys); (b) `template_id="empty-nodeset-template"` whose `Get` returns `node_sets={}` (zero keys)
+- **When** each is processed
+- **Then** both responses are `400 Bad Request` (RFC 9457, `type` exactly `.../invalid-argument`) and the fake OSAC server recorded **zero** `Clusters/Create` calls in either case
 
-##### AC-CREATE-080: An invalid `template_id` surfaces as 404, not swallowed or silently defaulted
+##### AC-CREATE-080: An unknown `template_id` surfaces as 400 (InvalidArgument), not swallowed, not 404
 
-- **Validates:** REQ-CREATE-080, REQ-ERR-010
+- **Validates:** REQ-CREATE-100, REQ-ERR-010
 - **Given** a Create request referencing `template_id="nonexistent"`, and a fake `ClusterTemplatesServer` whose `Get("nonexistent")` returns gRPC `NotFound`
 - **When** processed
-- **Then** the response is `404 Not Found` (RFC 9457, `type` exactly `.../not-found`) and the fake OSAC server recorded **zero** `Clusters/Create` calls
+- **Then** the response is `400 Bad Request` (RFC 9457, `type` exactly `.../invalid-argument`) — not `404` — and the fake OSAC server recorded **zero** `Clusters/Create` calls
 
 #### Dependencies
 
@@ -421,7 +423,7 @@ see SC-M3-003.
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-STATUS-010 | The status mapper MUST return exactly one of the 7 canonical values listed above for every Create/Get/List call | MUST | DD-090 |
-| REQ-STATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` (OSAC unreachable during polling) → `UNAVAILABLE`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `status.state == CLUSTER_STATE_FAILED` → `FAILED`; (4) `status.state == CLUSTER_STATE_DELETING` → `DELETING`; (5) `status.state == CLUSTER_STATE_DELETE_FAILED` → `FAILED`; (6) any condition with `type == CLUSTER_CONDITION_TYPE_DEGRADED` and `status == CONDITION_STATUS_TRUE` → `DEGRADED`; (7) `status.state == CLUSTER_STATE_READY` → `ACTIVE`; (8) `status.state == CLUSTER_STATE_PROGRESSING` → `PROGRESSING`; (9) anything else (including `CLUSTER_STATE_UNSPECIFIED`) → `FAILED` (defensive default) | MUST | SC-M3-001 (rules 4/5/6 unreachable in practice, kept for forward compatibility); SC-M3-003 (rules 1/2 are reachable only via the future M5 async polling path — REQ-GET-040/REQ-ERR-010 already intercept these same gRPC outcomes as sync HTTP errors) |
+| REQ-STATUS-020 | The mapper MUST apply this precedence, in order, stopping at the first match: (1) the gRPC call itself failed with `Unavailable`/`DeadlineExceeded` (OSAC unreachable during polling) → `UNAVAILABLE`; (2) the gRPC call returned `NotFound` → `DELETED`; (3) `status.state == CLUSTER_STATE_UNSPECIFIED` → `PROGRESSING`; (4) `status.state == CLUSTER_STATE_FAILED` → `FAILED`; (5) `status.state == CLUSTER_STATE_DELETING` → `DELETING`; (6) `status.state == CLUSTER_STATE_DELETE_FAILED` → `FAILED`; (7) any condition with `type == CLUSTER_CONDITION_TYPE_DEGRADED` and `status == CONDITION_STATUS_TRUE` → `DEGRADED`; (8) `status.state == CLUSTER_STATE_READY` → `ACTIVE`; (9) `status.state == CLUSTER_STATE_PROGRESSING` → `PROGRESSING`; (10) anything else (a future, not-yet-modeled enum value) → `FAILED` (defensive default) | MUST | SC-M3-001 (rules 5/6/7 unreachable in practice, kept for forward compatibility); SC-M3-003 (rules 1/2 are reachable only via the future M5 async polling path — REQ-GET-040/REQ-ERR-010 already intercept these same gRPC outcomes as sync HTTP errors); DD-112 (rule 3 — `UNSPECIFIED` is OSAC's proto3 zero-value, the normal state for a fresh Cluster before `osac-operator`'s first reconcile pass, not a genuine anomaly) |
 | REQ-STATUS-030 | Create's response `status`, Get's `status`, and each List entry's `status` MUST all be computed by the same mapper implementation (no per-handler duplication) | MUST | |
 
 #### Configuration Introduced
@@ -436,9 +438,9 @@ mapper's exact return value (not "no error") for a specific input.
 ##### AC-STATUS-010: Each individual signal maps to its documented value
 
 - **Validates:** REQ-STATUS-010, REQ-STATUS-020
-- **Given** each of the following inputs, in turn: gRPC `Unavailable`; gRPC `NotFound`; `state=FAILED`; `state=DELETING`; `state=DELETE_FAILED`; `state=READY` with no conditions; `state=PROGRESSING`; a `DEGRADED` condition `TRUE` with `state=READY`; `state=UNSPECIFIED`
+- **Given** each of the following inputs, in turn: gRPC `Unavailable`; gRPC `NotFound`; `state=UNSPECIFIED`; `state=FAILED`; `state=DELETING`; `state=DELETE_FAILED`; `state=READY` with no conditions; `state=PROGRESSING`; a `DEGRADED` condition `TRUE` with `state=READY`
 - **When** the mapper is called with each
-- **Then** it returns exactly `UNAVAILABLE`, `DELETED`, `FAILED`, `DELETING`, `FAILED`, `ACTIVE`, `PROGRESSING`, `DEGRADED`, `FAILED` respectively (one assertion per input)
+- **Then** it returns exactly `UNAVAILABLE`, `DELETED`, `PROGRESSING`, `FAILED`, `DELETING`, `FAILED`, `ACTIVE`, `PROGRESSING`, `DEGRADED` respectively (one assertion per input)
 
 ##### AC-STATUS-020: `FAILED` state takes precedence over a simultaneous `DEGRADED` condition
 
@@ -616,7 +618,7 @@ the same treatment SC-M3-001 already gives `DELETING`/`DELETE_FAILED`.
 
 ### SC-M3-004: `node_sets` keys are per-template, not `template_id` — and this milestone only supports single-node-set templates
 
-**Related requirements:** REQ-CREATE-080, REQ-CREATE-090
+**Related requirements:** REQ-CREATE-080, REQ-CREATE-090, REQ-CREATE-100
 
 The Field Mapping table originally assumed `spec.node_sets[key]`'s `key`
 equals `provider_hints.osac.template_id`. Direct verification against
@@ -640,9 +642,12 @@ whichever discrete host types the provisioned OSAC templates expose,
 implying DCM catalog admins are expected to select single-worker-node-set
 templates. Per DD-110, this milestone enforces that assumption rather than
 guessing: the SP resolves the node-set key via `ClusterTemplates/Get` and
-rejects (`400`) any template whose `node_sets` map has more than one key.
-Multi-node-set templates require an enhancement-doc change (a new provider
-hint) to size correctly — out of scope here.
+rejects (`400`) any template whose `node_sets` map doesn't have exactly one
+key. Multi-node-set templates require an enhancement-doc change (a new
+provider hint) to size correctly — out of scope here. A `template_id` that
+doesn't resolve at all (`ClusterTemplates/Get` returns `NotFound`) is a
+related but separate failure mode, also `400` rather than `404` — see
+DD-111.
 
 ---
 
@@ -650,10 +655,10 @@ hint) to size correctly — out of scope here.
 
 | Prefix | Topic | Count |
 |--------|-------|-------|
-| REQ-CREATE-NNN | 4.1: Cluster Create | 9 |
+| REQ-CREATE-NNN | 4.1: Cluster Create | 10 |
 | REQ-GET-NNN | 4.2: Cluster Get | 4 |
 | REQ-LIST-NNN | 4.3: Cluster List | 4 |
 | REQ-DELETE-NNN | 4.4: Cluster Delete | 4 |
 | REQ-STATUS-NNN | 4.5: Status Mapping | 3 |
 | REQ-ERR-NNN | 4.6: Error Mapping | 3 |
-| **Total** | | **27** |
+| **Total** | | **28** |
