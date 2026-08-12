@@ -154,15 +154,16 @@ Generated files (do not edit manually):
 .ai/
 ├── specs/              # Specifications with REQ-* and AC-* (git-tracked)
 ├── test-plans/         # Test plans with TC-* IDs (git-tracked)
-├── decisions/          # Trust-boundary and design decision logs (local only)
+├── decisions/          # Design decision logs, referenced as DD-* (git-tracked)
 ├── plans/              # Implementation plans (local only)
 ├── checkpoints/        # Session state snapshots (local only)
 ├── exploration/        # Codebase analysis and research (local only)
 └── reviews/            # Code review findings (local only)
 ```
 
-Only `specs/` and `test-plans/` are committed to git. All other subdirectories
-are gitignored and remain local.
+Only `specs/`, `test-plans/`, and `decisions/` are committed to git (see
+`.gitignore`'s `.ai/*` rule and its three explicit un-ignores). The other four
+subdirectories are gitignored and remain local.
 
 **Gate enforcement**: spec (REQ + AC) must be complete before test plan (TC);
 test plan must be complete before implementation.
