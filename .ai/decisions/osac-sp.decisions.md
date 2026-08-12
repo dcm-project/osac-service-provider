@@ -856,3 +856,68 @@ This is exactly the class of gap this M3/M4 e2e validation work exists to
 catch before it reaches a real deployment.
 
 **Related requirements:** REQ-MOCK-120, REQ-GET-020 (M3)
+
+---
+
+# Milestone 5 (Status Reporting) — pre-resolved recommendations
+
+**Status: proposed, not yet ratified.** Milestone 5 has not started — no
+spec exists yet, and per this repo's own spec-first/test-plan-first gate, no
+`REQ-*`/`AC-*` or `TC-*` exist for it either. The two entries below
+(`DD-200`–`DD-201`) are numbered in a block well clear of Milestone 3's
+(`DD-080`..`DD-111`, on `feat/milestone-3-cluster-crud`, unmerged as of this
+writing) and Milestone 4's (`DD-080`..`DD-086`, on
+`feat/milestone-4-vm-crud`, unmerged as of this writing) independently-
+numbered, not-yet-merged decisions, specifically to avoid a numbering
+collision when those two branches eventually land. **Renumber into the
+normal sequence (and drop "proposed" framing) once M5's spec formally
+starts** — these are not a substitute for that gate.
+
+Two further research findings (dependency versions to pin, and a
+contract-test gap for the CloudEvents `data` payload) came out of the same
+research pass but are implementation guidance, not durable architectural
+decisions — they live in `.ai/exploration/m5-status-reporting-research.md`
+(local-only) instead, for whoever writes M5's actual spec to verify against
+current reality at that time.
+
+## DD-200: NATS broker URL env var — recommend `DCM_NATS_URL`, not `SP_NATS_URL`
+
+**Decision (proposed):** name the NATS broker URL config field
+`DCM_NATS_URL` (a new field on the existing `DCMConfig` struct in
+`internal/config/config.go`), not `SP_NATS_URL`.
+
+**Rationale:** the two sibling SPs that already publish status disagree
+with each other — `acm-cluster-service-provider` uses `SP_NATS_URL`,
+`kubevirt-service-provider` uses bare `NATS_URL` — so this repo's own
+established rule for `DCMConfig` ("match the sibling convention already
+used for this backend," per `DCMConfig`'s doc comment and DD-050) doesn't
+resolve cleanly by nose-count. Breaking the tie on that rule's underlying
+*principle* instead: `DCMConfig` uses the unprefixed `DCM_` specifically
+because `REGISTRATION_URL` names a DCM-wide, not-provider-specific backend
+endpoint — every SP and `control-plane` must agree on the same URL. The
+NATS broker is structurally identical (one shared, DCM-operated instance),
+so it belongs on `DCMConfig` under the same reasoning, not on the
+provider-specific `SP_` prefix.
+
+**Related requirements:** none yet — M5 not started.
+
+---
+
+## DD-201: NATS publish transport — recommend JetStream (`js.Publish`), not core (`nc.Publish`)
+
+**Decision (proposed):** publish status events via the JetStream API
+(`js.Publish`), not plain core NATS (`nc.Publish`).
+
+**Rationale:** `js.Publish` fails loudly (a retryable error) if the target
+stream isn't ready yet; `nc.Publish` silently drops the message with no
+error in that same case. This repo already has an established, documented
+resilience convention for exactly this class of "dependency not ready yet"
+condition (per the "Non-blocking bootstrap" and "Independent registration
+loops" patterns in `CLAUDE.md`: the OIDC token loop, gRPC dial, and both
+registration loops all retry indefinitely with backoff rather than
+silently dropping work). Recommend `js.Publish` wrapped in the same kind of
+indefinite-retry loop, matching `kubevirt-service-provider`'s transport
+choice (not `acm-cluster-service-provider`'s) for consistency with this
+repo's own convention, not that sibling's.
+
+**Related requirements:** none yet — M5 not started.
