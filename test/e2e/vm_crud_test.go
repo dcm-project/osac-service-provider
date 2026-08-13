@@ -60,6 +60,29 @@ var _ = Describe("VM CRUD, against the real mock backend", func() {
 		deleteVM(id, http.StatusNoContent)
 		deleteVM(id, http.StatusNoContent)
 	})
+
+	// TC-E2E-102 / AC-E2E-061 (REQ-E2E-102, REQ-VMCREATE-070): same
+	// real-ALREADY_EXISTS idempotency contract as TC-E2E-092
+	// (cluster_crud_test.go), exercised through the VM surface.
+	It("is idempotent on a repeat Create for the same id (real ALREADY_EXISTS)", func() {
+		id := uniqueID("e2e-vm-dup")
+
+		first := createVM(id)
+		Expect(first.ID).To(Equal(id))
+
+		second := createVM(id)
+		Expect(second.ID).To(Equal(first.ID))
+		Expect(second.Status).To(Equal(first.Status), "a repeat Create must return the existing vm's current state (REQ-VMCREATE-070), not an error")
+
+		ids := listVMIDs()
+		count := 0
+		for _, listedID := range ids {
+			if listedID == id {
+				count++
+			}
+		}
+		Expect(count).To(Equal(1), "the duplicate Create must not have produced a second stored object")
+	})
 })
 
 // validVMCreateBody matches internal/handlers/vm's own

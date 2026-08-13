@@ -66,6 +66,31 @@ var _ = Describe("Cluster CRUD, against the real mock backend", func() {
 		deleteCluster(id, http.StatusNoContent)
 		deleteCluster(id, http.StatusNoContent)
 	})
+
+	// TC-E2E-092 / AC-E2E-051 (REQ-E2E-092, REQ-CREATE-040/DD-100): a
+	// second Create for the same id must be idempotent against the real
+	// mock's ALREADY_EXISTS (REQ-MOCK-020) — this is the one contract
+	// osac-mock-provider was purpose-built to make testable against a
+	// real backend, not just a bufconn fake's simulation of it.
+	It("is idempotent on a repeat Create for the same id (real ALREADY_EXISTS)", func() {
+		id := uniqueID("e2e-cluster-dup")
+
+		first := createCluster(id)
+		Expect(first.ID).To(Equal(id))
+
+		second := createCluster(id)
+		Expect(second.ID).To(Equal(first.ID))
+		Expect(second.Status).To(Equal(first.Status), "a repeat Create must return the existing cluster's current state (REQ-CREATE-040), not an error")
+
+		ids := listClusterIDs()
+		count := 0
+		for _, listedID := range ids {
+			if listedID == id {
+				count++
+			}
+		}
+		Expect(count).To(Equal(1), "the duplicate Create must not have produced a second stored object")
+	})
 })
 
 // validClusterCreateBody matches internal/handlers/cluster's own

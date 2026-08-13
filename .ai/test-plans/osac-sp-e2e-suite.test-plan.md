@@ -76,8 +76,10 @@ Requires `osac-sp` built with Milestone 3 ([#13](https://github.com/dcm-project/
 |-------|-----------|-----------|-------------|
 | TC-E2E-090 | Cluster Create → Get → List → Delete round-trips over real HTTP into the real mock backend | REQ-E2E-090, AC-E2E-050 | `POST /api/v1alpha1/clusters?id=<unique>` with a valid body; assert `201` with `status == "ACTIVE"` (no polling — the real mock resolves synchronously, REQ-MOCK-030); Create's own response never carries `kubeconfig` (REQ-CREATE-050); `GET` the same id and assert `status == "ACTIVE"` **and** a non-empty, valid-base64 `kubeconfig` (REQ-GET-020); `GET` (list) and assert the id appears; `DELETE` and assert `204`; `GET` again and assert `404`. |
 | TC-E2E-091 | Cluster Delete tolerates an already-deleted id | REQ-E2E-091, AC-E2E-050 | `POST` a cluster, `DELETE` it (`204`), `DELETE` it again; assert the second call also returns `204`, not `404`. |
+| TC-E2E-092 | Cluster Create is idempotent against the real mock's `ALREADY_EXISTS` | REQ-E2E-092, AC-E2E-051 | `POST` a cluster with a unique `id`, record its `id`/`status`; `POST` the identical create request again with the same `id`; assert `201` (not an error), the returned `id`/`status` match the first response exactly, and `List` shows exactly one entry for that `id` — proves the real mock's `ALREADY_EXISTS` (REQ-MOCK-020) round-trips through DD-100's handling, not just a bufconn fake's simulation. |
 | TC-E2E-100 | VM Create → Get → List → Delete round-trips over real HTTP into the real mock backend | REQ-E2E-100, AC-E2E-060 | Same shape as TC-E2E-090 against `/api/v1alpha1/vms`, asserting `status == "RUNNING"` (no polling — `COMPUTE_INSTANCE_STATE_RUNNING` is set synchronously on `Create`, REQ-MOCK-030). |
 | TC-E2E-101 | VM Delete tolerates an already-deleted id | REQ-E2E-101, AC-E2E-060 | Same shape as TC-E2E-091 against `/api/v1alpha1/vms`. |
+| TC-E2E-102 | VM Create is idempotent against the real mock's `ALREADY_EXISTS` | REQ-E2E-102, AC-E2E-061 | Same shape as TC-E2E-092 against `/api/v1alpha1/vms` (REQ-VMCREATE-070). |
 
 ---
 
@@ -108,7 +110,7 @@ these 2). This branch's own CI will not go green on these until #26 merges.
 | Registration contract | REQ-E2E-050 | AC-E2E-020 | 3 (TC-E2E-020..040) | |
 | Health-check propagation | REQ-E2E-060 | AC-E2E-030 | 3 (TC-E2E-050..070) | |
 | CI failure-mode hygiene | REQ-E2E-040, 070 | AC-E2E-040 | 1 (TC-E2E-080) | Manual/opt-in variant, not run on every PR (would otherwise double the job's steady-state runtime for a check that doesn't need re-proving every merge). |
-| Cluster CRUD (Milestone 3) | REQ-E2E-090, 091 | AC-E2E-050 | 2 (TC-E2E-090, 091) | Gated on #13 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
-| VM CRUD (Milestone 4) | REQ-E2E-100, 101 | AC-E2E-060 | 2 (TC-E2E-100, 101) | Gated on #14 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
+| Cluster CRUD (Milestone 3) | REQ-E2E-090, 091, 092 | AC-E2E-050, 051 | 3 (TC-E2E-090, 091, 092) | Gated on #13 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
+| VM CRUD (Milestone 4) | REQ-E2E-100, 101, 102 | AC-E2E-060, 061 | 3 (TC-E2E-100, 101, 102) | Gated on #14 landing on `main`; pre-validated against a throwaway combined branch (see §5's note). |
 | Version-matrix validation (Milestone 6) | REQ-E2E-110, 111 | AC-E2E-070 | 2 (TC-E2E-110, 111) | Gated on #26 landing on `main`; pre-validated against a second throwaway combined branch (see §6's note, DD-146). |
-| **Total** | 14 | 7 | **14** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. |
+| **Total** | 16 | 9 | **16** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. |

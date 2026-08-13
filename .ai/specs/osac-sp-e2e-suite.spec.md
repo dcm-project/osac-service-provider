@@ -129,8 +129,10 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | REQ-E2E-080 | The e2e suite MUST run as a separate nested Go module (own `go.mod`) so its dependencies (a `control-plane` REST client, `k8s.io/client-go` if used for readiness polling) never enter the main module's `go.mod`/`go.sum` | MUST | Same isolation rationale as the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19) |
 | REQ-E2E-090 | The e2e suite MUST exercise a full Cluster CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend (not the bufconn fakes Milestone 3's own unit/integration tests use), asserting `Create`'s response reaches the mock's terminal ready status (`ACTIVE`) and the subsequent `Get`'s response additionally carries a non-empty `kubeconfig` — `Create` itself never populates `kubeconfig` (`osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-050; only `Get` does, conditionally on `ACTIVE`, REQ-GET-020) — without any polling for convergence, since the real mock resolves `Create` synchronously to `CLUSTER_STATE_READY` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 3 (Cluster CRUD); see sequencing note above |
 | REQ-E2E-091 | Cluster `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-DELETE-020 | MUST | Milestone 3 |
+| REQ-E2E-092 | Cluster `Create` MUST be idempotent when exercised over real HTTP against the real mock backend: a second `Create` for an `id` that already exists MUST return `201` with the existing cluster's current state (not an error), mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-040/DD-100 — this is the one scenario `osac-mock-provider`'s own `ALREADY_EXISTS` behavior (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-020) was purpose-built to make testable against a real backend, not a bufconn fake | MUST | Milestone 3 |
 | REQ-E2E-100 | The e2e suite MUST exercise a full VM CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend, asserting the created object reaches the mock's terminal ready status (`RUNNING`) without any polling for convergence — the real mock resolves `Create` synchronously to `COMPUTE_INSTANCE_STATE_RUNNING` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 4 (VM CRUD); see sequencing note above |
 | REQ-E2E-101 | VM `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMDELETE-020 | MUST | Milestone 4 |
+| REQ-E2E-102 | VM `Create` MUST be idempotent when exercised over real HTTP against the real mock backend: a second `Create` for an `id` that already exists MUST return `201` with the existing VM's current state (not an error), mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMCREATE-070 (itself mirroring Milestone 3's DD-100) — same `osac-mock-provider` `ALREADY_EXISTS` contract as REQ-E2E-092, exercised through the VM surface instead of Cluster's | MUST | Milestone 4 |
 | REQ-E2E-110 | Cluster `Create` MUST reject a request whose `spec.version` is absent from the advertised version-translation matrix with `400`/`INVALID_ARGUMENT`, over real HTTP against the real mock backend, and the rejected request MUST never reach `osac-mock-provider` (no partial side effect) | MUST | Milestone 6 (version matrix); mirrors `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-080; see sequencing note above |
 | REQ-E2E-111 | An explicit `provider_hints.osac.release_image` override on Cluster `Create` MUST bypass version-matrix validation, over real HTTP against the real mock backend, even for a `spec.version` otherwise absent from the matrix | MUST | Milestone 6; mirrors `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-080's bypass clause |
 
@@ -186,6 +188,19 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
   a subsequent `Get` returns `404`, and a second `Delete` of the same id
   still returns `204`
 
+##### AC-E2E-051: Cluster `Create` is idempotent against the real mock backend's `ALREADY_EXISTS`
+
+- **Validates:** REQ-E2E-092
+- **Given** the healthy stack from AC-E2E-010, and a cluster already
+  created (over real HTTP) with a known `id`
+- **When** the e2e suite `POST`s a second `Create` for that same `id`
+- **Then** the response is `201` (not an error), the returned `id` and
+  `status` match the already-created cluster's current state exactly, and
+  `List` still shows exactly one entry for that `id` — proving the real
+  mock's `ALREADY_EXISTS` (REQ-MOCK-020) round-trips correctly through
+  `osac-sp`'s DD-100 handling, not just through a bufconn fake's simulation
+  of it
+
 ##### AC-E2E-060: VM CRUD round-trips end-to-end against the real mock backend
 
 - **Validates:** REQ-E2E-100, REQ-E2E-101
@@ -197,6 +212,18 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 - **Then** `Create`/`Get` both report `status: RUNNING`, `List` includes
   the created object, `Delete` returns `204`, a subsequent `Get` returns
   `404`, and a second `Delete` of the same id still returns `204`
+
+##### AC-E2E-061: VM `Create` is idempotent against the real mock backend's `ALREADY_EXISTS`
+
+- **Validates:** REQ-E2E-102
+- **Given** the healthy stack from AC-E2E-010, and a VM already created
+  (over real HTTP) with a known `id`
+- **When** the e2e suite `POST`s a second `Create` for that same `id`
+- **Then** the response is `201` (not an error), the returned `id` and
+  `status` match the already-created VM's current state exactly, and
+  `List` still shows exactly one entry for that `id` — same
+  `ALREADY_EXISTS` contract as AC-E2E-051, exercised through the VM
+  surface
 
 ##### AC-E2E-070: Version-matrix enforcement round-trips over real HTTP
 
