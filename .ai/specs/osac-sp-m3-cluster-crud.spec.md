@@ -468,12 +468,10 @@ types (no new proto vendoring).
 #### Overview
 
 Every gRPC error surfaced by any `Clusters` or `ClusterTemplates` RPC
-(except the two carve-outs below) MUST be mapped to an HTTP status and an
+(except the three carve-outs below) MUST be mapped to an HTTP status and an
 RFC 9457 (`application/problem+json`, DD-070) body, reusing
-`internal/httperror.WriteResponse` — no new error-writing mechanism. This
-includes `ClusterTemplates/Get` returning `NotFound` for an invalid
-`template_id` (REQ-CREATE-080) — mapped to `404`, same as any other
-`NotFound`, not swallowed or special-cased. Milestone 1's `v1alpha1.ErrorType` enum already
+`internal/httperror.WriteResponse` — no new error-writing mechanism.
+Milestone 1's `v1alpha1.ErrorType` enum already
 defines all 7 codes this milestone needs
 (`ALREADYEXISTS`/`INTERNAL`/`INVALIDARGUMENT`/`NOTFOUND`/`PERMISSIONDENIED`/
 `UNAUTHENTICATED`/`UNAVAILABLE`); this milestone is the first to actually
@@ -483,7 +481,10 @@ exercise most of them (Milestone 1 only ever produced `INTERNAL`, per DD-070's
 **Carve-outs (handler-specific, override this table):** Create's `AlreadyExists`
 is intercepted per REQ-CREATE-040 and never reaches this mapping (never
 surfaces as `409` to the caller). Delete's `NotFound` is intercepted per
-REQ-DELETE-020 and returns `204`, not `404`.
+REQ-DELETE-020 and returns `204`, not `404`. Create's `ClusterTemplates/Get`
+`NotFound` (unknown `template_id`) is intercepted per REQ-CREATE-100/DD-111
+and returns `400` (`InvalidArgument`), not `404` — a bad value in the
+caller's own request, not a missing SP-managed resource.
 
 #### Requirements
 
