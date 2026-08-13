@@ -566,13 +566,21 @@ Matches the sibling SPs'
 [`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider))
 existing shape for `Create`, so this isn't a new pattern.
 
-Kept `Cluster`'s `required: [id, status]` as-is (didn't drop to the
-siblings' `required: [spec]`) to avoid making `Status` a pointer across
-every file that already compares it directly — the new `spec` property is
-its own pointer instead, satisfying `aep-133-request-body` without that
-blast radius. Also didn't copy the siblings' server-side UUID generation
-when `id` is omitted — REQ-CREATE-010 already guarantees `control-plane`
-always supplies one.
+`Cluster`'s `required` list is `[id, status, spec]` — `spec` was added
+alongside the pre-existing `id`/`status` rather than replacing them, since
+OpenAPI 3.0 scopes `readOnly`+`required` to responses only and
+`writeOnly`+`required` to requests only; a single bidirectional AEP-133
+resource schema can express both per-direction requirements in the same
+`required` array. Verified this against actual `oapi-codegen` output before
+relying on it (an earlier version of this decision assumed the opposite,
+incorrectly — see PR #13 review thread `discussion_r3767520271`): both
+`Spec *ClusterSpec` and `Status *ClusterStatus` generate as pointers with
+`omitempty` regardless of `required` membership, driven entirely by their
+own `readOnly`/`writeOnly` flags. So adding `spec` to `required` does not
+make it non-pointer and does not force a spurious `"spec":{}` on Get/List
+responses. Also didn't copy the siblings' server-side UUID generation when
+`id` is omitted — REQ-CREATE-010 already guarantees `control-plane` always
+supplies one.
 
 **Related requirements:** REQ-CREATE-010, REQ-CREATE-060
 
