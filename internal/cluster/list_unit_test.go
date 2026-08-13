@@ -45,9 +45,9 @@ var _ = Describe("Service.List (Topic 4.3 Cluster List)", func() {
 
 		Expect(result.Results).To(HaveLen(2))
 		Expect(*result.Results[0].Id).To(Equal("c1"))
-		Expect(result.Results[0].Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
+		Expect(*result.Results[0].Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
 		Expect(*result.Results[1].Id).To(Equal("c2"))
-		Expect(result.Results[1].Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*result.Results[1].Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 	})
 
 	// Supplementary (REQ-LIST-020): an explicit max_page_size overrides the

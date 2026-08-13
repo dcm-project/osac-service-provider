@@ -46,7 +46,7 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(resp.Body).Decode(&cluster)).To(Succeed())
 		Expect(*cluster.Id).To(Equal("X"))
-		Expect(cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 
 		Expect(f.fake.CreateCallCount()).To(Equal(1))
 	})
@@ -79,7 +79,7 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(second.Body).Decode(&cluster)).To(Succeed())
 		Expect(*cluster.Id).To(Equal("X"))
-		Expect(cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 		Expect(f.fake.GetCallCount()).To(Equal(1))
 	})
 

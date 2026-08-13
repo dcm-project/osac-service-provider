@@ -102,7 +102,7 @@ func (s *Service) Get(ctx context.Context, id string) (v1alpha1.Cluster, error) 
 	}
 
 	result := toAPICluster(resp.GetObject(), nil)
-	if result.Status != v1alpha1.ClusterStatusACTIVE {
+	if *result.Status != v1alpha1.ClusterStatusACTIVE {
 		// REQ-GET-030: kubeconfig is the empty string (not omitted) for any
 		// non-ACTIVE status — distinct from List, which omits it entirely
 		// (REQ-LIST-030) since toAPICluster never sets it.

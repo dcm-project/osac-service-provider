@@ -109,11 +109,9 @@ type Cluster struct {
 	// Example: clusters/123e4567-e89b-12d3-a456-426614174000
 	Path *string `json:"path,omitempty"`
 
-	// Spec Request-only (DD-113): present when this schema is used as the Create request body (`POST /clusters`'s AEP-133-compliant request body, which is this same `Cluster` resource type). Never populated in a Get/List response — control-plane's own actual wire dispatch still sends only `{"spec": {...}}` in the body, so this remains the only body field it ever sets.
-	Spec *ClusterSpec `json:"spec,omitempty"`
-
-	// Status DCM's full canonical 7-value Cluster status vocabulary (DD-090) — not the 5-value subset in the osac-sp enhancement doc's own Status Mapping table.
-	Status ClusterStatus `json:"status"`
+	// Spec Request-only (DD-113): present when this schema is used as the Create request body (`POST /clusters`'s AEP-133-compliant request body, which is this same `Cluster` resource type). Never populated in a Get/List response — control-plane's own actual wire dispatch still sends only `{"spec": {...}}` in the body, so this remains the only body field it ever sets. Not listed in this schema's `required` (kept optional here despite being a hard runtime requirement) because oapi-codegen does not special-case `writeOnly`+`required`: making it required would make the generated `Spec` field non-pointer/non-omitempty, causing every Get/List response to serialize a spurious empty `"spec":{}`. The actual requirement is enforced at the handler level (REQ-CREATE-060), which is this field's source of truth for input validation, not this schema's `required` list.
+	Spec   *ClusterSpec   `json:"spec,omitempty"`
+	Status *ClusterStatus `json:"status,omitempty"`
 
 	// StatusMessage Human-readable message about the current status
 	StatusMessage *string    `json:"status_message,omitempty"`

@@ -49,7 +49,7 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(resp.Body).Decode(&cluster)).To(Succeed())
-		Expect(cluster.Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
+		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
 		Expect(*cluster.Kubeconfig).To(Equal("kubeconfig-abc"))
 	})
 
@@ -69,7 +69,7 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(resp.Body).Decode(&cluster)).To(Succeed())
-		Expect(cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 		Expect(*cluster.Kubeconfig).To(Equal(""))
 	})
 

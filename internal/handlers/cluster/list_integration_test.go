@@ -51,9 +51,9 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 		Expect(recordedFilter).To(Equal(`this.metadata.labels["dcm.io/managed-by"] == "dcm"`))
 		Expect(list.Results).To(HaveLen(2))
 		Expect(*list.Results[0].Id).To(Equal("c1"))
-		Expect(list.Results[0].Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
+		Expect(*list.Results[0].Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
 		Expect(*list.Results[1].Id).To(Equal("c2"))
-		Expect(list.Results[1].Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*list.Results[1].Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 	})
 
 	// TC-I-221 (REQ-LIST-020/040, AC-LIST-020): pagination round-trips

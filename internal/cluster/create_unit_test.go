@@ -154,7 +154,7 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(*result.Id).To(Equal("X"))
-		Expect(result.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*result.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 		Expect(f.fake.GetCallCount()).To(Equal(1))
 		// The retried path echoes version too — same request, same
 		// spec.version, shouldn't return a different body shape than the

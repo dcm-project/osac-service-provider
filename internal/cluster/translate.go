@@ -112,7 +112,7 @@ func toAPICluster(osacCluster *publicv1.Cluster, version *string) v1alpha1.Clust
 	return v1alpha1.Cluster{
 		Id:       util.Ptr(osacCluster.GetId()),
 		Path:     util.Ptr("clusters/" + osacCluster.GetId()),
-		Status:   MapStatus(nil, osacCluster.GetStatus()),
+		Status:   util.Ptr(MapStatus(nil, osacCluster.GetStatus())),
 		NodeSets: toAPINodeSets(osacCluster.GetStatus().GetNodeSets()),
 		Version:  version,
 	}
