@@ -6,7 +6,8 @@ Service Provider, referenced by ID (`DD-NNN`) from the specs in
 them, so this file stays open across milestones rather than being tied to
 any single spec document's lifecycle.
 
-**Related Specs:** `.ai/specs/osac-sp.spec.md` (Milestone 1)
+**Related Specs:** `.ai/specs/osac-sp.spec.md` (Milestone 1),
+`.ai/specs/osac-sp-m3-cluster-crud.spec.md` (Milestone 3)
 
 ---
 
@@ -424,12 +425,15 @@ different, DCM-wide vocabulary from the ad-hoc per-SP enums other sibling
 SPs invented before any `control-plane` dispatch integration existed (e.g.
 `acm-cluster-sp`'s `PENDING|PROVISIONING|READY|FAILED|DELETING|DELETED|
 UNAVAILABLE` — close but not identical wording, and not the authoritative
-source). `UNAVAILABLE` is legitimately SP-detectable today (an OSAC gRPC
-connectivity failure while polling, distinct from a real `NotFound`);
+source). `UNAVAILABLE` is legitimately SP-detectable via an OSAC gRPC
+connectivity failure (distinct from a real `NotFound`), but only through
+the future Milestone 5 async status-polling loop — this milestone's
+synchronous Create/Get/List already resolve that same gRPC outcome as a
+sync HTTP error (REQ-ERR-010), not a `200` response body (SC-M3-003).
 `DELETING`/`DELETE_FAILED` are proto-defined but currently unreachable in
-practice (SC-M3-001) — both are still required enum values for forward
+practice (SC-M3-001). All four are still required enum values for forward
 compatibility and DCM-wide consistency, not values the SP can skip because
-nothing exercises them yet.
+nothing exercises them synchronously yet.
 
 **Related requirements:** REQ-STATUS-010, REQ-STATUS-020
 
@@ -442,32 +446,20 @@ specified as a `MUST` with dedicated, mandatory test coverage
 (AC-CREATE-030), not an optional robustness improvement that could be
 deferred or left partially tested.
 
-**Rationale:** Traced the full call chain above `control-plane`'s SP
-dispatch and found upstream retry-safety is weaker than the enhancement
-docs assume, making the SP the *only* reliable backstop:
-`internal/catalog/service/catalog_item_instance.go`'s `Create` (and the
-duplicated pattern one layer down in `internal/placement/service/placement.go`)
-performs an **unconditional rollback on any error** — deleting the local DB
-row keyed on the caller's `id` — with no branch distinguishing "definitely
-rejected" from "ambiguous/timeout." A subsequent retry with the *same*
-caller-facing `id` therefore mints a **new internal `resourceID`** and
-dispatches a second, differently-IDed Create to the SP — silently defeating
-the `id`-based idempotency the catalog API explicitly promises
-(`api/catalog/v1alpha1/openapi.yaml`: "user-specified IDs... for
-idempotency"). No orphan-reconciliation exists anywhere in that stack, and
-the one path that could surface an orphaned SP-side resource
-(`internal/sp/consumer/consumer.go`'s NATS status ingestion) silently
-`Warn`-logs and ACKs unmatched IDs rather than alerting. Separately,
-`control-plane`'s outbound HTTP client to the SP is configured with
-`resty.SetRetryCount(3)` (network-failure retries), so the SP can
-legitimately receive the *same* `id` twice from a connection-level hiccup
-alone, independent of the rollback bug above. Filed as
+**Rationale:** `control-plane`'s `internal/catalog/service/catalog_item_instance.go`
+Create path (and the duplicated pattern in
+`internal/placement/service/placement.go`) performs an unconditional
+rollback on any error — deleting the local DB row keyed on the caller's
+`id`, with no branch distinguishing "definitely rejected" from
+"ambiguous/timeout." A retry with the same caller-facing `id` therefore
+mints a **new internal `resourceID`** and dispatches a second,
+differently-IDed Create to the SP, defeating the `id`-based idempotency the
+catalog API promises. No orphan-reconciliation exists to catch this.
+Separately, `control-plane`'s outbound HTTP client retries network failures
+3x (`resty.SetRetryCount(3)`), so the SP can legitimately receive the same
+`id` twice from a connection-level hiccup alone. Filed as
 [`control-plane#38`](https://github.com/dcm-project/control-plane/issues/38)
-(new bug, confirmed via `gh issue list`/`gh pr list` to not duplicate any
-existing tracked risk) — not fixable from within `osac-service-provider`,
-and not expected to be fixed by the in-flight, architecture-changing
-[`control-plane#37`](https://github.com/dcm-project/control-plane/pull/37)
-either (flagged there directly). Both the general
+— not fixable from within `osac-service-provider`. Both the general
 [`sp-resource-manager.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/sp-resource-manager/sp-resource-manager.md#L487-L502)
 and OSAC-specific
 [`osac-sp.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#idempotent-creation)
@@ -476,6 +468,77 @@ SP — this decision makes that guarantee an enforced, tested contract rather
 than an assumed one.
 
 **Related requirements:** REQ-CREATE-040
+
+---
+
+## DD-110: Cluster Create resolves node-set keys via `ClusterTemplates/Get`, not from `template_id` — and rejects multi-node-set templates for this milestone
+
+**Decision:** Before dispatching `Clusters/Create`, the SP calls
+`ClusterTemplates/Get(template_id)` and uses the returned `node_sets` map's
+key to construct `spec.node_sets[key].size` from the request's
+`nodes.worker.count`. If the template defines more than one node-set key,
+the SP rejects the request with `400 Bad Request` rather than guessing
+which key to size — multi-node-set templates are out of scope for this
+milestone's single `nodes.worker.count` sizing dimension.
+
+**Rationale:** The M3 spec originally assumed `node_sets[key]`'s `key`
+equals `provider_hints.osac.template_id`. Verified directly against
+[`cluster_template_type.proto`](https://github.com/osac-project/fulfillment-service/blob/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1/cluster_template_type.proto)
+and `private_clusters_server.go`'s node-set validation
+(osac-project/fulfillment-service): node-set keys are arbitrary,
+per-template strings chosen by whoever authored the template (a test
+fixture defines template `"my-template-id"` with node-set keys
+`"compute"`/`"gpu"` — the key is never the template's own `id`), and
+OSAC validates `Cluster.spec.node_sets` keys against exactly the map
+`ClusterTemplates/Get`/`List` return. This is the same discovery path
+OSAC's own CLI (`osac scale --node-set <name>`) and UI
+(`useClusterTemplate`) use before referencing a node-set by name — there
+is no `template_id`-based shortcut.
+
+This also surfaced an open sizing-model question: a template may define
+more than one node-set key (e.g. separate `"compute"`/`"gpu"` worker
+pools), but DCM's generic Cluster schema carries only a single
+`nodes.worker.count`. The `osac-sp` enhancement doc never introduces a
+second sizing dimension or a `provider_hints.osac.node_set` hint — its
+Drawbacks section frames sizing as one coarse dimension tied to whichever
+discrete host types the provisioned OSAC templates expose, implying DCM
+catalog admins are expected to select single-worker-node-set templates.
+Rejecting multi-key templates outright (rather than guessing, or silently
+sizing only one key) enforces that assumption instead of merely hoping for
+it, consistent with this repo's error-on-ambiguity convention (DD-100).
+Revisit if a real DCM catalog item needs a genuinely heterogeneous
+(multi-node-set) template — that requires an enhancement-doc change (a new
+provider hint), not a unilateral SP-side guess.
+
+**Consequence:** `osac.public.v1.ClusterTemplates` (`cluster_template_type.proto`/
+`cluster_templates_service.proto`) must be vendored and generated alongside
+the already-vendored `Clusters` service (M3 spec §1) — `internal/cluster`'s
+Create path now depends on two OSAC clients, not one.
+
+**Related requirements:** REQ-CREATE-080, REQ-CREATE-090
+
+---
+
+## DD-111: Unknown `template_id` maps to `400 Bad Request` (`InvalidArgument`), not `404`
+
+**Decision:** When `ClusterTemplates/Get(template_id)` returns gRPC
+`NotFound`, the SP returns `400 Bad Request` — not `404` — without calling
+`Clusters/Create`.
+
+**Rationale:** `template_id` is a value the caller supplied inside the
+request body, not a path-addressed resource the caller is directly
+operating on. `REQ-CREATE-060` already treats an absent/empty `template_id`
+as a `400`-worthy request-validation failure; treating a *present but
+nonexistent* `template_id` as a `404` instead would be an inconsistent split
+of the same underlying problem (a bad value in the caller's own request)
+across two different HTTP semantics depending on whether the value is empty
+or merely wrong. `404` stays reserved for `GET`/`DELETE` operating directly
+on a `Cluster` resource by its own `id` (REQ-GET-040), where the missing
+resource *is* the thing being addressed.
+
+**Related requirements:** REQ-CREATE-100
+
+---
 
 ## DD-113: `POST /clusters` is schema-optional on `id` and its body is the `Cluster` resource itself, to satisfy AEP-133
 
@@ -541,11 +604,6 @@ fix has no REQ-* of its own — it is tooling/workflow, not product behavior.
 ---
 
 ## DD-112: `CLUSTER_STATE_UNSPECIFIED` maps to `PROGRESSING`, not `FAILED`
-
-> [#12](https://github.com/dcm-project/osac-service-provider/pull/12) landed
-> the identical decision under the same number (DD-112) in the M3 baseline
-> spec, since this branch predates that fix — no renumbering needed here,
-> they'll converge on rebase.
 
 **Context:** ported from Milestone 4 (PR #14, `internal/vm/status.go`
 DD-129), found while recording the DCM-first demo-journey against real
