@@ -39,7 +39,7 @@ confirmed scoping:
 - [Service Provider Status Reporting — Cluster status](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#cluster-status) — the canonical 7-value status vocabulary (§4.5)
 - OSAC public protos, vendored in Milestone 2: [`clusters_service.proto`/`cluster_type.proto`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1) — plus `cluster_template_type.proto`/`cluster_templates_service.proto` (`osac.public.v1.ClusterTemplates`), newly vendored **this** milestone (DD-110)
 - [Milestone 1 spec](./osac-sp.spec.md) (`internal/httperror`, RFC 9457 error writing — DD-070) and [Milestone 2 spec](./osac-sp-m2-grpc-client-generation.spec.md) (`Bootstrap.Conn()`) — both extended, not replaced
-- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-080/090/100/110 (new, this milestone)
+- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-080/090/100/110/111/112/113/114 (new, this milestone)
 
 ---
 
@@ -154,13 +154,13 @@ follows the [generic Cluster schema](https://github.com/dcm-project/enhancements
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-CREATE-010 | The SP MUST implement `POST /api/v1alpha1/clusters`, accepting a required `id` query parameter and a request body `{"spec": {...}}` — matching `control-plane`'s actual outbound dispatch shape, not a hypothetical/generic REST-resource shape | MUST | DD-080 |
+| REQ-CREATE-010 | The SP MUST implement `POST /api/v1alpha1/clusters`, accepting a required `id` query parameter and a request body `{"spec": {...}}` — matching `control-plane`'s actual outbound dispatch shape, not a hypothetical/generic REST-resource shape. "Required" here is a runtime/behavioral requirement (REQ-CREATE-060) enforced by request validation, not the OpenAPI schema's `required` keyword — both `id` and the body's `spec` property are schema-optional for AEP-133 compliance | MUST | DD-080, DD-113 |
 | REQ-CREATE-020 | The SP MUST translate the request per the Field Mapping table above and call `osac.public.v1.Clusters/Create` with `Cluster.id` set to the `id` query parameter's exact value | MUST | |
 | REQ-CREATE-025 | `spec.version` MUST be translated to `release_image` via a hardcoded placeholder table (e.g. the same versions already used for `kubernetes_supported_versions`, REQ-REG-040) when `provider_hints.osac.release_image` is not supplied; this table does not need to be the full compatibility matrix (Milestone 6) | MUST | SC-001 (`osac-sp.spec.md`) |
 | REQ-CREATE-030 | The SP MUST set three ownership labels on `Cluster.metadata.labels` for every Create call: `dcm.io/managed-by="dcm"`, `dcm.io/instance-id="<id>"`, `dcm.io/service-type="cluster"` — merged with, not replacing, any caller-supplied `spec.metadata.labels` | MUST | |
 | REQ-CREATE-040 | If `Clusters/Create` returns gRPC `AlreadyExists` for the given `id`, the SP MUST call `Clusters/Get(id)` and return **that** object's current state as a successful Create response — MUST NOT surface `AlreadyExists` to the caller as an error | MUST | DD-100 |
 | REQ-CREATE-050 | A successful Create response MUST be `201 Created` with a body whose top-level `id` and `status` fields are always populated (never omitted/null) — `control-plane` persists these two fields with no presence validation of its own | MUST | |
-| REQ-CREATE-060 | A request missing the `id` query parameter, or whose body fails required-field validation (`spec.version`, `spec.nodes.worker.count`, `spec.metadata.name`, or `spec.provider_hints.osac.template_id` absent/empty), MUST return `400 Bad Request` via the shared error-mapping topic (§4.6) without calling OSAC | MUST | |
+| REQ-CREATE-060 | A request missing the `id` query parameter, missing the body's `spec` property entirely, or whose `spec` fails required-field validation (`spec.version`, `spec.nodes.worker.count`, `spec.metadata.name`, or `spec.provider_hints.osac.template_id` absent/empty), MUST return `400 Bad Request` via the shared error-mapping topic (§4.6) without calling OSAC | MUST | DD-113 |
 | REQ-CREATE-070 | The SP MUST NOT compute or send a `host_type` derived from `spec.nodes.worker.cpu`/`memory`/`storage` — those fields MUST be treated as informational only, with no corresponding OSAC field set from them | MUST | Node Sizing resolution |
 | REQ-CREATE-080 | Before dispatching `Clusters/Create`, the SP MUST call `ClusterTemplates/Get(template_id)` and use the returned `node_sets` map's key — never `template_id` itself, never a DCM-chosen name — to construct `spec.node_sets[key].size` from `nodes.worker.count` | MUST | DD-110 |
 | REQ-CREATE-090 | If `ClusterTemplates/Get(template_id)`'s `node_sets` map does not contain exactly one key (zero, or more than one), the SP MUST reject the request with `400 Bad Request` via the shared error-mapping topic (§4.6), without calling `Clusters/Create` — multi-node-set (and node-set-less) templates are out of scope for this milestone's single `nodes.worker.count` sizing dimension | MUST | DD-110 |
@@ -333,6 +333,13 @@ None.
 - **Given** a fake `Clusters/List` returning a cluster with `status.state=CLUSTER_STATE_READY` (which would trigger a kubeconfig fetch under Get, per AC-GET-010) and a fake `GetKubeconfig` that would fail the test if called
 - **When** `GET /api/v1alpha1/clusters` is called
 - **Then** the response entry has no `kubeconfig` field populated, and the fake `GetKubeconfig` call counter equals exactly `0`
+
+##### AC-LIST-040: A `page_token` this SP never issued (not valid base64, or not numeric once decoded) is rejected as `400 Bad Request`, without calling `Clusters/List`
+
+- **Validates:** REQ-LIST-020, REQ-ERR-010
+- **Given** no fake `Clusters/List` behavior is configured (any call would panic/fail the test)
+- **When** `GET /api/v1alpha1/clusters?page_token=not-valid-base64!!!` is called
+- **Then** the response is `400 Bad Request` with `type` exactly `INVALIDARGUMENT`, and the fake's `List` call counter is exactly `0` — proving the token is rejected during request parsing, before any OSAC RPC
 
 #### Dependencies
 
@@ -544,8 +551,12 @@ Design decisions (`DD-NNN`) live in
 per the convention established in `osac-sp.spec.md` §7. This milestone adds
 **DD-080** (Cluster CRUD dispatch contract), **DD-090** (7-value canonical
 status vocabulary), **DD-100** (SP-side idempotent-create is a hard
-requirement, not best-effort), and **DD-110** (node-set key resolved via
-`ClusterTemplates/Get`, single-node-set templates only).
+requirement, not best-effort), **DD-110** (node-set key resolved via
+`ClusterTemplates/Get`, single-node-set templates only), **DD-111** (unknown
+`template_id` maps to `400`, not `404`), **DD-112** (`CLUSTER_STATE_UNSPECIFIED`
+maps to `PROGRESSING`, not `FAILED`), **DD-113** (`POST /clusters` is
+schema-optional on `id`/`spec` for AEP-133 compliance), and **DD-114**
+(`check-aep` added to `make check`'s prerequisites).
 
 ---
 

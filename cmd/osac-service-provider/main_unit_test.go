@@ -13,6 +13,16 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+
+	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
+	oapigen "github.com/dcm-project/osac-service-provider/internal/api/server"
+	"github.com/dcm-project/osac-service-provider/internal/cluster"
+	clusterhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/cluster"
+	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/util"
 )
 
 // setValidEnv sets every required/commonly-used env var to a
@@ -79,6 +89,104 @@ var _ = Describe("run's top-level error wrapping (unit)", func() {
 		runErr := run(context.Background(), slog.New(slog.DiscardHandler))
 		Expect(runErr).To(HaveOccurred())
 		Expect(runErr.Error()).To(ContainSubstring("creating OSAC client bootstrap"))
+	})
+})
+
+// minimalClustersServer is a bufconn-backed fake OSAC ClustersServer (same
+// technique as internal/cluster/fixture_test.go) used only to prove
+// apiHandler's 4 forwarding methods actually reach internal/cluster —
+// exhaustive Cluster CRUD business-logic behavior itself is
+// internal/cluster's and internal/handlers/cluster's own test scope.
+type minimalClustersServer struct {
+	publicv1.UnimplementedClustersServer
+	createCalls, getCalls, listCalls, deleteCalls int
+}
+
+func (s *minimalClustersServer) Create(context.Context, *publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error) {
+	s.createCalls++
+	return &publicv1.ClustersCreateResponse{Object: &publicv1.Cluster{Id: "X", Status: &publicv1.ClusterStatus{}}}, nil
+}
+
+func (s *minimalClustersServer) Get(context.Context, *publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error) {
+	s.getCalls++
+	return &publicv1.ClustersGetResponse{Object: &publicv1.Cluster{Id: "X", Status: &publicv1.ClusterStatus{}}}, nil
+}
+
+func (s *minimalClustersServer) List(context.Context, *publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
+	s.listCalls++
+	return &publicv1.ClustersListResponse{}, nil
+}
+
+func (s *minimalClustersServer) Delete(context.Context, *publicv1.ClustersDeleteRequest) (*publicv1.ClustersDeleteResponse, error) {
+	s.deleteCalls++
+	return &publicv1.ClustersDeleteResponse{}, nil
+}
+
+// minimalClusterTemplatesServer backs Create's REQ-CREATE-080 template
+// lookup with a single-node-set template, so this test can stay focused on
+// proving request routing rather than node-set resolution (that's
+// internal/cluster's own test scope).
+type minimalClusterTemplatesServer struct {
+	publicv1.UnimplementedClusterTemplatesServer
+}
+
+func (s *minimalClusterTemplatesServer) Get(context.Context, *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+	return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+		NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}},
+	}}, nil
+}
+
+var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
+	// TC-U-098: each of apiHandler's 4 forwarding methods reaches the real
+	// internal/cluster.Service (through clusterhandlers.Handler), proving
+	// cmd/main's wiring itself — not a re-test of CRUD business logic,
+	// which is internal/cluster's and internal/handlers/cluster's own
+	// exhaustive scope (100% covered there).
+	It("routes all 4 Cluster operations through to the wired cluster.Service (TC-U-098)", func() {
+		lis := bufconn.Listen(1024 * 1024)
+		grpcSrv := grpc.NewServer()
+		fake := &minimalClustersServer{}
+		publicv1.RegisterClustersServer(grpcSrv, fake)
+		publicv1.RegisterClusterTemplatesServer(grpcSrv, &minimalClusterTemplatesServer{})
+		go func() { _ = grpcSrv.Serve(lis) }()
+		defer grpcSrv.Stop()
+
+		conn, err := grpc.NewClient("passthrough:///bufnet",
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return lis.DialContext(ctx)
+			}),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = conn.Close() }()
+
+		svc := cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn))
+		h := &apiHandler{cluster: clusterhandlers.NewHandler(svc, slog.New(slog.DiscardHandler))}
+		ctx := context.Background()
+
+		_, err = h.ListClusters(ctx, oapigen.ListClustersRequestObject{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.listCalls).To(Equal(1))
+
+		_, err = h.CreateCluster(ctx, oapigen.CreateClusterRequestObject{
+			Params: v1alpha1.CreateClusterParams{Id: util.Ptr("X")},
+			Body: &v1alpha1.CreateClusterJSONRequestBody{Spec: &v1alpha1.ClusterSpec{
+				Version:       "1.29",
+				Nodes:         v1alpha1.ClusterNodes{Worker: v1alpha1.ClusterWorkerNodes{Count: 1}},
+				Metadata:      v1alpha1.ClusterMetadata{Name: "foo"},
+				ProviderHints: v1alpha1.ClusterProviderHints{Osac: v1alpha1.OSACProviderHints{TemplateId: "default-hcp"}},
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.createCalls).To(Equal(1))
+
+		_, err = h.GetCluster(ctx, oapigen.GetClusterRequestObject{ClusterId: "X"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.getCalls).To(Equal(1))
+
+		_, err = h.DeleteCluster(ctx, oapigen.DeleteClusterRequestObject{ClusterId: "X"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.deleteCalls).To(Equal(1))
 	})
 })
 

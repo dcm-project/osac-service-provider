@@ -6,9 +6,15 @@ info:
     platform with DCM, provisioning OpenShift clusters and VMs via OSAC's
     fulfillment service gRPC API.
 
-    **Milestone 1 scope:** this spec currently defines only the health
-    endpoints. Cluster and VM CRUD paths are added in later milestones per
-    issue #1's suggested delivery milestones.
+    **Milestone 3 scope:** Cluster CRUD (Create/Get/List/Delete) is now
+    defined. VM CRUD paths are added in a later milestone per issue #1's
+    suggested delivery milestones.
+
+    Per Milestone 3's DD-080, `control-plane` (Phase 1) only ever calls
+    Create and Delete on this SP's registered endpoint — Get/List/Update
+    are served entirely from `control-plane`'s own store and never reach
+    this SP. All four operations are still defined here for API-contract
+    completeness and any direct/non-`control-plane` caller.
 
     There are two health endpoints, not one, because this SP registers two
     independent providers with the environment agent — `cluster` at
@@ -29,10 +35,227 @@ servers:
     description: OSAC Service Provider
 
 tags:
+  - name: Clusters
+    description: Cluster management operations
   - name: Health
     description: Health check operations
 
 paths:
+  /api/v1alpha1/clusters:
+    post:
+      summary: Create a cluster
+      description: |
+        Creates a new OSAC-backed OpenShift cluster. Request body is this
+        `Cluster` resource with only `spec` populated (DD-080/DD-113).
+        Idempotent on `id`: a retry with the same `id` returns the existing
+        cluster's current state, not an error (REQ-CREATE-040/DD-100).
+      operationId: createCluster
+      tags:
+        - Clusters
+      parameters:
+        - name: id
+          in: query
+          description: >-
+            Caller-assigned resource identifier, set as OSAC's own
+            `Cluster.id` (REQ-CREATE-020). Schema-optional per AEP-133
+            (DD-113); still a hard runtime requirement, enforced by request
+            validation, not this field's `required` flag (REQ-CREATE-010/060).
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Cluster'
+      responses:
+        '201':
+          description: Cluster created (or, if `id` already existed, its current state — REQ-CREATE-040).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cluster'
+        '400':
+          description: Missing `id` or a required `spec` field.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      summary: List clusters
+      description: |
+        Returns a paginated list of clusters owned by this SP (filtered by
+        the `dcm.io/managed-by=dcm` ownership label — REQ-LIST-010). Never
+        populates `kubeconfig` on any entry (REQ-LIST-030).
+      operationId: listClusters
+      tags:
+        - Clusters
+      parameters:
+        - name: page_token
+          in: query
+          description: Opaque pagination token from a previous response's `next_page_token`.
+          required: false
+          schema:
+            type: string
+        - name: max_page_size
+          in: query
+          description: Maximum number of results to return per page.
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: List of clusters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterList'
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1alpha1/clusters/{clusterId}:
+    get:
+      summary: Get cluster details
+      description: |
+        Returns the cluster's current status. `kubeconfig` is populated
+        only when the mapped status is exactly `ACTIVE` (REQ-GET-020/030).
+      operationId: getCluster
+      tags:
+        - Clusters
+      parameters:
+        - $ref: '#/components/parameters/ClusterIdPath'
+      responses:
+        '200':
+          description: Cluster details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cluster'
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Cluster not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete a cluster
+      description: |
+        Deletes a cluster. Returns as soon as OSAC acknowledges the
+        request — does not poll for the cluster to actually disappear
+        (REQ-DELETE-040). A `NotFound` from OSAC (already deleted) is
+        treated as success (`204`), mirroring `control-plane`'s own
+        tolerance for this exact case (REQ-DELETE-020/DD-080) — this
+        endpoint therefore never returns `404`.
+      operationId: deleteCluster
+      tags:
+        - Clusters
+      parameters:
+        - $ref: '#/components/parameters/ClusterIdPath'
+      responses:
+        '204':
+          description: Cluster deleted (or already absent)
+        '401':
+          description: Unauthenticated
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: OSAC fulfillment service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1alpha1/clusters/health:
     get:
       summary: Cluster Provider Health Check
@@ -92,7 +315,237 @@ paths:
                 $ref: '#/components/schemas/Error'
 
 components:
+  parameters:
+    ClusterIdPath:
+      name: clusterId
+      in: path
+      required: true
+      description: DCM-level cluster resource identifier (same value as OSAC's `Cluster.id` — DD-080's ID Mapping note).
+      schema:
+        type: string
+
   schemas:
+    ClusterSpec:
+      type: object
+      description: Service-type-specific input specification for a cluster (Kubernetes Cluster generic schema).
+      required:
+        - version
+        - nodes
+        - metadata
+        - provider_hints
+      properties:
+        version:
+          type: string
+          description: >-
+            Kubernetes minor version (e.g. "1.30"). Translated internally
+            to an OSAC `release_image` via a hardcoded placeholder table
+            (REQ-CREATE-025) unless `provider_hints.osac.release_image`
+            overrides it. Echoed back verbatim on the Create response only
+            — Get/List omit it (SC-M3-002).
+          example: "1.30"
+        nodes:
+          $ref: '#/components/schemas/ClusterNodes'
+        metadata:
+          $ref: '#/components/schemas/ClusterMetadata'
+        provider_hints:
+          $ref: '#/components/schemas/ClusterProviderHints'
+
+    ClusterNodes:
+      type: object
+      description: >-
+        Node configuration for the cluster. No `control_plane` bucket:
+        OSAC's Hosted Control Planes manage the control plane internally,
+        so the generic schema's `nodes.control_plane` has no corresponding
+        OSAC field and is not sent (see M3 spec §4.1 Field Mapping).
+      required:
+        - worker
+      properties:
+        worker:
+          $ref: '#/components/schemas/ClusterWorkerNodes'
+
+    ClusterWorkerNodes:
+      type: object
+      required:
+        - count
+      properties:
+        count:
+          type: integer
+          description: Number of worker nodes. Mapped to OSAC's `spec.node_sets[key].size`.
+          minimum: 1
+        cpu:
+          type: integer
+          description: >-
+            Informational only (REQ-CREATE-070) — `host_type` is fixed by
+            the template; the SP never derives an OSAC field from this.
+        memory:
+          type: string
+          description: Informational only (REQ-CREATE-070). E.g. "32GB".
+        storage:
+          type: string
+          description: Informational only (REQ-CREATE-070). E.g. "250GB".
+
+    ClusterMetadata:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Human-readable cluster name. Mapped to OSAC's `spec.metadata.name`.
+        labels:
+          type: object
+          description: >-
+            Merged with (not replaced by) the three `dcm.io/*` ownership
+            labels the SP always sets (REQ-CREATE-030).
+          additionalProperties:
+            type: string
+
+    ClusterProviderHints:
+      type: object
+      required:
+        - osac
+      properties:
+        osac:
+          $ref: '#/components/schemas/OSACProviderHints'
+
+    OSACProviderHints:
+      type: object
+      required:
+        - template_id
+      properties:
+        template_id:
+          type: string
+          description: Reference to the OSAC cluster template. Mapped to OSAC's `spec.template`.
+        base_domain:
+          type: string
+          description: Optional passthrough to OSAC's `spec.network.*`.
+        pull_secret:
+          type: string
+          writeOnly: true
+          description: Optional passthrough to OSAC's `spec.pull_secret`. Write-only.
+        ssh_key:
+          type: string
+          description: Optional passthrough to OSAC's `spec.ssh_public_key`.
+        release_image:
+          type: string
+          description: >-
+            Optional override for the `version`-derived `release_image`
+            translation (REQ-CREATE-025).
+
+    Cluster:
+      type: object
+      description: A cluster resource managed by OSAC.
+      x-aep-resource:
+        singular: cluster
+        plural: clusters
+        type: osac-service-provider.dcm.io/cluster
+        patterns:
+          - clusters/{cluster}
+      required:
+        - id
+        - status
+        - spec
+      properties:
+        id:
+          type: string
+          readOnly: true
+          description: Same value as OSAC's `Cluster.id` (DD-080's ID Mapping note).
+        path:
+          type: string
+          readOnly: true
+          description: Resource path for this cluster
+          example: clusters/123e4567-e89b-12d3-a456-426614174000
+        status:
+          readOnly: true
+          allOf:
+            - $ref: '#/components/schemas/ClusterStatus'
+        status_message:
+          type: string
+          readOnly: true
+          description: Human-readable message about the current status
+        spec:
+          writeOnly: true
+          description: >-
+            Request-only (DD-113): only field `control-plane` populates on
+            Create; never present on Get/List. Required per OpenAPI 3.0's
+            `writeOnly`+`required` (request-only), mirroring `status`'s
+            `readOnly`+`required` (response-only) above — both generate as
+            pointers (`omitempty`) either way, so neither forces a spurious
+            empty value on the other's side. Also enforced at the handler
+            level (REQ-CREATE-060).
+          allOf:
+            - $ref: '#/components/schemas/ClusterSpec'
+        version:
+          type: string
+          readOnly: true
+          description: >-
+            Echoed from the Create request's `spec.version`. Create
+            response only — omitted on Get/List (SC-M3-002).
+        kubeconfig:
+          type: string
+          readOnly: true
+          description: >-
+            Base64-encoded kubeconfig. Populated only when `status` is
+            exactly `ACTIVE` (REQ-GET-020/030); always empty on List
+            entries (REQ-LIST-030).
+        node_sets:
+          type: object
+          readOnly: true
+          description: >-
+            Echoes OSAC's `status.node_sets` map directly — no
+            `ready`/`total` computation, since OSAC's `ClusterNodeSet` has
+            no such field (SC-M3-002).
+          additionalProperties:
+            $ref: '#/components/schemas/ClusterNodeSet'
+        create_time:
+          type: string
+          format: date-time
+          readOnly: true
+        update_time:
+          type: string
+          format: date-time
+          readOnly: true
+
+    ClusterNodeSet:
+      type: object
+      description: Mirrors OSAC's `ClusterNodeSet` (`host_type`, `size`) — see SC-M3-002.
+      properties:
+        host_type:
+          type: string
+        size:
+          type: integer
+
+    ClusterStatus:
+      type: string
+      description: >-
+        DCM's full canonical 7-value Cluster status vocabulary (DD-090) —
+        not the 5-value subset in the osac-sp enhancement doc's own
+        Status Mapping table.
+      enum:
+        - PROGRESSING
+        - ACTIVE
+        - DEGRADED
+        - UNAVAILABLE
+        - FAILED
+        - DELETING
+        - DELETED
+
+    ClusterList:
+      type: object
+      description: AEP-132 pagination wrapper.
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cluster'
+        next_page_token:
+          type: string
+          description: >-
+            Empty/absent exactly when there are no further results
+            (REQ-LIST-040).
+
     Health:
       type: object
       description: Health status singleton resource

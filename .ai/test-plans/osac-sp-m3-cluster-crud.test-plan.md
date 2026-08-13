@@ -156,6 +156,7 @@ done, regardless of coverage percentage:
 | TC-I-220 | List returns exact entries with the ownership filter applied, over real HTTP | REQ-LIST-010, REQ-LIST-030, AC-LIST-010 | Real-HTTP counterpart of TC-U-220. |
 | TC-I-221 | Pagination round-trips across two real, sequential HTTP requests | REQ-LIST-020, REQ-LIST-040, AC-LIST-020 | Real-HTTP counterpart of TC-U-221; issues two sequential `GET` requests. |
 | TC-I-222 | List responses never include `kubeconfig`, over real HTTP | REQ-LIST-030, AC-LIST-030 | Real-HTTP counterpart of TC-U-222. |
+| TC-I-223 | A `page_token` this SP never issued is rejected as `400`, without calling `Clusters/List` | REQ-LIST-020, REQ-ERR-010, AC-LIST-040 | No fake `Clusters/List` behavior configured (any call fails the test); real `GET /api/v1alpha1/clusters?page_token=not-valid-base64!!!`; assert `400` with `type` exactly `INVALIDARGUMENT`, and the fake's `List` call counter is exactly `0`. |
 
 ---
 
@@ -194,8 +195,8 @@ CRUD happy-path test would incidentally prove.
 |---|---|---|---|---|---|
 | 4.1 Cluster Create | 10 | 8 | 10 (TC-U-200..209) | 6 (TC-I-200..205) | Yes — every AC has both tiers; AC-CREATE-030 covered by TC-U-202 (unit) + TC-I-201 (2 real sequential HTTP requests, per rule 3); AC-CREATE-070's zero-key case (TC-U-209) is unit-only, same tier-split rationale as its multi-key case |
 | 4.2 Cluster Get | 4 | 3 | 3 (TC-U-210..212) | 3 (TC-I-210..212) | Yes |
-| 4.3 Cluster List | 4 | 3 | 3 (TC-U-220..222) | 3 (TC-I-220..222) | Yes |
+| 4.3 Cluster List | 4 | 4 | 3 (TC-U-220..222) | 4 (TC-I-220..223) | Yes — AC-LIST-040 covered by a pre-existing, untagged unit test in `list_unit_test.go` (base64/non-numeric `page_token` rejection) plus dedicated TC-I-223 for the real-HTTP boundary |
 | 4.4 Cluster Delete | 4 | 3 | 3 (TC-U-230..232) | 3 (TC-I-230..232) | Yes — AC-DELETE-020 covered by TC-U-231 (unit) + TC-I-231 (2 real sequential HTTP requests, per rule 3) |
 | 4.5 Status Mapping | 3 | 3 | 3 (TC-U-240..242) | 1 dedicated (TC-I-240) + incidentally via TC-I-210/211/220 | Yes — AC-STATUS-020 has both tiers (TC-U-241 + TC-I-240); AC-STATUS-010's rules 1/2/5/6 and all of AC-STATUS-030 are unit-only by design, not an incomplete pyramid (SC-M3-001/SC-M3-003 — those gRPC outcomes are resolved as sync HTTP errors before the mapper runs in M3) |
 | 4.6 Error Mapping | 3 | 2 | 2 (TC-U-250..251) | 1 dedicated (TC-I-250) + incidentally via TC-I-202/212/232 | Yes |
-| **Total** | **28** | **22** | **24** | **17** | |
+| **Total** | **28** | **23** | **24** | **18** | |

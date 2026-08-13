@@ -360,37 +360,45 @@ values (and regenerated code) change — no handler logic changes.
 
 **Decision:** Milestone 3's four Cluster REST handlers are built as a full
 CRUDL surface (matching the AEP/OpenAPI-first convention every sibling SP
-follows), but `control-plane` (Phase 1, DD-050) only ever calls **Create**
-and **Delete** on this SP's registered endpoint — `Get`/`List`/`Update` are
-served entirely from `control-plane`'s own Postgres store and never reach
-this SP (see M3 spec §2/§4.1 for the resulting handler design).
+follows), but the spec explicitly documents that `control-plane` (Phase 1,
+DD-050) only ever calls **Create** and **Delete** on this SP's registered
+endpoint — `Get`/`List`/`Update` are served entirely from `control-plane`'s
+own Postgres store and never reach this SP. Create's request/response shape
+and Delete's `NotFound`-tolerance are dictated by `control-plane`'s actual
+outbound dispatch code, not by a generic REST-resource assumption.
 
 **Rationale:** Verified directly against
 [`internal/sp/service/resource_manager/service_type_instance.go`](https://github.com/dcm-project/control-plane/blob/f243dfaa2e2752c63202432409e78cc2a4ad7d85/internal/sp/service/resource_manager/service_type_instance.go)
-(commit `f243dfa`) rather than `control-plane`'s own
-`api/sp/v1alpha1/resource_manager/openapi.yaml`, which describes a
-*different*, catalog-facing API (`/service-type-instances`) than what it
-dispatches outbound to a registered provider's `Endpoint`. The actual
+(commit `f243dfa`) rather than any OpenAPI document — `control-plane`'s own
+`api/sp/v1alpha1/resource_manager/openapi.yaml` describes a *different*,
+catalog-facing API (`/service-type-instances`) than what it sends outbound
+to a registered provider's `Endpoint`, so reading that spec alone would have
+been a category error (the same mistake DD-060 already corrected once for
+OIDC discovery — citing superficially-similar-but-wrong code). The actual
 outbound contract:
 
 - `GetInstance`/`ListInstances` read only `s.store` — zero calls to
-  `provider.Endpoint` for either. `UpdateInstance` has no provider-dispatch
-  path at all.
-- `createInstanceWithProvider`: `POST {endpoint}?id={id}` (query parameter),
-  body `{"spec": request.Spec}`, response unmarshaled into
-  `ProviderResponse{ID, Status}` (`convert.go`) — extra fields in the SP's
-  response are silently ignored, so returning the full `Cluster` resource is
-  compatible.
-- `deleteInstanceWithProvider`: `DELETE {endpoint}/{id}` — `if
-  resp.IsError() && resp.StatusCode() != 404` explicitly treats a `404` from
-  the SP as a successful delete, not a `ProviderError`.
+  `provider.Endpoint` for either. `UpdateInstance` doesn't exist as a
+  provider-dispatch path at all.
+- `createInstanceWithProvider`: `POST {endpoint}?id={id}` (query parameter,
+  not a body field), body `{"spec": request.Spec}`, response unmarshaled
+  into `ProviderResponse{ID string `json:"id"`; Status string
+  `json:"status"`}` (`convert.go`) — extra fields in the SP's response are
+  silently ignored, not rejected, so returning the full `Cluster` resource
+  (id/status top-level) is compatible.
+- `deleteInstanceWithProvider`: `DELETE {endpoint}/{id}` (path segment).
+  `if resp.IsError() && resp.StatusCode() != 404` — a `404` from the SP is
+  explicitly excluded from the error branch, i.e. treated as a successful
+  delete, not surfaced as a `ProviderError`.
 - `control-plane` does not parse RFC 7807/9457 bodies from the SP — any
-  `>=400` becomes a generic `ProviderError` string. RFC 9457 (DD-070) is
-  still correct for API-contract consistency and any non-`control-plane`
-  caller, just not structurally interpreted by `control-plane` today.
+  `>=400` becomes a generic `ProviderError` string. RFC 9457 compliance
+  (DD-070) is still correct for API-contract consistency and any direct/
+  non-`control-plane` caller, just not something `control-plane` itself
+  interprets structurally today.
 
 Enhancement [PR #96](https://github.com/dcm-project/enhancements/pull/96)
-already reflects this corrected contract for Cluster/VM.
+(open, unmerged) already reflects this corrected contract for Cluster/VM —
+used as this milestone's interim source of truth per issue #1's own note.
 
 **Related requirements:** REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-050, REQ-DELETE-010, REQ-DELETE-020
 
@@ -532,41 +540,117 @@ resource *is* the thing being addressed.
 
 ---
 
+## DD-113: `POST /clusters` is schema-optional on `id` and its body is the `Cluster` resource itself, to satisfy AEP-133
+
+> Renumbered from this branch's original DD-110 — [#12](https://github.com/dcm-project/osac-service-provider/pull/12)
+> claimed DD-110 for the (unrelated) node-set-key-resolution decision while
+> this branch was in flight; see `proto/README.md`.
+
+**Decision:** The `id` query parameter on `POST /api/v1alpha1/clusters` is
+`required: false` in the OpenAPI schema, and the request body schema is
+`$ref: '#/components/schemas/Cluster'` (with a new optional `spec` property
+added to that shared resource schema) rather than the previous
+`ClusterCreateRequest` wrapper. REQ-CREATE-010/060's actual runtime
+contract — `id` and `spec` are both effectively required, and their absence
+is a `400` — is unchanged; it is now enforced entirely by
+`internal/handlers/cluster`'s own `validateCreateRequest`, not by the
+OpenAPI `required` keyword.
+
+**Rationale:** CI's `check-aep` job flagged two `aep-133` violations once
+the first `POST` landed in this repo's schema: a required `id` query param,
+and a request body that isn't an AEP resource (`ClusterCreateRequest`).
+Both are schema-level lint rules, not a wire-format constraint —
+`control-plane`'s real dispatch envelope (DD-080) doesn't need either.
+Matches the sibling SPs'
+([`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider),
+[`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider))
+existing shape for `Create`, so this isn't a new pattern.
+
+`Cluster`'s `required` list is `[id, status, spec]` — `spec` was added
+alongside the pre-existing `id`/`status` rather than replacing them, since
+OpenAPI 3.0 scopes `readOnly`+`required` to responses only and
+`writeOnly`+`required` to requests only; a single bidirectional AEP-133
+resource schema can express both per-direction requirements in the same
+`required` array. Verified this against actual `oapi-codegen` output before
+relying on it (an earlier version of this decision assumed the opposite,
+incorrectly — see PR #13 review thread `discussion_r3767520271`): both
+`Spec *ClusterSpec` and `Status *ClusterStatus` generate as pointers with
+`omitempty` regardless of `required` membership, driven entirely by their
+own `readOnly`/`writeOnly` flags. So adding `spec` to `required` does not
+make it non-pointer and does not force a spurious `"spec":{}` on Get/List
+responses. Also didn't copy the siblings' server-side UUID generation when
+`id` is omitted — REQ-CREATE-010 already guarantees `control-plane` always
+supplies one.
+
+**Related requirements:** REQ-CREATE-010, REQ-CREATE-060
+
+---
+
+## DD-114: `check-aep` is now part of `make check`, invoked via `npx` instead of requiring a global `spectral` install
+
+> Renumbered from this branch's original DD-111 for the same reason as
+> DD-113 above.
+
+**Decision:** `make check`'s prerequisite list is now `fmt vet lint check-aep
+test` (previously omitted `check-aep`), and the `check-aep` target itself now
+runs `npx --yes @stoplight/spectral-cli lint ...` instead of assuming a
+bare `spectral` binary is already on `PATH`.
+
+**Rationale:** `check-aep` was a CI gate since Milestone 1 but never a
+prerequisite of `make check` — the local pre-push command `CLAUDE.md`
+documents — and its local invocation assumed a bare `spectral` binary on
+`PATH`, which nothing in this repo provisions (CI self-installs it fresh
+every run). AEP-133's create-specific rules had also never had a chance to
+fire before PR #13's Create endpoint (Milestones 1-2 had no `POST`s), so
+this was a dormant gap, not a regression. `npx` removes the missing-binary
+friction; adding `check-aep` to `make check`'s prerequisite list removes the
+"forgot to run the separate target" failure mode.
+
+**Related requirements:** REQ-CREATE-010, REQ-CREATE-060 (DD-113); process
+fix has no REQ-* of its own — it is tooling/workflow, not product behavior.
+
+---
+
 ## DD-112: `CLUSTER_STATE_UNSPECIFIED` maps to `PROGRESSING`, not `FAILED`
 
-**Context:** ported forward from Milestone 4 (`internal/vm/status.go`,
+**Context:** ported from Milestone 4 (PR #14, `internal/vm/status.go`
 DD-129), found while recording the DCM-first demo-journey against real
-infrastructure. Milestone 4's VM mapper showed `FAILED` for several seconds
-immediately after every VM creation, self-correcting to
-`PROVISIONING`/`RUNNING` shortly after; this milestone's Cluster mapper has
+infrastructure. Milestone 4's VM mapper showed `FAILED` for several
+seconds immediately after every VM creation, self-correcting to
+`PROVISIONING`/`RUNNING` shortly after; `internal/cluster/status.go` has
 the identical unhandled-default gap for `CLUSTER_STATE_UNSPECIFIED`.
 
-**Root cause:** `REQ-STATUS-020`'s original rule mapped "anything else,
-including `CLUSTER_STATE_UNSPECIFIED`" to `FAILED` as a "defensive
+**Root cause:** `REQ-STATUS-020`'s original rule (9) mapped "anything
+else, including `CLUSTER_STATE_UNSPECIFIED`" to `FAILED` as a "defensive
 default," per
 [`service-provider-status-reporting.md#cluster-status`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#cluster-status)'s
-either/or guidance for ambiguous states. `CLUSTER_STATE_UNSPECIFIED` is
-proto3's structural zero-value (`cluster_type.proto`'s own comment:
-"Unspecified indicates that the state is unknown"), and is the normal state
-every `Cluster` briefly holds between creation and `osac-operator`'s first
-reconcile pass — not a genuine anomaly. This milestone's Cluster CRUD isn't
-exercised in the demo directly, but the same live-verified reasoning from
-DD-129 applies identically here.
+either/or guidance for ambiguous states. This was deliberate and tested
+(`TC-U-240`), but — like VM's identical mapper — written and verified
+only against hand-written fakes, never against a real
+`fulfillment-service`/`osac-operator` pair. `CLUSTER_STATE_UNSPECIFIED`
+is proto3's structural zero-value (`cluster_type.proto`'s own comment:
+"Unspecified indicates that the state is unknown"), and is the normal
+state every `Cluster` briefly holds between creation and
+`osac-operator`'s first reconcile pass — not a genuine anomaly. This
+milestone's Cluster CRUD isn't exercised in the demo directly, but the
+same live-verified reasoning from DD-129 applies identically here.
 
-**Decision:** `REQ-STATUS-020` maps `CLUSTER_STATE_UNSPECIFIED` →
-`PROGRESSING` (rule 3, ahead of the `FAILED`/`DELETING`/`DELETE_FAILED`
-checks), matching the "closest active state" half of the upstream guidance
-instead of the `FAILED` half — mirroring `CLUSTER_STATE_PROGRESSING`'s own
-mapping. The mapper's `default` branch remains, now scoped to genuinely
-future/unmodeled enum values only.
+**Decision:** `REQ-STATUS-020` now maps `CLUSTER_STATE_UNSPECIFIED` →
+`PROGRESSING` (new rule 3, ahead of the `FAILED`/`DELETING`/
+`DELETE_FAILED` checks), matching the "closest active state" half of the
+upstream guidance instead of the `FAILED` half — mirroring
+`CLUSTER_STATE_PROGRESSING`'s own mapping. `internal/cluster/status.go`
+gained an explicit early-return for it. The `default` branch remains,
+now scoped to genuinely future/unmodeled enum values only.
 
 **Upstream gap flagged:** same two issues as DD-129 — filed against
 `osac-project` (proto `*_STATE_UNSPECIFIED` enum comments don't document
 temporal semantics) and `dcm-project/enhancements`
-(`service-provider-status-reporting.md`'s ambiguous-state guidance conflates
-"not yet reported" with "genuinely anomalous" under one either/or).
+(`service-provider-status-reporting.md`'s ambiguous-state guidance
+conflates "not yet reported" with "genuinely anomalous" under one
+either/or).
 
-**Related requirements:** REQ-STATUS-020
+**Related requirements:** `REQ-STATUS-020`, `AC-STATUS-010`.
 
 ---
 

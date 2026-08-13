@@ -18,6 +18,7 @@ package apiserver_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,6 +33,39 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/health"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
 )
+
+// strictUnimplemented stubs out the Milestone 3 Cluster CRUD methods of
+// oapigen.StrictServerInterface — out of scope for this file's
+// generic-server-lifecycle tests (dedicated Cluster CRUD integration tests
+// live in internal/handlers/cluster). There is no generated
+// "Unimplemented" helper for the *strict* interface (only the non-strict
+// oapigen.Unimplemented), so this is hand-rolled, mirroring that struct's
+// intent.
+type strictUnimplemented struct{}
+
+func (strictUnimplemented) ListClusters(context.Context, oapigen.ListClustersRequestObject) (oapigen.ListClustersResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (strictUnimplemented) CreateCluster(context.Context, oapigen.CreateClusterRequestObject) (oapigen.CreateClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (strictUnimplemented) GetCluster(context.Context, oapigen.GetClusterRequestObject) (oapigen.GetClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (strictUnimplemented) DeleteCluster(context.Context, oapigen.DeleteClusterRequestObject) (oapigen.DeleteClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+// realHandler combines the real health.Handler with strictUnimplemented so
+// the result satisfies the full oapigen.StrictServerInterface, exactly as
+// cmd/osac-service-provider/main.go's composite handler does.
+type realHandler struct {
+	*health.Handler
+	strictUnimplemented
+}
 
 // fakeOSACStatus is a hand-rolled fake satisfying health.OSACStatus, per the
 // "no mocking framework" convention. probeFunc, when set, overrides the
@@ -58,7 +92,7 @@ var integrationDiscardLogger = slog.New(slog.DiscardHandler)
 // realStrictHandler wires the real health.Handler through the real strict
 // adapter, exactly as cmd/osac-service-provider/main.go does.
 func realStrictHandler(osacStatus health.OSACStatus, logger *slog.Logger) oapigen.ServerInterface {
-	h := health.NewHandler(osacStatus, time.Now(), "test-version")
+	h := &realHandler{Handler: health.NewHandler(osacStatus, time.Now(), "test-version")}
 	return oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(logger),
 		ResponseErrorHandlerFunc: apiserver.NewResponseErrorHandler(logger),
