@@ -38,6 +38,7 @@ type fakeClustersServer struct {
 	createCalls []*publicv1.ClustersCreateRequest
 	deleteCalls []*publicv1.ClustersDeleteRequest
 	getCalls    []*publicv1.ClustersGetRequest
+	listCalls   []*publicv1.ClustersListRequest
 }
 
 func (s *fakeClustersServer) Create(_ context.Context, req *publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error) {
@@ -69,7 +70,10 @@ func (s *fakeClustersServer) Get(_ context.Context, req *publicv1.ClustersGetReq
 }
 
 func (s *fakeClustersServer) List(_ context.Context, req *publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
+	s.mu.Lock()
+	s.listCalls = append(s.listCalls, req)
 	fn := s.listFunc
+	s.mu.Unlock()
 	if fn != nil {
 		return fn(req)
 	}
@@ -105,6 +109,12 @@ func (s *fakeClustersServer) DeleteCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.deleteCalls)
+}
+
+func (s *fakeClustersServer) ListCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.listCalls)
 }
 
 func (s *fakeClustersServer) GetCallCount() int {

@@ -307,6 +307,13 @@ None.
 - **When** `GET /api/v1alpha1/clusters` is called
 - **Then** the response entry has no `kubeconfig` field populated, and the fake `GetKubeconfig` call counter equals exactly `0`
 
+##### AC-LIST-040: A `page_token` this SP never issued (not valid base64, or not numeric once decoded) is rejected as `400 Bad Request`, without calling `Clusters/List`
+
+- **Validates:** REQ-LIST-020, REQ-ERR-010
+- **Given** no fake `Clusters/List` behavior is configured (any call would panic/fail the test)
+- **When** `GET /api/v1alpha1/clusters?page_token=not-valid-base64!!!` is called
+- **Then** the response is `400 Bad Request` with `type` exactly `INVALIDARGUMENT`, and the fake's `List` call counter is exactly `0` — proving the token is rejected during request parsing, before any OSAC RPC
+
 #### Dependencies
 
 Depends on Topic 5 (Status Mapping), Topic 6 (Error Mapping), Milestone 2.
