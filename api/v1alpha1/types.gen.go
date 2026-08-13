@@ -279,7 +279,7 @@ type ListClustersParams struct {
 
 // CreateClusterParams defines parameters for CreateCluster.
 type CreateClusterParams struct {
-	// Id Caller-assigned resource identifier, set as OSAC's own `Cluster.id` (REQ-CREATE-020). Schema-optional per AEP-133 ("a create operation must not have any required parameters other than path parameters" — DD-113); REQ-CREATE-010/060 still make it a hard runtime requirement, enforced by request validation (400 if absent/empty) rather than this field's own `required` flag, since control-plane always supplies it and this SP does not auto-generate ids.
+	// Id Caller-assigned resource identifier, set as OSAC's own `Cluster.id` (REQ-CREATE-020). Schema-optional per AEP-133 (DD-113); still a hard runtime requirement, enforced by request validation, not this field's `required` flag (REQ-CREATE-010/060).
 	Id *string `form:"id,omitempty" json:"id,omitempty"`
 }
 
