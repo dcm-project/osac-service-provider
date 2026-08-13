@@ -378,6 +378,13 @@ None.
 - **When** the response's `next_page_token` is fed back into a second `GET /api/v1alpha1/vms?page_token=...` call
 - **Then** the fake's second recorded `List` call has `offset` exactly `50`
 
+##### AC-VMLIST-030: A `page_token` this SP never issued (not valid base64, or not numeric once decoded) is rejected as `400 Bad Request`, without calling `ComputeInstances/List`
+
+- **Validates:** REQ-VMLIST-020, REQ-VMERR-010
+- **Given** no fake `ComputeInstances/List` behavior is configured (any call would panic/fail the test)
+- **When** `GET /api/v1alpha1/vms?page_token=not-valid-base64!!!` is called
+- **Then** the response is `400 Bad Request` with `type` exactly `INVALIDARGUMENT`, and the fake's `List` call counter is exactly `0` — proving the token is rejected during request parsing, before any OSAC RPC
+
 #### Dependencies
 
 Depends on Topic 6 (Status Mapping), Topic 7 (Error Mapping), Milestone 2.

@@ -81,4 +81,18 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 
 		Expect(recordedOffsets).To(Equal([]int32{0, 50}))
 	})
+
+	// TC-I-322 (REQ-VMLIST-020, REQ-VMERR-010, AC-VMLIST-030): a
+	// page_token this SP never issued is rejected as 400 at the real HTTP
+	// boundary, without ever calling ComputeInstances/List.
+	It("rejects a malformed page_token at the real HTTP boundary, without calling List (TC-I-322)", func() {
+		resp := listVMs(f, "?page_token=not-valid-base64!!!")
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		var body v1alpha1.Error
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		Expect(body.Type).To(Equal(v1alpha1.INVALIDARGUMENT))
+		Expect(f.fake.ListCalls()).To(BeEmpty())
+	})
 })
