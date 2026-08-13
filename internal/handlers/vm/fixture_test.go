@@ -319,12 +319,35 @@ func (stubHealth) GetVMsHealth(context.Context, oapigen.GetVMsHealthRequestObjec
 	return nil, errors.New("not implemented")
 }
 
-// realHandler combines the real vmhandlers.Handler with stubHealth so the
-// result satisfies the full oapigen.StrictServerInterface, exactly as
-// cmd/osac-service-provider/main.go's composite handler does.
+// stubCluster stands in for internal/handlers/cluster.Handler's 4
+// StrictServerInterface methods (Cluster CRUD, added Milestone 3) so
+// realHandler below satisfies the full interface without pulling in
+// internal/handlers/cluster — this package's tests exercise only VM CRUD.
+type stubCluster struct{}
+
+func (stubCluster) ListClusters(context.Context, oapigen.ListClustersRequestObject) (oapigen.ListClustersResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubCluster) CreateCluster(context.Context, oapigen.CreateClusterRequestObject) (oapigen.CreateClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubCluster) GetCluster(context.Context, oapigen.GetClusterRequestObject) (oapigen.GetClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubCluster) DeleteCluster(context.Context, oapigen.DeleteClusterRequestObject) (oapigen.DeleteClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+// realHandler combines the real vmhandlers.Handler with stubHealth and
+// stubCluster so the result satisfies the full oapigen.StrictServerInterface,
+// exactly as cmd/osac-service-provider/main.go's composite handler does.
 type realHandler struct {
 	*vmhandlers.Handler
 	stubHealth
+	stubCluster
 }
 
 // integrationFixture starts a real HTTP server (loopback listener, same

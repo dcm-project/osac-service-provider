@@ -13,7 +13,9 @@ import (
 
 	oapigen "github.com/dcm-project/osac-service-provider/internal/api/server"
 	"github.com/dcm-project/osac-service-provider/internal/apiserver"
+	"github.com/dcm-project/osac-service-provider/internal/cluster"
 	"github.com/dcm-project/osac-service-provider/internal/config"
+	clusterhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/cluster"
 	vmhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/vm"
 	"github.com/dcm-project/osac-service-provider/internal/health"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
@@ -22,16 +24,33 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/vm"
 )
 
-// apiHandler combines Milestone 1's health.Handler with Milestone 4's
-// vmhandlers.Handler so the result satisfies the full
-// oapigen.StrictServerInterface. health.Handler is embedded (its two
-// methods, GetClustersHealth/GetVMsHealth, are promoted directly); the VM
-// handler is a named field with explicit forwarding methods below, since
-// both types are named "Handler" and Go disallows embedding two
-// same-named fields in one struct.
+// apiHandler combines Milestone 1's health.Handler with Milestone 3's
+// clusterhandlers.Handler and Milestone 4's vmhandlers.Handler so the
+// result satisfies the full oapigen.StrictServerInterface. health.Handler
+// is embedded (its two methods, GetClustersHealth/GetVMsHealth, are
+// promoted directly); the cluster and VM handlers are named fields with
+// explicit forwarding methods below, since all three types are named
+// "Handler" and Go disallows embedding same-named fields in one struct.
 type apiHandler struct {
 	*health.Handler
-	vm *vmhandlers.Handler
+	cluster *clusterhandlers.Handler
+	vm      *vmhandlers.Handler
+}
+
+func (h *apiHandler) ListClusters(ctx context.Context, req oapigen.ListClustersRequestObject) (oapigen.ListClustersResponseObject, error) {
+	return h.cluster.ListClusters(ctx, req)
+}
+
+func (h *apiHandler) CreateCluster(ctx context.Context, req oapigen.CreateClusterRequestObject) (oapigen.CreateClusterResponseObject, error) {
+	return h.cluster.CreateCluster(ctx, req)
+}
+
+func (h *apiHandler) GetCluster(ctx context.Context, req oapigen.GetClusterRequestObject) (oapigen.GetClusterResponseObject, error) {
+	return h.cluster.GetCluster(ctx, req)
+}
+
+func (h *apiHandler) DeleteCluster(ctx context.Context, req oapigen.DeleteClusterRequestObject) (oapigen.DeleteClusterResponseObject, error) {
+	return h.cluster.DeleteCluster(ctx, req)
 }
 
 func (h *apiHandler) ListVMs(ctx context.Context, req oapigen.ListVMsRequestObject) (oapigen.ListVMsResponseObject, error) {
@@ -115,13 +134,15 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	healthHandler := health.NewHandler(osacBootstrap, time.Now(), version)
+	clusterSvc := cluster.New(publicv1.NewClustersClient(osacBootstrap.Conn()), publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()))
+	clusterHandler := clusterhandlers.NewHandler(clusterSvc, logger)
 	vmSvc := vm.New(
 		publicv1.NewComputeInstancesClient(osacBootstrap.Conn()),
 		publicv1.NewSubnetsClient(osacBootstrap.Conn()),
 		publicv1.NewVirtualNetworksClient(osacBootstrap.Conn()),
 	)
 	vmHandler := vmhandlers.NewHandler(vmSvc, logger)
-	handler := &apiHandler{Handler: healthHandler, vm: vmHandler}
+	handler := &apiHandler{Handler: healthHandler, cluster: clusterHandler, vm: vmHandler}
 	strictAdapter := oapigen.NewStrictHandlerWithOptions(handler, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(logger),
 		ResponseErrorHandlerFunc: apiserver.NewResponseErrorHandler(logger),

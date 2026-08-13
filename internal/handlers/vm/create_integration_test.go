@@ -46,7 +46,7 @@ var _ = Describe("VM Create (integration, real HTTP + router + bufconn OSAC fake
 		var vmObj v1alpha1.VirtualMachine
 		Expect(json.NewDecoder(resp.Body).Decode(&vmObj)).To(Succeed())
 		Expect(*vmObj.Id).To(Equal("X"))
-		Expect(vmObj.Status).To(Equal(v1alpha1.PROVISIONING))
+		Expect(vmObj.Status).To(Equal(v1alpha1.VMStatusPROVISIONING))
 
 		Expect(f.fake.CreateCallCount()).To(Equal(1))
 		req := f.fake.LastCreateCall()
@@ -92,7 +92,7 @@ var _ = Describe("VM Create (integration, real HTTP + router + bufconn OSAC fake
 		var vmObj v1alpha1.VirtualMachine
 		Expect(json.NewDecoder(second.Body).Decode(&vmObj)).To(Succeed())
 		Expect(*vmObj.Id).To(Equal("X"))
-		Expect(vmObj.Status).To(Equal(v1alpha1.PROVISIONING))
+		Expect(vmObj.Status).To(Equal(v1alpha1.VMStatusPROVISIONING))
 		Expect(f.fake.GetCallCount()).To(Equal(1))
 	})
 

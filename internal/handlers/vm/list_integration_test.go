@@ -52,10 +52,10 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 		Expect(recordedFilter).To(Equal(`this.metadata.labels["dcm.io/managed-by"] == "dcm"`))
 		Expect(list.Results).To(HaveLen(2))
 		Expect(*list.Results[0].Id).To(Equal("vm1"))
-		Expect(list.Results[0].Status).To(Equal(v1alpha1.RUNNING))
+		Expect(list.Results[0].Status).To(Equal(v1alpha1.VMStatusRUNNING))
 		Expect(*list.Results[0].InternalIpAddress).To(Equal("10.200.1.1"))
 		Expect(*list.Results[1].Id).To(Equal("vm2"))
-		Expect(list.Results[1].Status).To(Equal(v1alpha1.PROVISIONING))
+		Expect(list.Results[1].Status).To(Equal(v1alpha1.VMStatusPROVISIONING))
 		Expect(*list.Results[1].InternalIpAddress).To(Equal("10.200.1.2"))
 	})
 
@@ -92,7 +92,7 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
-		Expect(body.Type).To(Equal(v1alpha1.INVALIDARGUMENT))
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
 		Expect(f.fake.ListCalls()).To(BeEmpty())
 	})
 })

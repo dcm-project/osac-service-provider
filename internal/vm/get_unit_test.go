@@ -37,7 +37,7 @@ var _ = Describe("Service.Get (Topic 4.2 VM Get)", func() {
 		result, err := f.svc.Get(context.Background(), "X")
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(result.Status).To(Equal(v1alpha1.RUNNING))
+		Expect(result.Status).To(Equal(v1alpha1.VMStatusRUNNING))
 		Expect(*result.InternalIpAddress).To(Equal("10.200.1.5"))
 		Expect(*result.ExternalIpAddress).To(Equal(""))
 	})

@@ -7,33 +7,66 @@ import (
 	"time"
 )
 
+// Defines values for ClusterStatus.
+const (
+	ClusterStatusACTIVE      ClusterStatus = "ACTIVE"
+	ClusterStatusDEGRADED    ClusterStatus = "DEGRADED"
+	ClusterStatusDELETED     ClusterStatus = "DELETED"
+	ClusterStatusDELETING    ClusterStatus = "DELETING"
+	ClusterStatusFAILED      ClusterStatus = "FAILED"
+	ClusterStatusPROGRESSING ClusterStatus = "PROGRESSING"
+	ClusterStatusUNAVAILABLE ClusterStatus = "UNAVAILABLE"
+)
+
+// Valid indicates whether the value is a known member of the ClusterStatus enum.
+func (e ClusterStatus) Valid() bool {
+	switch e {
+	case ClusterStatusACTIVE:
+		return true
+	case ClusterStatusDEGRADED:
+		return true
+	case ClusterStatusDELETED:
+		return true
+	case ClusterStatusDELETING:
+		return true
+	case ClusterStatusFAILED:
+		return true
+	case ClusterStatusPROGRESSING:
+		return true
+	case ClusterStatusUNAVAILABLE:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ErrorType.
 const (
-	ALREADYEXISTS    ErrorType = "https://dcm-project.github.io/problems/already-exists"
-	INTERNAL         ErrorType = "https://dcm-project.github.io/problems/internal"
-	INVALIDARGUMENT  ErrorType = "https://dcm-project.github.io/problems/invalid-argument"
-	NOTFOUND         ErrorType = "https://dcm-project.github.io/problems/not-found"
-	PERMISSIONDENIED ErrorType = "https://dcm-project.github.io/problems/permission-denied"
-	UNAUTHENTICATED  ErrorType = "https://dcm-project.github.io/problems/unauthenticated"
-	UNAVAILABLE      ErrorType = "https://dcm-project.github.io/problems/unavailable"
+	ErrorTypeALREADYEXISTS    ErrorType = "https://dcm-project.github.io/problems/already-exists"
+	ErrorTypeINTERNAL         ErrorType = "https://dcm-project.github.io/problems/internal"
+	ErrorTypeINVALIDARGUMENT  ErrorType = "https://dcm-project.github.io/problems/invalid-argument"
+	ErrorTypeNOTFOUND         ErrorType = "https://dcm-project.github.io/problems/not-found"
+	ErrorTypePERMISSIONDENIED ErrorType = "https://dcm-project.github.io/problems/permission-denied"
+	ErrorTypeUNAUTHENTICATED  ErrorType = "https://dcm-project.github.io/problems/unauthenticated"
+	ErrorTypeUNAVAILABLE      ErrorType = "https://dcm-project.github.io/problems/unavailable"
 )
 
 // Valid indicates whether the value is a known member of the ErrorType enum.
 func (e ErrorType) Valid() bool {
 	switch e {
-	case ALREADYEXISTS:
+	case ErrorTypeALREADYEXISTS:
 		return true
-	case INTERNAL:
+	case ErrorTypeINTERNAL:
 		return true
-	case INVALIDARGUMENT:
+	case ErrorTypeINVALIDARGUMENT:
 		return true
-	case NOTFOUND:
+	case ErrorTypeNOTFOUND:
 		return true
-	case PERMISSIONDENIED:
+	case ErrorTypePERMISSIONDENIED:
 		return true
-	case UNAUTHENTICATED:
+	case ErrorTypeUNAUTHENTICATED:
 		return true
-	case UNAVAILABLE:
+	case ErrorTypeUNAVAILABLE:
 		return true
 	default:
 		return false
@@ -60,38 +93,132 @@ func (e HealthStatus) Valid() bool {
 
 // Defines values for VMStatus.
 const (
-	DELETED      VMStatus = "DELETED"
-	DELETING     VMStatus = "DELETING"
-	FAILED       VMStatus = "FAILED"
-	PAUSED       VMStatus = "PAUSED"
-	PROVISIONING VMStatus = "PROVISIONING"
-	RUNNING      VMStatus = "RUNNING"
-	STOPPED      VMStatus = "STOPPED"
-	STOPPING     VMStatus = "STOPPING"
+	VMStatusDELETED      VMStatus = "DELETED"
+	VMStatusDELETING     VMStatus = "DELETING"
+	VMStatusFAILED       VMStatus = "FAILED"
+	VMStatusPAUSED       VMStatus = "PAUSED"
+	VMStatusPROVISIONING VMStatus = "PROVISIONING"
+	VMStatusRUNNING      VMStatus = "RUNNING"
+	VMStatusSTOPPED      VMStatus = "STOPPED"
+	VMStatusSTOPPING     VMStatus = "STOPPING"
 )
 
 // Valid indicates whether the value is a known member of the VMStatus enum.
 func (e VMStatus) Valid() bool {
 	switch e {
-	case DELETED:
+	case VMStatusDELETED:
 		return true
-	case DELETING:
+	case VMStatusDELETING:
 		return true
-	case FAILED:
+	case VMStatusFAILED:
 		return true
-	case PAUSED:
+	case VMStatusPAUSED:
 		return true
-	case PROVISIONING:
+	case VMStatusPROVISIONING:
 		return true
-	case RUNNING:
+	case VMStatusRUNNING:
 		return true
-	case STOPPED:
+	case VMStatusSTOPPED:
 		return true
-	case STOPPING:
+	case VMStatusSTOPPING:
 		return true
 	default:
 		return false
 	}
+}
+
+// Cluster A cluster resource managed by OSAC.
+type Cluster struct {
+	CreateTime *time.Time `json:"create_time,omitempty"`
+
+	// Id Same value as OSAC's `Cluster.id` (DD-080's ID Mapping note).
+	Id *string `json:"id,omitempty"`
+
+	// Kubeconfig Base64-encoded kubeconfig. Populated only when `status` is exactly `ACTIVE` (REQ-GET-020/030); always empty on List entries (REQ-LIST-030).
+	Kubeconfig *string `json:"kubeconfig,omitempty"`
+
+	// NodeSets Echoes OSAC's `status.node_sets` map directly — no `ready`/`total` computation, since OSAC's `ClusterNodeSet` has no such field (SC-M3-002).
+	NodeSets *map[string]ClusterNodeSet `json:"node_sets,omitempty"`
+
+	// Path Resource path for this cluster
+	//
+	// Example: clusters/123e4567-e89b-12d3-a456-426614174000
+	Path *string `json:"path,omitempty"`
+
+	// Spec Request-only (DD-113): only field `control-plane` populates on Create; never present on Get/List. Required per OpenAPI 3.0's `writeOnly`+`required` (request-only), mirroring `status`'s `readOnly`+`required` (response-only) above — both generate as pointers (`omitempty`) either way, so neither forces a spurious empty value on the other's side. Also enforced at the handler level (REQ-CREATE-060).
+	Spec   *ClusterSpec   `json:"spec,omitempty"`
+	Status *ClusterStatus `json:"status,omitempty"`
+
+	// StatusMessage Human-readable message about the current status
+	StatusMessage *string    `json:"status_message,omitempty"`
+	UpdateTime    *time.Time `json:"update_time,omitempty"`
+
+	// Version Echoed from the Create request's `spec.version`. Create response only — omitted on Get/List (SC-M3-002).
+	Version *string `json:"version,omitempty"`
+}
+
+// ClusterList AEP-132 pagination wrapper.
+type ClusterList struct {
+	// NextPageToken Empty/absent exactly when there are no further results (REQ-LIST-040).
+	NextPageToken *string   `json:"next_page_token,omitempty"`
+	Results       []Cluster `json:"results"`
+}
+
+// ClusterMetadata defines model for ClusterMetadata.
+type ClusterMetadata struct {
+	// Labels Merged with (not replaced by) the three `dcm.io/*` ownership labels the SP always sets (REQ-CREATE-030).
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// Name Human-readable cluster name. Mapped to OSAC's `spec.metadata.name`.
+	Name string `json:"name"`
+}
+
+// ClusterNodeSet Mirrors OSAC's `ClusterNodeSet` (`host_type`, `size`) — see SC-M3-002.
+type ClusterNodeSet struct {
+	HostType *string `json:"host_type,omitempty"`
+	Size     *int    `json:"size,omitempty"`
+}
+
+// ClusterNodes Node configuration for the cluster. No `control_plane` bucket: OSAC's Hosted Control Planes manage the control plane internally, so the generic schema's `nodes.control_plane` has no corresponding OSAC field and is not sent (see M3 spec §4.1 Field Mapping).
+type ClusterNodes struct {
+	Worker ClusterWorkerNodes `json:"worker"`
+}
+
+// ClusterProviderHints defines model for ClusterProviderHints.
+type ClusterProviderHints struct {
+	Osac OSACProviderHints `json:"osac"`
+}
+
+// ClusterSpec Service-type-specific input specification for a cluster (Kubernetes Cluster generic schema).
+type ClusterSpec struct {
+	Metadata ClusterMetadata `json:"metadata"`
+
+	// Nodes Node configuration for the cluster. No `control_plane` bucket: OSAC's Hosted Control Planes manage the control plane internally, so the generic schema's `nodes.control_plane` has no corresponding OSAC field and is not sent (see M3 spec §4.1 Field Mapping).
+	Nodes         ClusterNodes         `json:"nodes"`
+	ProviderHints ClusterProviderHints `json:"provider_hints"`
+
+	// Version Kubernetes minor version (e.g. "1.30"). Translated internally to an OSAC `release_image` via a hardcoded placeholder table (REQ-CREATE-025) unless `provider_hints.osac.release_image` overrides it. Echoed back verbatim on the Create response only — Get/List omit it (SC-M3-002).
+	//
+	// Example: 1.30
+	Version string `json:"version"`
+}
+
+// ClusterStatus DCM's full canonical 7-value Cluster status vocabulary (DD-090) — not the 5-value subset in the osac-sp enhancement doc's own Status Mapping table.
+type ClusterStatus string
+
+// ClusterWorkerNodes defines model for ClusterWorkerNodes.
+type ClusterWorkerNodes struct {
+	// Count Number of worker nodes. Mapped to OSAC's `spec.node_sets[key].size`.
+	Count int `json:"count"`
+
+	// Cpu Informational only (REQ-CREATE-070) — `host_type` is fixed by the template; the SP never derives an OSAC field from this.
+	Cpu *int `json:"cpu,omitempty"`
+
+	// Memory Informational only (REQ-CREATE-070). E.g. "32GB".
+	Memory *string `json:"memory,omitempty"`
+
+	// Storage Informational only (REQ-CREATE-070). E.g. "250GB".
+	Storage *string `json:"storage,omitempty"`
 }
 
 // Error RFC 9457 compliant error response (Problem Details for HTTP APIs)
@@ -155,6 +282,24 @@ type Health struct {
 //
 // Example: healthy
 type HealthStatus string
+
+// OSACProviderHints defines model for OSACProviderHints.
+type OSACProviderHints struct {
+	// BaseDomain Optional passthrough to OSAC's `spec.network.*`.
+	BaseDomain *string `json:"base_domain,omitempty"`
+
+	// PullSecret Optional passthrough to OSAC's `spec.pull_secret`. Write-only.
+	PullSecret *string `json:"pull_secret,omitempty"`
+
+	// ReleaseImage Optional override for the `version`-derived `release_image` translation (REQ-CREATE-025).
+	ReleaseImage *string `json:"release_image,omitempty"`
+
+	// SshKey Optional passthrough to OSAC's `spec.ssh_public_key`.
+	SshKey *string `json:"ssh_key,omitempty"`
+
+	// TemplateId Reference to the OSAC cluster template. Mapped to OSAC's `spec.template`.
+	TemplateId string `json:"template_id"`
+}
 
 // OSACVMProviderHints defines model for OSACVMProviderHints.
 type OSACVMProviderHints struct {
@@ -274,8 +419,26 @@ type VirtualMachineList struct {
 	Results       []VirtualMachine `json:"results"`
 }
 
+// ClusterIdPath defines model for ClusterIdPath.
+type ClusterIdPath = string
+
 // VMIdPath defines model for VMIdPath.
 type VMIdPath = string
+
+// ListClustersParams defines parameters for ListClusters.
+type ListClustersParams struct {
+	// PageToken Opaque pagination token from a previous response's `next_page_token`.
+	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
+
+	// MaxPageSize Maximum number of results to return per page.
+	MaxPageSize *int32 `form:"max_page_size,omitempty" json:"max_page_size,omitempty"`
+}
+
+// CreateClusterParams defines parameters for CreateCluster.
+type CreateClusterParams struct {
+	// Id Caller-assigned resource identifier, set as OSAC's own `Cluster.id` (REQ-CREATE-020). Schema-optional per AEP-133 (DD-113); still a hard runtime requirement, enforced by request validation, not this field's `required` flag (REQ-CREATE-010/060).
+	Id *string `form:"id,omitempty" json:"id,omitempty"`
+}
 
 // ListVMsParams defines parameters for ListVMs.
 type ListVMsParams struct {
@@ -291,6 +454,9 @@ type CreateVMParams struct {
 	// Id Caller-assigned resource identifier, set as OSAC's own `ComputeInstance.id` (REQ-VMCREATE-020). Schema-optional per AEP-133 ("a create operation must not have any required parameters other than path parameters" — DD-125); REQ-VMCREATE-010/060 still make it a hard runtime requirement, enforced by request validation (400 if absent/empty) rather than this field's own `required` flag, since control-plane always supplies it and this SP does not auto-generate ids.
 	Id *string `form:"id,omitempty" json:"id,omitempty"`
 }
+
+// CreateClusterJSONRequestBody defines body for CreateCluster for application/json ContentType.
+type CreateClusterJSONRequestBody = Cluster
 
 // CreateVMJSONRequestBody defines body for CreateVM for application/json ContentType.
 type CreateVMJSONRequestBody = VirtualMachine

@@ -26,15 +26,15 @@ var _ = Describe("Classify (Topic 7 VM Error Mapping)", func() {
 			Expect(errType).To(Equal(wantType))
 			Expect(title).NotTo(BeEmpty())
 		},
-		Entry("InvalidArgument -> 400", codes.InvalidArgument, http.StatusBadRequest, v1alpha1.INVALIDARGUMENT),
-		Entry("Unauthenticated -> 401", codes.Unauthenticated, http.StatusUnauthorized, v1alpha1.UNAUTHENTICATED),
-		Entry("PermissionDenied -> 403", codes.PermissionDenied, http.StatusForbidden, v1alpha1.PERMISSIONDENIED),
-		Entry("NotFound -> 404", codes.NotFound, http.StatusNotFound, v1alpha1.NOTFOUND),
-		Entry("AlreadyExists -> 409", codes.AlreadyExists, http.StatusConflict, v1alpha1.ALREADYEXISTS),
-		Entry("Unavailable -> 502", codes.Unavailable, http.StatusBadGateway, v1alpha1.UNAVAILABLE),
-		Entry("DeadlineExceeded -> 502", codes.DeadlineExceeded, http.StatusBadGateway, v1alpha1.UNAVAILABLE),
-		Entry("Internal -> 500", codes.Internal, http.StatusInternalServerError, v1alpha1.INTERNAL),
-		Entry("Unknown -> 500 (catch-all)", codes.Unknown, http.StatusInternalServerError, v1alpha1.INTERNAL),
+		Entry("InvalidArgument -> 400", codes.InvalidArgument, http.StatusBadRequest, v1alpha1.ErrorTypeINVALIDARGUMENT),
+		Entry("Unauthenticated -> 401", codes.Unauthenticated, http.StatusUnauthorized, v1alpha1.ErrorTypeUNAUTHENTICATED),
+		Entry("PermissionDenied -> 403", codes.PermissionDenied, http.StatusForbidden, v1alpha1.ErrorTypePERMISSIONDENIED),
+		Entry("NotFound -> 404", codes.NotFound, http.StatusNotFound, v1alpha1.ErrorTypeNOTFOUND),
+		Entry("AlreadyExists -> 409", codes.AlreadyExists, http.StatusConflict, v1alpha1.ErrorTypeALREADYEXISTS),
+		Entry("Unavailable -> 502", codes.Unavailable, http.StatusBadGateway, v1alpha1.ErrorTypeUNAVAILABLE),
+		Entry("DeadlineExceeded -> 502", codes.DeadlineExceeded, http.StatusBadGateway, v1alpha1.ErrorTypeUNAVAILABLE),
+		Entry("Internal -> 500", codes.Internal, http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL),
+		Entry("Unknown -> 500 (catch-all)", codes.Unknown, http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL),
 	)
 
 	// Supplementary to TC-U-360: a plain (non-gRPC-status) error — e.g. one
@@ -47,7 +47,7 @@ var _ = Describe("Classify (Topic 7 VM Error Mapping)", func() {
 		status, errType, title := grpcerror.Classify(errPlain{})
 
 		Expect(status).To(Equal(http.StatusInternalServerError))
-		Expect(errType).To(Equal(v1alpha1.INTERNAL))
+		Expect(errType).To(Equal(v1alpha1.ErrorTypeINTERNAL))
 		Expect(title).NotTo(BeEmpty())
 	})
 })

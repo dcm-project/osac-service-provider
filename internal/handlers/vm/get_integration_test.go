@@ -50,7 +50,7 @@ var _ = Describe("VM Get (integration, real HTTP + router + bufconn OSAC fake)",
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		var vmObj v1alpha1.VirtualMachine
 		Expect(json.NewDecoder(resp.Body).Decode(&vmObj)).To(Succeed())
-		Expect(vmObj.Status).To(Equal(v1alpha1.RUNNING))
+		Expect(vmObj.Status).To(Equal(v1alpha1.VMStatusRUNNING))
 		Expect(*vmObj.InternalIpAddress).To(Equal("10.200.1.5"))
 		Expect(*vmObj.ExternalIpAddress).To(Equal(""))
 	})
@@ -69,6 +69,6 @@ var _ = Describe("VM Get (integration, real HTTP + router + bufconn OSAC fake)",
 		Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
-		Expect(body.Type).To(Equal(v1alpha1.NOTFOUND))
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeNOTFOUND))
 	})
 })

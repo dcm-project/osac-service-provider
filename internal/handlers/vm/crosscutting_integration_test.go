@@ -128,12 +128,12 @@ var _ = Describe("Default Network Provisioning, Status, and Error mapping (integ
 			Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 			Expect(body.Type).To(Equal(wantType))
 		},
-		Entry("InvalidArgument -> 400", codes.InvalidArgument, http.StatusBadRequest, v1alpha1.INVALIDARGUMENT),
-		Entry("Unauthenticated -> 401", codes.Unauthenticated, http.StatusUnauthorized, v1alpha1.UNAUTHENTICATED),
-		Entry("PermissionDenied -> 403", codes.PermissionDenied, http.StatusForbidden, v1alpha1.PERMISSIONDENIED),
-		Entry("NotFound -> 404", codes.NotFound, http.StatusNotFound, v1alpha1.NOTFOUND),
-		Entry("Unavailable -> 502", codes.Unavailable, http.StatusBadGateway, v1alpha1.UNAVAILABLE),
-		Entry("Internal -> 500", codes.Internal, http.StatusInternalServerError, v1alpha1.INTERNAL),
+		Entry("InvalidArgument -> 400", codes.InvalidArgument, http.StatusBadRequest, v1alpha1.ErrorTypeINVALIDARGUMENT),
+		Entry("Unauthenticated -> 401", codes.Unauthenticated, http.StatusUnauthorized, v1alpha1.ErrorTypeUNAUTHENTICATED),
+		Entry("PermissionDenied -> 403", codes.PermissionDenied, http.StatusForbidden, v1alpha1.ErrorTypePERMISSIONDENIED),
+		Entry("NotFound -> 404", codes.NotFound, http.StatusNotFound, v1alpha1.ErrorTypeNOTFOUND),
+		Entry("Unavailable -> 502", codes.Unavailable, http.StatusBadGateway, v1alpha1.ErrorTypeUNAVAILABLE),
+		Entry("Internal -> 500", codes.Internal, http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL),
 	)
 
 	It("produces an identical PermissionDenied mapping across List and Delete, over real HTTP (TC-I-360b)", func() {
@@ -158,7 +158,7 @@ var _ = Describe("Default Network Provisioning, Status, and Error mapping (integ
 		var listErr, deleteErr v1alpha1.Error
 		Expect(json.NewDecoder(listResp.Body).Decode(&listErr)).To(Succeed())
 		Expect(json.NewDecoder(deleteResp.Body).Decode(&deleteErr)).To(Succeed())
-		Expect(listErr.Type).To(Equal(v1alpha1.PERMISSIONDENIED))
-		Expect(deleteErr.Type).To(Equal(v1alpha1.PERMISSIONDENIED))
+		Expect(listErr.Type).To(Equal(v1alpha1.ErrorTypePERMISSIONDENIED))
+		Expect(deleteErr.Type).To(Equal(v1alpha1.ErrorTypePERMISSIONDENIED))
 	})
 })

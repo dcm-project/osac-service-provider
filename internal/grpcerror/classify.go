@@ -33,18 +33,18 @@ import (
 func Classify(err error) (status int, errType v1alpha1.ErrorType, title string) {
 	switch grpcstatus.Code(err) {
 	case codes.InvalidArgument:
-		return http.StatusBadRequest, v1alpha1.INVALIDARGUMENT, "Bad Request"
+		return http.StatusBadRequest, v1alpha1.ErrorTypeINVALIDARGUMENT, "Bad Request"
 	case codes.Unauthenticated:
-		return http.StatusUnauthorized, v1alpha1.UNAUTHENTICATED, "Unauthorized"
+		return http.StatusUnauthorized, v1alpha1.ErrorTypeUNAUTHENTICATED, "Unauthorized"
 	case codes.PermissionDenied:
-		return http.StatusForbidden, v1alpha1.PERMISSIONDENIED, "Forbidden"
+		return http.StatusForbidden, v1alpha1.ErrorTypePERMISSIONDENIED, "Forbidden"
 	case codes.NotFound:
-		return http.StatusNotFound, v1alpha1.NOTFOUND, "Not Found"
+		return http.StatusNotFound, v1alpha1.ErrorTypeNOTFOUND, "Not Found"
 	case codes.AlreadyExists:
-		return http.StatusConflict, v1alpha1.ALREADYEXISTS, "Conflict"
+		return http.StatusConflict, v1alpha1.ErrorTypeALREADYEXISTS, "Conflict"
 	case codes.Unavailable, codes.DeadlineExceeded:
-		return http.StatusBadGateway, v1alpha1.UNAVAILABLE, "Bad Gateway"
+		return http.StatusBadGateway, v1alpha1.ErrorTypeUNAVAILABLE, "Bad Gateway"
 	default:
-		return http.StatusInternalServerError, v1alpha1.INTERNAL, httperror.InternalTitle
+		return http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL, httperror.InternalTitle
 	}
 }

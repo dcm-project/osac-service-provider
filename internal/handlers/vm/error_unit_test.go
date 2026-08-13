@@ -66,7 +66,7 @@ var _ = Describe("Error Mapping (Topic 7, shared across VM handlers)", func() {
 		Expect(listRec.Code).To(Equal(http.StatusForbidden))
 		Expect(deleteRec.Code).To(Equal(http.StatusForbidden))
 
-		wantType := v1alpha1.PERMISSIONDENIED
+		wantType := v1alpha1.ErrorTypePERMISSIONDENIED
 		Expect(decodeError(getRec).Type).To(Equal(wantType))
 		Expect(decodeError(listRec).Type).To(Equal(wantType))
 		Expect(decodeError(deleteRec).Type).To(Equal(wantType))

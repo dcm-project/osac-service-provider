@@ -34,6 +34,31 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/osac"
 )
 
+// strictUnimplemented stubs out the Milestone 3 Cluster CRUD methods of
+// oapigen.StrictServerInterface — out of scope for this file's
+// generic-server-lifecycle tests (dedicated Cluster CRUD integration tests
+// live in internal/handlers/cluster). There is no generated
+// "Unimplemented" helper for the *strict* interface (only the non-strict
+// oapigen.Unimplemented), so this is hand-rolled, mirroring that struct's
+// intent.
+type strictUnimplemented struct{}
+
+func (strictUnimplemented) ListClusters(context.Context, oapigen.ListClustersRequestObject) (oapigen.ListClustersResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (strictUnimplemented) CreateCluster(context.Context, oapigen.CreateClusterRequestObject) (oapigen.CreateClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (strictUnimplemented) GetCluster(context.Context, oapigen.GetClusterRequestObject) (oapigen.GetClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (strictUnimplemented) DeleteCluster(context.Context, oapigen.DeleteClusterRequestObject) (oapigen.DeleteClusterResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
 // fakeOSACStatus is a hand-rolled fake satisfying health.OSACStatus, per the
 // "no mocking framework" convention. probeFunc, when set, overrides the
 // default always-connected behavior (used to simulate a slow downstream
@@ -80,11 +105,13 @@ func (stubVM) DeleteVM(context.Context, oapigen.DeleteVMRequestObject) (oapigen.
 	return nil, errors.New("not implemented")
 }
 
-// combinedStrictHandler combines the real health.Handler with stubVM so
-// the result satisfies the full oapigen.StrictServerInterface, exactly as
-// cmd/osac-service-provider/main.go's own apiHandler does.
+// combinedStrictHandler combines the real health.Handler with
+// strictUnimplemented (Milestone 3 Cluster CRUD) and stubVM (Milestone 4 VM
+// CRUD) so the result satisfies the full oapigen.StrictServerInterface,
+// exactly as cmd/osac-service-provider/main.go's own apiHandler does.
 type combinedStrictHandler struct {
 	*health.Handler
+	strictUnimplemented
 	stubVM
 }
 

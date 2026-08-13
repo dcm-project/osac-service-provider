@@ -28,38 +28,37 @@ import (
 // osac-operator's first reconcile pass — not a genuine anomaly. Treating it
 // as FAILED produced a false failure on every single VM creation.
 //
-// The generated constant names are currently bare (v1alpha1.RUNNING) since
-// oapi-codegen only prefixes on a genuine cross-schema collision, and none
-// exists yet for VMStatus. A future M3/M4 spec merge may introduce one
-// (both share raw values like FAILED/DELETING/DELETED) — expected, not a
-// regression, since every call site here already goes through these
-// generated identifiers and would pick up the rename automatically.
+// The generated constant names became VMStatus-prefixed (e.g.
+// v1alpha1.VMStatusRUNNING) once the Milestone 3 Cluster CRUD spec merged
+// into this one: oapi-codegen only prefixes on a genuine cross-schema
+// collision, and ClusterStatus/VMStatus share several raw values
+// (FAILED/DELETING/DELETED) — expected, not a regression.
 func MapStatus(err error, status *publicv1.ComputeInstanceStatus) v1alpha1.VMStatus {
 	if err != nil {
 		if grpcstatus.Code(err) == codes.NotFound {
-			return v1alpha1.DELETED
+			return v1alpha1.VMStatusDELETED
 		}
-		return v1alpha1.FAILED
+		return v1alpha1.VMStatusFAILED
 	}
 
 	switch status.GetState() {
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_UNSPECIFIED:
-		return v1alpha1.PROVISIONING
+		return v1alpha1.VMStatusPROVISIONING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STARTING:
-		return v1alpha1.PROVISIONING
+		return v1alpha1.VMStatusPROVISIONING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING:
-		return v1alpha1.RUNNING
+		return v1alpha1.VMStatusRUNNING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_FAILED:
-		return v1alpha1.FAILED
+		return v1alpha1.VMStatusFAILED
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_DELETING:
-		return v1alpha1.DELETING
+		return v1alpha1.VMStatusDELETING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STOPPING:
-		return v1alpha1.STOPPING
+		return v1alpha1.VMStatusSTOPPING
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_STOPPED:
-		return v1alpha1.STOPPED
+		return v1alpha1.VMStatusSTOPPED
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_PAUSED:
-		return v1alpha1.PAUSED
+		return v1alpha1.VMStatusPAUSED
 	default:
-		return v1alpha1.FAILED
+		return v1alpha1.VMStatusFAILED
 	}
 }

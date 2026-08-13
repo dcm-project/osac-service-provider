@@ -119,7 +119,7 @@ var _ = Describe("Service.Create (Topic 4.1 VM Create)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(*result.Id).To(Equal("X"))
-		Expect(result.Status).To(Equal(v1alpha1.PROVISIONING))
+		Expect(result.Status).To(Equal(v1alpha1.VMStatusPROVISIONING))
 		Expect(f.fake.GetCallCount()).To(Equal(1))
 	})
 
