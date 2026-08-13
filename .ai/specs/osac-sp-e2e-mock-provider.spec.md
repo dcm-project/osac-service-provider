@@ -97,9 +97,10 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
         |    POST /token                                           |
         |                                                          |
         |  internal/mockprovider/{clusters,computeinstances,       |
-        |    subnets,virtualnetworks,capabilities}.go (gRPC)       |
-        |    each backed by a resourceStore[T] (store.go) —        |
-        |    thread-safe, insertion-ordered, ID-keyed map          |
+        |    subnets,virtualnetworks,capabilities,                |
+        |    clustertemplates}.go (gRPC)                          |
+        |    CRUD-shaped services backed by a resourceStore[T]     |
+        |    (store.go) — thread-safe, insertion-ordered map        |
         +--------------------------------------------------------+
 ```
 
@@ -125,6 +126,10 @@ distinct URLs/addresses.
   (`osac-sp` never supplies a `Subnet`/`VirtualNetwork` ID on create either
   — see M4 spec §4.5, Default Network Provisioning).
 - `capabilities.go` — trivial `Get`, no state (REQ-MOCK-060).
+- `clustertemplates.go` — trivial `Get`, no state, hardcoded single
+  well-known template (REQ-MOCK-130). Added after the rest of this
+  package, once Milestone 3's `internal/cluster.Service.Create` introduced
+  the dependency (see REQ-MOCK-130's own rationale column).
 - `oidc.go` — the HTTP discovery + token stub (REQ-MOCK-070/080).
 
 ### New binary: `cmd/osac-mock-provider`
@@ -153,6 +158,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 | REQ-MOCK-100 | The token endpoint MUST reject any request whose `grant_type` is missing or not `client_credentials` with HTTP `400` and an RFC 6749 §5.2-shaped `{"error": "..."}` body | MUST | |
 | REQ-MOCK-110 | The binary MUST load its gRPC and HTTP listen addresses from environment variables, failing fast (matching `internal/config.Load()`'s convention) when a required value is missing/empty, and MUST shut down both listeners gracefully on `SIGTERM`/`SIGINT` | MUST | |
 | REQ-MOCK-120 | `Clusters/GetKubeconfig` MUST return a non-empty, base64-encoded stub kubeconfig for a known `id`, and gRPC `NOT_FOUND` for an unknown one — mirroring the other four CRUD-shaped services' `Get` semantics (REQ-MOCK-040) | MUST | Correction to §1's original scope (see DD-145); backs Milestone 3's `internal/cluster.Service.Get` (REQ-GET-020) |
+| REQ-MOCK-130 | `ClusterTemplates/Get` MUST return a template with exactly one entry in `node_sets` for the well-known id `default-hcp` (matching this suite's own `validClusterCreateBody`'s `provider_hints.osac.template_id`), and gRPC `NOT_FOUND` for any other id | MUST | Second correction to §1's original scope, same category as REQ-MOCK-120/DD-145: `internal/cluster.Service.Create`'s `resolveNodeSetKey` (M3 REQ-CREATE-080) calls this RPC on every Create, and this binary was originally built before `ClusterTemplates` existed (M3 landed after this branch) — without it, every real e2e Cluster Create fails 500/INTERNAL on the real mock (`ClusterTemplates/Get` is UNIMPLEMENTED), a gap this suite's own local dry-run against a combined branch caught before either PR merged |
 
 ---
 
@@ -268,6 +274,17 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 - **When** `Clusters/GetKubeconfig` is called with that cluster's `id`
 - **Then** the response's `kubeconfig` field is non-empty and valid base64
 - **And** calling it with an unknown `id` instead returns gRPC `NOT_FOUND`
+
+##### AC-MOCK-140: ClusterTemplates/Get resolves the well-known default-hcp template; unknown ids are NotFound
+
+- **Validates:** REQ-MOCK-130
+- **When** `ClusterTemplates/Get` is called with `id: "default-hcp"`
+- **Then** the response's `node_sets` map has exactly one entry
+- **And** calling it with an unknown `id` instead returns gRPC `NOT_FOUND`
+- **And**, as an end-to-end consequence, `osac-sp`'s real Cluster `Create`
+  (M3, `validClusterCreateBody`'s `template_id: "default-hcp"`) succeeds
+  `201` against this real mock, rather than 500/INTERNAL from an
+  UNIMPLEMENTED `ClusterTemplates/Get`
 
 ---
 

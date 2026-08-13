@@ -73,6 +73,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	grpcSrv := grpc.NewServer()
 	publicv1.RegisterCapabilitiesServer(grpcSrv, mockprovider.NewCapabilitiesServer())
 	publicv1.RegisterClustersServer(grpcSrv, mockprovider.NewClustersServer())
+	publicv1.RegisterClusterTemplatesServer(grpcSrv, mockprovider.NewClusterTemplatesServer())
 	publicv1.RegisterComputeInstancesServer(grpcSrv, mockprovider.NewComputeInstancesServer())
 	publicv1.RegisterSubnetsServer(grpcSrv, mockprovider.NewSubnetsServer())
 	publicv1.RegisterVirtualNetworksServer(grpcSrv, mockprovider.NewVirtualNetworksServer())
