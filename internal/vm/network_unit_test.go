@@ -57,12 +57,19 @@ var _ = Describe("Default Network Provisioning (Topic 4.5)", func() {
 		vnetReq := f.vnets.LastCreateCall()
 		Expect(vnetReq.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.200.0.0/16"))
 		Expect(vnetReq.GetObject().GetSpec().GetNetworkClass()).To(BeNil())
+		// REQ-VMNET-020: both ownership labels, not managed-by alone — the
+		// service-type label is what TC-U-340's ListCalls filter above
+		// actually keys off of, so it must genuinely be set here too.
 		Expect(vnetReq.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("dcm.io/managed-by", "dcm"))
+		Expect(vnetReq.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("dcm.io/service-type", "vm-default-network"))
 
 		newVnetID := "vnet-new"
 		subnetReq := f.subnets.LastCreateCall()
 		Expect(subnetReq.GetObject().GetSpec().GetVirtualNetwork().GetId()).To(Equal(newVnetID))
 		Expect(subnetReq.GetObject().GetSpec().GetIpv4Cidr()).To(Equal("10.200.1.0/24"))
+		// REQ-VMNET-030: same two ownership labels as the VirtualNetwork.
+		Expect(subnetReq.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("dcm.io/managed-by", "dcm"))
+		Expect(subnetReq.GetObject().GetMetadata().GetLabels()).To(HaveKeyWithValue("dcm.io/service-type", "vm-default-network"))
 		Expect(subnetReq.GetObject().GetMetadata().GetAnnotations()).To(HaveKeyWithValue("osac.openshift.io/owner-reference", newVnetID))
 	})
 

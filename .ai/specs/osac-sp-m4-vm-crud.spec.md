@@ -181,7 +181,7 @@ calls `ComputeInstances/Create`.
 | `spec.memory.size`                        | *(not sent)*                          | Informational only — DD-122                                                      |
 | `spec.storage.disks[]` (`name == "boot"`) | `spec.boot_disk.size_gib`             | Parsed per DD-123. Exactly one disk named `boot` is required (REQ-VMCREATE-060)  |
 | `spec.storage.disks[]` (all others)       | `spec.additional_disks[].size_gib`    | Parsed per DD-123. Disk `name` is **not** preserved — OSAC's `ComputeInstanceDisk` has no name field (SC-M4-002) |
-| `spec.guest_os.type`                      | `spec.image.source_ref`               | `image.source_type` is a fixed constant, `"catalog"` — see SC-M4-002              |
+| `spec.guest_os.type`                      | `spec.image.source_ref`               | `image.source_type` is a fixed constant, `"registry"` — see SC-M4-002/DD-128      |
 | `spec.access.ssh_public_key`               | `spec.ssh_public_key`                 | Optional passthrough                                                             |
 | `spec.metadata.name`                       | `metadata.name`                       |                                                                                     |
 | `spec.metadata.labels`                     | `metadata.labels` (merged with ownership labels, REQ-VMCREATE-050) |                                                            |
@@ -657,7 +657,7 @@ lock/coordination) if the cache is meant to be durable across restarts.
 Revisit with an explicit distributed-lock or OSAC-side uniqueness
 constraint if concurrent-create load materializes in practice.
 
-### SC-M4-002: `ComputeInstanceImage.source_type` has no documented enum or server-side validation — set to a fixed `"catalog"` constant
+### SC-M4-002: `ComputeInstanceImage.source_type` has no documented enum or server-side validation at the **proto** layer — spike originally set it to a fixed `"catalog"` constant; **superseded by DD-128**, which found the real CRD *does* enforce one and only `"registry"` validates
 
 **Related requirements:** REQ-VMCREATE-020
 
@@ -668,11 +668,16 @@ enum, no `buf.validate` constraint, and (confirmed directly against
 interpretation of its value at all. DCM's `spec.guest_os.type` values
 (`rhel-9`, `ubuntu-22.04`, `windows-server-2022`) look like OS/template
 catalog identifiers, not container-registry image references, so the
-proto comment's own example (`"registry"`) would be a misleading value to
-hardcode. This spec sets `source_type` to the literal constant `"catalog"`
-instead — a best-effort, non-breaking choice given OSAC does not currently
-validate or act on this field either way. Revisit if OSAC's `image`
-resolution logic starts interpreting `source_type` meaningfully.
+proto comment's own example (`"registry"`) originally looked like a
+misleading value to hardcode, leading this spike to choose `"catalog"`
+instead.
+
+**Correction (DD-128):** that conclusion was only verified against the
+proto layer, not the real OSAC `ComputeInstance` CRD's admission
+validation, which does enforce an enum — and rejects `"catalog"`. The
+implementation now sets `source_type` to `"registry"` (see the Field
+Mapping row above); this section's original reasoning is kept for
+context, but `"catalog"` is no longer the value in effect anywhere.
 
 Also note: `spec.storage.disks[]` entries other than the required `boot`
 disk lose their DCM `name` on translation — `ComputeInstanceDisk` has only

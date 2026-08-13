@@ -28,18 +28,12 @@ import (
 // osac-operator's first reconcile pass — not a genuine anomaly. Treating it
 // as FAILED produced a false failure on every single VM creation.
 //
-// The generated constant names are currently bare (v1alpha1.RUNNING, not
-// v1alpha1.VMStatusRUNNING) because oapi-codegen only prefixes enum
-// constants with their type name on a genuine cross-schema collision, and
-// today nothing else in the spec collides with VMStatus's 8 raw values —
-// see ClusterStatus's own collision with ErrorType's UNAVAILABLE for a
-// contrast. This SP's two branches (M3/M4) share several raw value
-// strings (FAILED, DELETING, DELETED) despite having entirely separate
-// vocabularies, so a future merge of both onto the same spec will very
-// likely introduce that collision and force both enums to become
-// prefixed — expected, not a regression, and every call site here already
-// goes through the generated identifiers (not hardcoded strings) so it
-// will pick up the rename automatically.
+// The generated constant names are currently bare (v1alpha1.RUNNING) since
+// oapi-codegen only prefixes on a genuine cross-schema collision, and none
+// exists yet for VMStatus. A future M3/M4 spec merge may introduce one
+// (both share raw values like FAILED/DELETING/DELETED) — expected, not a
+// regression, since every call site here already goes through these
+// generated identifiers and would pick up the rename automatically.
 func MapStatus(err error, status *publicv1.ComputeInstanceStatus) v1alpha1.VMStatus {
 	if err != nil {
 		if grpcstatus.Code(err) == codes.NotFound {
