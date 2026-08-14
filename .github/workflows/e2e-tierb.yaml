@@ -108,7 +108,13 @@ jobs:
             --version "${{ env.FULFILLMENT_SERVICE_CHART_VERSION }}" \
             --values test/e2e/tierb-config/fulfillment-service-values.yaml \
             > /tmp/ffs-rendered.yaml
-          yq eval-all 'select(.kind != "TLSRoute")' /tmp/ffs-rendered.yaml \
+          # `select(. != null)` is required, not cosmetic: some of the
+          # chart's templates emit a `---\n# Source: ...` separator with no
+          # body for a conditionally-skipped block, which yq happily
+          # passes through as a null document — `kubectl apply` then
+          # rejects the whole file with "apiVersion not set, kind not set"
+          # (confirmed by reproducing it in isolation during triage).
+          yq eval-all 'select(. != null) | select(.kind != "TLSRoute")' /tmp/ffs-rendered.yaml \
             > /tmp/ffs-rendered-filtered.yaml
           kubectl apply -f /tmp/ffs-rendered-filtered.yaml
           # Only wait on what osac-sp's health check actually exercises

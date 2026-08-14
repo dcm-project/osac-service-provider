@@ -1691,6 +1691,19 @@ must set `scheme: HTTPS`, or the pod flips permanently `Unready` with
 it's a hard coupling in Keycloak's own Quarkus runtime between "any HTTPS
 cert configured" and "management interface moves to HTTPS too."
 
+**Third finding, from the `e2e-tierb.yaml` workflow's own first CI runs**
+(not reproducible in the earlier interactive spike, which happened to
+have leftover Gateway API CRDs registered on that cluster from prior
+troubleshooting): `helm install` fails outright in a clean cluster with
+`no matches for kind "TLSRoute" in version "gateway.networking.k8s.io/v1alpha3"`,
+so installation was switched to
+`helm template | yq filter (drop TLSRoute) | kubectl apply`. That filter
+must also drop null documents (`select(. != null)`) — some of the chart's
+templates emit a bare `---` separator with no body for a
+conditionally-skipped block, which `kubectl apply` otherwise rejects
+outright with `apiVersion not set, kind not set` (reproduced in
+isolation to confirm root cause before fixing).
+
 **Related requirements:** REQ-TB-010, REQ-TB-050
 
 ---
