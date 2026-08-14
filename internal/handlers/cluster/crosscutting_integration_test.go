@@ -42,7 +42,7 @@ var _ = Describe("Status precedence and Error mapping (integration, cross-cuttin
 
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(resp.Body).Decode(&cluster)).To(Succeed())
-		Expect(cluster.Status).To(Equal(v1alpha1.ClusterStatusFAILED))
+		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusFAILED))
 	})
 
 	// TC-I-250 (REQ-ERR-010/020/030, AC-ERR-010/020): each gRPC error code

@@ -17,12 +17,12 @@ milestone's self-contained file, because: (a) they validate new
 `REQ-VERSION-*` requirements authored in this milestone's own spec, not a
 modification of an existing `REQ-XC-CFG-*`/`REQ-HTTP-*` requirement's
 behavior; (b) this milestone's branch stacks on the *unmerged*
-`feat/milestone-3-cluster-crud` (DD-115) — appending to the shared files
+`feat/milestone-3-cluster-crud` (DD-133) — appending to the shared files
 here risks a numbering collision with Milestone 4/5's own unmerged,
 independent edits to those same files (the same category of pre-existing
 concern already flagged for `DD-080`..`086` in Milestones 4/5); (c) it keeps
 this milestone's PR diff self-contained and reviewable against M3's tip
-alone, matching DD-115's rationale.
+alone, matching DD-133's rationale.
 
 **Framework:** Ginkgo v2 + Gomega. Unit tests:
 `internal/versionmatrix/*_unit_test.go`, `internal/registration/*_unit_test.go`,

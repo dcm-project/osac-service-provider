@@ -26,6 +26,18 @@ Milestone 1:
 - `osac/public/v1/capabilities_service.proto`
 - `osac/public/v1/authn_capabilities_type.proto`
 
+Milestone 3 additionally vendors, at the same pinned commit:
+
+- `osac/public/v1/cluster_templates_service.proto`
+- `osac/public/v1/cluster_template_type.proto`
+
+Needed by Create's node-set-key resolution: `Cluster.spec.node_sets`' keys
+are per-template and not derivable from `template_id`, so the SP calls
+`ClusterTemplates/Get` to discover them (see
+[#12](https://github.com/dcm-project/osac-service-provider/pull/12)'s
+DD-110/SC-M3-004 for the full rationale — this branch predates that fix and
+will pick up its own copy of the decision on rebase).
+
 Milestone 2:
 
 - `osac/public/v1/clusters_service.proto`
@@ -40,9 +52,26 @@ Milestone 2:
 - `osac/public/v1/condition_status_type.proto`
 
 `events_service.proto` is explicitly **out of scope** for Milestone 2 (see
-`.ai/specs/osac-sp-m2-grpc-client-generation.spec.md`'s DD-010) — status
-reporting back to DCM goes through `control-plane`'s direct-REST dispatch
-model (Phase 1), not CloudEvents, so this SP has no current consumer for it.
+`.ai/specs/osac-sp-m2-grpc-client-generation.spec.md`'s DD-010) — **not**
+because status reporting uses REST (it doesn't: `control-plane`'s SP-facing
+REST surface,
+[`api/sp/v1alpha1/resource_manager/openapi.yaml`](https://github.com/dcm-project/control-plane/blob/main/api/sp/v1alpha1/resource_manager/openapi.yaml),
+exposes only `GET`/`POST /service-type-instances` and
+`GET`/`DELETE /service-type-instances/{id}` — no status-update endpoint
+exists there at all), but because status reporting (Milestone 5, not yet
+implemented) is designed to be **polling**-based per the
+[SP Status Reporting](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md)
+and [OSAC SP](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#status-reporting)
+enhancements, publishing CloudEvents directly over NATS JetStream — consumed
+by `control-plane`'s
+[`internal/sp/consumer.StatusConsumer`](https://github.com/dcm-project/control-plane/blob/main/internal/sp/consumer/consumer.go).
+`Events`/`Watch` is a real, working gRPC-streaming RPC (verified against
+`fulfillment-service`'s
+[`internal/servers/events_server.go`](https://github.com/osac-project/fulfillment-service/blob/main/internal/servers/events_server.go)),
+but DD-010 treats it as an optional latency supplement to polling, not the
+primary mechanism — see DD-010's rationale for why. This SP has no current
+consumer for `events_service.proto` simply because Milestone 5 hasn't been
+implemented yet.
 
 **Vendoring vs. a live `deps:` reference:** `fulfillment-service`'s proto
 module (`buf.build/osac-project/public-api`) is confirmed live and publicly

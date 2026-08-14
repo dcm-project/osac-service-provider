@@ -62,7 +62,9 @@ func (s *Service) releaseImage(spec v1alpha1.ClusterSpec) *string {
 
 // toOSACCluster translates a Create request's id/spec into the OSAC
 // Cluster object sent to Clusters/Create, per the M3 spec's Field Mapping
-// table (§4.1). Node sizing hints (cpu/memory/storage) are deliberately
+// table (§4.1). nodeSetKey is resolved by the caller via
+// ClusterTemplates/Get (REQ-CREATE-080/090) — never derived from
+// templateID here. Node sizing hints (cpu/memory/storage) are deliberately
 // never read here (REQ-CREATE-070) — host_type is fixed by the template.
 //
 // provider_hints.osac.base_domain has no corresponding OSAC field —
@@ -70,13 +72,13 @@ func (s *Service) releaseImage(spec v1alpha1.ClusterSpec) *string {
 // ClusterNetwork message (pod_cidr/service_cidr only) — so it is accepted
 // but not translated, the same "informational, no OSAC field" treatment as
 // the worker cpu/memory/storage hints.
-func (s *Service) toOSACCluster(id string, spec v1alpha1.ClusterSpec) *publicv1.Cluster {
+func (s *Service) toOSACCluster(id string, spec v1alpha1.ClusterSpec, nodeSetKey string) *publicv1.Cluster {
 	templateID := spec.ProviderHints.Osac.TemplateId
 
 	osacSpec := &publicv1.ClusterSpec{
 		Template: templateID,
 		NodeSets: map[string]*publicv1.ClusterNodeSet{
-			templateID: {Size: int32(spec.Nodes.Worker.Count)},
+			nodeSetKey: {Size: int32(spec.Nodes.Worker.Count)},
 		},
 		ReleaseImage: s.releaseImage(spec),
 		PullSecret:   spec.ProviderHints.Osac.PullSecret,
@@ -101,7 +103,7 @@ func toAPICluster(osacCluster *publicv1.Cluster, version *string) v1alpha1.Clust
 	return v1alpha1.Cluster{
 		Id:       util.Ptr(osacCluster.GetId()),
 		Path:     util.Ptr("clusters/" + osacCluster.GetId()),
-		Status:   MapStatus(nil, osacCluster.GetStatus()),
+		Status:   util.Ptr(MapStatus(nil, osacCluster.GetStatus())),
 		NodeSets: toAPINodeSets(osacCluster.GetStatus().GetNodeSets()),
 		Version:  version,
 	}

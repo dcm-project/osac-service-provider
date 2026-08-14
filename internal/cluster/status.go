@@ -14,13 +14,16 @@ import (
 // status is ignored (and may be nil): the error's own gRPC code alone
 // determines the result.
 //
-// Rules 1/2 (Unavailable/DeadlineExceeded -> UNAVAILABLE, NotFound ->
-// DELETED) are forward-compatible: no current call site invokes MapStatus
-// with a non-nil err — Get/Create/Delete all intercept NotFound/AlreadyExists
-// before reaching here (REQ-GET-040/REQ-CREATE-040/REQ-DELETE-020), and any
-// other error is mapped directly by the handler's shared error mapper
-// without ever computing a status. They are kept and independently tested
-// (SC-M3-001) for the day an async polling caller (Milestone 5) needs them.
+// The err branch is unreachable in this milestone's synchronous call sites
+// — kept and tested for Milestone 5's async polling. See SC-M3-001/
+// SC-M3-003 for why.
+//
+// CLUSTER_STATE_UNSPECIFIED (proto3's zero-value) maps to PROGRESSING, not
+// the catch-all FAILED default (DD-112): it is the normal state for a
+// freshly-created Cluster before osac-operator's first reconcile pass, not
+// a genuine anomaly — ported from VM's identical fix (internal/vm/status.go,
+// DD-129), which is where this was originally live-verified against real
+// infrastructure.
 func MapStatus(err error, status *publicv1.ClusterStatus) v1alpha1.ClusterStatus {
 	if err != nil {
 		switch grpcstatus.Code(err) {
@@ -31,6 +34,10 @@ func MapStatus(err error, status *publicv1.ClusterStatus) v1alpha1.ClusterStatus
 		default:
 			return v1alpha1.ClusterStatusFAILED
 		}
+	}
+
+	if status.GetState() == publicv1.ClusterState_CLUSTER_STATE_UNSPECIFIED {
+		return v1alpha1.ClusterStatusPROGRESSING
 	}
 
 	switch status.GetState() {

@@ -102,16 +102,10 @@ type ClientInterface interface {
 
 	// CreateClusterWithBody Create a cluster
 	//
-	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
-	// `control-plane` ever actually populates on the wire; every other
-	// `Cluster` field is absent from that request and simply unmarshals
-	// to its zero value, which this handler ignores. Idempotent on `id`:
-	// a retry with the same `id` returns the existing cluster's current
-	// state rather than an error (REQ-CREATE-040/DD-100).
+	// Creates a new OSAC-backed OpenShift cluster. Request body is this
+	// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -120,16 +114,10 @@ type ClientInterface interface {
 
 	// CreateCluster Create a cluster
 	//
-	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
-	// `control-plane` ever actually populates on the wire; every other
-	// `Cluster` field is absent from that request and simply unmarshals
-	// to its zero value, which this handler ignores. Idempotent on `id`:
-	// a retry with the same `id` returns the existing cluster's current
-	// state rather than an error (REQ-CREATE-040/DD-100).
+	// Creates a new OSAC-backed OpenShift cluster. Request body is this
+	// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -167,6 +155,56 @@ type ClientInterface interface {
 	// Corresponds with GET /api/v1alpha1/clusters/{clusterId} (the `GetCluster` operationId).
 	GetCluster(ctx context.Context, clusterId ClusterIdPath, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListVMs List virtual machines
+	//
+	// Returns a paginated list of VMs owned by this SP (filtered by the
+	// `dcm.io/managed-by=dcm` ownership label — REQ-VMLIST-010). Each
+	// entry echoes `internal_ip_address`/`external_ip_address`
+	// (REQ-VMLIST-030).
+	//
+	// Corresponds with GET /api/v1alpha1/vms (the `ListVMs` operationId).
+	ListVMs(ctx context.Context, params *ListVMsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVMWithBody Create a virtual machine
+	//
+	// Creates a new OSAC-backed virtual machine. `control-plane`
+	// dispatches this with the resource `id` as a query parameter (its
+	// own generated identifier) and a body containing only `spec`
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+	// field `control-plane` ever actually populates on the wire; every
+	// other `VirtualMachine` field is absent from that request and simply
+	// unmarshals to its zero value, which this handler ignores.
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// VM's current state rather than an error (REQ-VMCREATE-070). Always
+	// resolves (or provisions) exactly one default network attachment —
+	// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+	CreateVMWithBody(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVM Create a virtual machine
+	//
+	// Creates a new OSAC-backed virtual machine. `control-plane`
+	// dispatches this with the resource `id` as a query parameter (its
+	// own generated identifier) and a body containing only `spec`
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+	// field `control-plane` ever actually populates on the wire; every
+	// other `VirtualMachine` field is absent from that request and simply
+	// unmarshals to its zero value, which this handler ignores.
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// VM's current state rather than an error (REQ-VMCREATE-070). Always
+	// resolves (or provisions) exactly one default network attachment —
+	// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+	CreateVM(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetVMsHealth VM Provider Health Check
 	//
 	// Returns the health status of the service provider's `vm`
@@ -177,6 +215,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1alpha1/vms/health (the `GetVMsHealth` operationId).
 	GetVMsHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteVM Delete a virtual machine
+	//
+	// Deletes a virtual machine. Returns as soon as OSAC acknowledges the
+	// request — does not poll for the VM to actually disappear
+	// (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
+	// treated as success (`204`), mirroring `control-plane`'s own
+	// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
+	// endpoint therefore never returns `404`.
+	//
+	// Corresponds with DELETE /api/v1alpha1/vms/{vmId} (the `DeleteVM` operationId).
+	DeleteVM(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVM Get virtual machine details
+	//
+	// Returns the VM's current status, including `internal_ip_address`/
+	// `external_ip_address` echoed directly from OSAC (REQ-VMGET-030).
+	//
+	// Corresponds with GET /api/v1alpha1/vms/{vmId} (the `GetVM` operationId).
+	GetVM(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // ListClusters List clusters
@@ -200,16 +258,10 @@ func (c *Client) ListClusters(ctx context.Context, params *ListClustersParams, r
 
 // CreateClusterWithBody Create a cluster
 //
-// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-// dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
-// `control-plane` ever actually populates on the wire; every other
-// `Cluster` field is absent from that request and simply unmarshals
-// to its zero value, which this handler ignores. Idempotent on `id`:
-// a retry with the same `id` returns the existing cluster's current
-// state rather than an error (REQ-CREATE-040/DD-100).
+// Creates a new OSAC-backed OpenShift cluster. Request body is this
+// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 //
 // Takes any type of body and a specified content type.
 //
@@ -228,16 +280,10 @@ func (c *Client) CreateClusterWithBody(ctx context.Context, params *CreateCluste
 
 // CreateCluster Create a cluster
 //
-// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-// dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
-// `control-plane` ever actually populates on the wire; every other
-// `Cluster` field is absent from that request and simply unmarshals
-// to its zero value, which this handler ignores. Idempotent on `id`:
-// a retry with the same `id` returns the existing cluster's current
-// state rather than an error (REQ-CREATE-040/DD-100).
+// Creates a new OSAC-backed OpenShift cluster. Request body is this
+// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -315,6 +361,86 @@ func (c *Client) GetCluster(ctx context.Context, clusterId ClusterIdPath, reqEdi
 	return c.Client.Do(req)
 }
 
+// ListVMs List virtual machines
+//
+// Returns a paginated list of VMs owned by this SP (filtered by the
+// `dcm.io/managed-by=dcm` ownership label — REQ-VMLIST-010). Each
+// entry echoes `internal_ip_address`/`external_ip_address`
+// (REQ-VMLIST-030).
+//
+// Corresponds with GET /api/v1alpha1/vms (the `ListVMs` operationId).
+func (c *Client) ListVMs(ctx context.Context, params *ListVMsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVMsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVMWithBody Create a virtual machine
+//
+// Creates a new OSAC-backed virtual machine. `control-plane`
+// dispatches this with the resource `id` as a query parameter (its
+// own generated identifier) and a body containing only `spec`
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+// field `control-plane` ever actually populates on the wire; every
+// other `VirtualMachine` field is absent from that request and simply
+// unmarshals to its zero value, which this handler ignores.
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// VM's current state rather than an error (REQ-VMCREATE-070). Always
+// resolves (or provisions) exactly one default network attachment —
+// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+func (c *Client) CreateVMWithBody(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVMRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVM Create a virtual machine
+//
+// Creates a new OSAC-backed virtual machine. `control-plane`
+// dispatches this with the resource `id` as a query parameter (its
+// own generated identifier) and a body containing only `spec`
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+// field `control-plane` ever actually populates on the wire; every
+// other `VirtualMachine` field is absent from that request and simply
+// unmarshals to its zero value, which this handler ignores.
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// VM's current state rather than an error (REQ-VMCREATE-070). Always
+// resolves (or provisions) exactly one default network attachment —
+// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+func (c *Client) CreateVM(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVMRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetVMsHealth VM Provider Health Check
 //
 // Returns the health status of the service provider's `vm`
@@ -326,6 +452,46 @@ func (c *Client) GetCluster(ctx context.Context, clusterId ClusterIdPath, reqEdi
 // Corresponds with GET /api/v1alpha1/vms/health (the `GetVMsHealth` operationId).
 func (c *Client) GetVMsHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetVMsHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteVM Delete a virtual machine
+//
+// Deletes a virtual machine. Returns as soon as OSAC acknowledges the
+// request — does not poll for the VM to actually disappear
+// (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
+// treated as success (`204`), mirroring `control-plane`'s own
+// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
+// endpoint therefore never returns `404`.
+//
+// Corresponds with DELETE /api/v1alpha1/vms/{vmId} (the `DeleteVM` operationId).
+func (c *Client) DeleteVM(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteVMRequest(c.Server, vmId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetVM Get virtual machine details
+//
+// Returns the VM's current status, including `internal_ip_address`/
+// `external_ip_address` echoed directly from OSAC (REQ-VMGET-030).
+//
+// Corresponds with GET /api/v1alpha1/vms/{vmId} (the `GetVM` operationId).
+func (c *Client) GetVM(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVMRequest(c.Server, vmId)
 	if err != nil {
 		return nil, err
 	}
@@ -564,6 +730,139 @@ func NewGetClusterRequest(server string, clusterId ClusterIdPath) (*http.Request
 	return req, nil
 }
 
+// NewListVMsRequest constructs an http.Request for the ListVMs method
+func NewListVMsRequest(server string, params *ListVMsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1alpha1/vms")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.PageToken != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_token", *params.PageToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.MaxPageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "max_page_size", *params.MaxPageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateVMRequest calls the generic CreateVM builder with application/json body
+func NewCreateVMRequest(server string, params *CreateVMParams, body CreateVMJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateVMRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCreateVMRequestWithBody constructs an http.Request for the CreateVM method, with any body, and a specified content type
+func NewCreateVMRequestWithBody(server string, params *CreateVMParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1alpha1/vms")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Id != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", *params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetVMsHealthRequest constructs an http.Request for the GetVMsHealth method
 func NewGetVMsHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -574,6 +873,74 @@ func NewGetVMsHealthRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/api/v1alpha1/vms/health")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteVMRequest constructs an http.Request for the DeleteVM method
+func NewDeleteVMRequest(server string, vmId VMIdPath) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "vmId", vmId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1alpha1/vms/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetVMRequest constructs an http.Request for the GetVM method
+func NewGetVMRequest(server string, vmId VMIdPath) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "vmId", vmId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1alpha1/vms/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -648,16 +1015,10 @@ type ClientWithResponsesInterface interface {
 
 	// CreateClusterWithBodyWithResponse Create a cluster
 	//
-	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
-	// `control-plane` ever actually populates on the wire; every other
-	// `Cluster` field is absent from that request and simply unmarshals
-	// to its zero value, which this handler ignores. Idempotent on `id`:
-	// a retry with the same `id` returns the existing cluster's current
-	// state rather than an error (REQ-CREATE-040/DD-100).
+	// Creates a new OSAC-backed OpenShift cluster. Request body is this
+	// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -666,16 +1027,10 @@ type ClientWithResponsesInterface interface {
 
 	// CreateClusterWithResponse Create a cluster
 	//
-	// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-	// dispatches this with the resource `id` as a query parameter (its
-	// own generated identifier) and a body containing only `spec`
-	// (DD-080) — the request body schema is this same `Cluster` resource
-	// type (AEP-133-compliant, DD-110), but `spec` is its only field
-	// `control-plane` ever actually populates on the wire; every other
-	// `Cluster` field is absent from that request and simply unmarshals
-	// to its zero value, which this handler ignores. Idempotent on `id`:
-	// a retry with the same `id` returns the existing cluster's current
-	// state rather than an error (REQ-CREATE-040/DD-100).
+	// Creates a new OSAC-backed OpenShift cluster. Request body is this
+	// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -719,6 +1074,58 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v1alpha1/clusters/{clusterId} (the `GetCluster` operationId).
 	GetClusterWithResponse(ctx context.Context, clusterId ClusterIdPath, reqEditors ...RequestEditorFn) (*GetClusterResponse, error)
 
+	// ListVMsWithResponse List virtual machines
+	//
+	// Returns a paginated list of VMs owned by this SP (filtered by the
+	// `dcm.io/managed-by=dcm` ownership label — REQ-VMLIST-010). Each
+	// entry echoes `internal_ip_address`/`external_ip_address`
+	// (REQ-VMLIST-030).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1alpha1/vms (the `ListVMs` operationId).
+	ListVMsWithResponse(ctx context.Context, params *ListVMsParams, reqEditors ...RequestEditorFn) (*ListVMsResponse, error)
+
+	// CreateVMWithBodyWithResponse Create a virtual machine
+	//
+	// Creates a new OSAC-backed virtual machine. `control-plane`
+	// dispatches this with the resource `id` as a query parameter (its
+	// own generated identifier) and a body containing only `spec`
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+	// field `control-plane` ever actually populates on the wire; every
+	// other `VirtualMachine` field is absent from that request and simply
+	// unmarshals to its zero value, which this handler ignores.
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// VM's current state rather than an error (REQ-VMCREATE-070). Always
+	// resolves (or provisions) exactly one default network attachment —
+	// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+	CreateVMWithBodyWithResponse(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVMResponse, error)
+
+	// CreateVMWithResponse Create a virtual machine
+	//
+	// Creates a new OSAC-backed virtual machine. `control-plane`
+	// dispatches this with the resource `id` as a query parameter (its
+	// own generated identifier) and a body containing only `spec`
+	// (DD-120) — the request body schema is this same `VirtualMachine`
+	// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+	// field `control-plane` ever actually populates on the wire; every
+	// other `VirtualMachine` field is absent from that request and simply
+	// unmarshals to its zero value, which this handler ignores.
+	// Idempotent on `id`: a retry with the same `id` returns the existing
+	// VM's current state rather than an error (REQ-VMCREATE-070). Always
+	// resolves (or provisions) exactly one default network attachment —
+	// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+	CreateVMWithResponse(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVMResponse, error)
+
 	// GetVMsHealthWithResponse VM Provider Health Check
 	//
 	// Returns the health status of the service provider's `vm`
@@ -731,6 +1138,30 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1alpha1/vms/health (the `GetVMsHealth` operationId).
 	GetVMsHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVMsHealthResponse, error)
+
+	// DeleteVMWithResponse Delete a virtual machine
+	//
+	// Deletes a virtual machine. Returns as soon as OSAC acknowledges the
+	// request — does not poll for the VM to actually disappear
+	// (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
+	// treated as success (`204`), mirroring `control-plane`'s own
+	// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
+	// endpoint therefore never returns `404`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1alpha1/vms/{vmId} (the `DeleteVM` operationId).
+	DeleteVMWithResponse(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*DeleteVMResponse, error)
+
+	// GetVMWithResponse Get virtual machine details
+	//
+	// Returns the VM's current status, including `internal_ip_address`/
+	// `external_ip_address` echoed directly from OSAC (REQ-VMGET-030).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1alpha1/vms/{vmId} (the `GetVM` operationId).
+	GetVMWithResponse(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*GetVMResponse, error)
 }
 
 type ListClustersResponse struct {
@@ -1064,6 +1495,151 @@ func (r GetClusterResponse) ContentType() string {
 	return ""
 }
 
+type ListVMsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VirtualMachineList
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Error
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Error
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *Error
+	// ApplicationproblemJSON502 the response for an HTTP 502 `application/problem+json` response
+	ApplicationproblemJSON502 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVMsResponse) GetJSON200() *VirtualMachineList {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListVMsResponse) GetApplicationproblemJSON401() *Error {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListVMsResponse) GetApplicationproblemJSON403() *Error {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListVMsResponse) GetApplicationproblemJSON500() *Error {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON502 returns the response for an HTTP 502 `application/problem+json` response
+func (r ListVMsResponse) GetApplicationproblemJSON502() *Error {
+	return r.ApplicationproblemJSON502
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVMsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVMsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVMsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVMsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateVMResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *VirtualMachine
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Error
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Error
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Error
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *Error
+	// ApplicationproblemJSON502 the response for an HTTP 502 `application/problem+json` response
+	ApplicationproblemJSON502 *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateVMResponse) GetJSON201() *VirtualMachine {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateVMResponse) GetApplicationproblemJSON400() *Error {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateVMResponse) GetApplicationproblemJSON401() *Error {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateVMResponse) GetApplicationproblemJSON403() *Error {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r CreateVMResponse) GetApplicationproblemJSON500() *Error {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON502 returns the response for an HTTP 502 `application/problem+json` response
+func (r CreateVMResponse) GetApplicationproblemJSON502() *Error {
+	return r.ApplicationproblemJSON502
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateVMResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateVMResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateVMResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateVMResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetVMsHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1112,6 +1688,144 @@ func (r GetVMsHealthResponse) ContentType() string {
 	return ""
 }
 
+type DeleteVMResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Error
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Error
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *Error
+	// ApplicationproblemJSON502 the response for an HTTP 502 `application/problem+json` response
+	ApplicationproblemJSON502 *Error
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteVMResponse) GetApplicationproblemJSON401() *Error {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteVMResponse) GetApplicationproblemJSON403() *Error {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeleteVMResponse) GetApplicationproblemJSON500() *Error {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON502 returns the response for an HTTP 502 `application/problem+json` response
+func (r DeleteVMResponse) GetApplicationproblemJSON502() *Error {
+	return r.ApplicationproblemJSON502
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteVMResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteVMResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteVMResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteVMResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetVMResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VirtualMachine
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Error
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Error
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Error
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *Error
+	// ApplicationproblemJSON502 the response for an HTTP 502 `application/problem+json` response
+	ApplicationproblemJSON502 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetVMResponse) GetJSON200() *VirtualMachine {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetVMResponse) GetApplicationproblemJSON401() *Error {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetVMResponse) GetApplicationproblemJSON403() *Error {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetVMResponse) GetApplicationproblemJSON404() *Error {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetVMResponse) GetApplicationproblemJSON500() *Error {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON502 returns the response for an HTTP 502 `application/problem+json` response
+func (r GetVMResponse) GetApplicationproblemJSON502() *Error {
+	return r.ApplicationproblemJSON502
+}
+
+// GetBody returns the raw response body bytes
+func (r GetVMResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVMResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVMResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetVMResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListClustersWithResponse List clusters
 //
 // Returns a paginated list of clusters owned by this SP (filtered by
@@ -1131,16 +1845,10 @@ func (c *ClientWithResponses) ListClustersWithResponse(ctx context.Context, para
 
 // CreateClusterWithBodyWithResponse Create a cluster
 //
-// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-// dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
-// `control-plane` ever actually populates on the wire; every other
-// `Cluster` field is absent from that request and simply unmarshals
-// to its zero value, which this handler ignores. Idempotent on `id`:
-// a retry with the same `id` returns the existing cluster's current
-// state rather than an error (REQ-CREATE-040/DD-100).
+// Creates a new OSAC-backed OpenShift cluster. Request body is this
+// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1155,16 +1863,10 @@ func (c *ClientWithResponses) CreateClusterWithBodyWithResponse(ctx context.Cont
 
 // CreateClusterWithResponse Create a cluster
 //
-// Creates a new OSAC-backed OpenShift cluster. `control-plane`
-// dispatches this with the resource `id` as a query parameter (its
-// own generated identifier) and a body containing only `spec`
-// (DD-080) — the request body schema is this same `Cluster` resource
-// type (AEP-133-compliant, DD-110), but `spec` is its only field
-// `control-plane` ever actually populates on the wire; every other
-// `Cluster` field is absent from that request and simply unmarshals
-// to its zero value, which this handler ignores. Idempotent on `id`:
-// a retry with the same `id` returns the existing cluster's current
-// state rather than an error (REQ-CREATE-040/DD-100).
+// Creates a new OSAC-backed OpenShift cluster. Request body is this
+// `Cluster` resource with only `spec` populated (DD-080/DD-113).
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// cluster's current state, not an error (REQ-CREATE-040/DD-100).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1232,6 +1934,76 @@ func (c *ClientWithResponses) GetClusterWithResponse(ctx context.Context, cluste
 	return ParseGetClusterResponse(rsp)
 }
 
+// ListVMsWithResponse List virtual machines
+//
+// Returns a paginated list of VMs owned by this SP (filtered by the
+// `dcm.io/managed-by=dcm` ownership label — REQ-VMLIST-010). Each
+// entry echoes `internal_ip_address`/`external_ip_address`
+// (REQ-VMLIST-030).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1alpha1/vms (the `ListVMs` operationId).
+func (c *ClientWithResponses) ListVMsWithResponse(ctx context.Context, params *ListVMsParams, reqEditors ...RequestEditorFn) (*ListVMsResponse, error) {
+	rsp, err := c.ListVMs(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVMsResponse(rsp)
+}
+
+// CreateVMWithBodyWithResponse Create a virtual machine
+//
+// Creates a new OSAC-backed virtual machine. `control-plane`
+// dispatches this with the resource `id` as a query parameter (its
+// own generated identifier) and a body containing only `spec`
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+// field `control-plane` ever actually populates on the wire; every
+// other `VirtualMachine` field is absent from that request and simply
+// unmarshals to its zero value, which this handler ignores.
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// VM's current state rather than an error (REQ-VMCREATE-070). Always
+// resolves (or provisions) exactly one default network attachment —
+// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+func (c *ClientWithResponses) CreateVMWithBodyWithResponse(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVMResponse, error) {
+	rsp, err := c.CreateVMWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVMResponse(rsp)
+}
+
+// CreateVMWithResponse Create a virtual machine
+//
+// Creates a new OSAC-backed virtual machine. `control-plane`
+// dispatches this with the resource `id` as a query parameter (its
+// own generated identifier) and a body containing only `spec`
+// (DD-120) — the request body schema is this same `VirtualMachine`
+// resource type (AEP-133-compliant, DD-125), but `spec` is its only
+// field `control-plane` ever actually populates on the wire; every
+// other `VirtualMachine` field is absent from that request and simply
+// unmarshals to its zero value, which this handler ignores.
+// Idempotent on `id`: a retry with the same `id` returns the existing
+// VM's current state rather than an error (REQ-VMCREATE-070). Always
+// resolves (or provisions) exactly one default network attachment —
+// DCM's VM schema has no networking concept (REQ-VMCREATE-090/§4.5).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1alpha1/vms (the `CreateVM` operationId).
+func (c *ClientWithResponses) CreateVMWithResponse(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVMResponse, error) {
+	rsp, err := c.CreateVM(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVMResponse(rsp)
+}
+
 // GetVMsHealthWithResponse VM Provider Health Check
 //
 // Returns the health status of the service provider's `vm`
@@ -1249,6 +2021,42 @@ func (c *ClientWithResponses) GetVMsHealthWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetVMsHealthResponse(rsp)
+}
+
+// DeleteVMWithResponse Delete a virtual machine
+//
+// Deletes a virtual machine. Returns as soon as OSAC acknowledges the
+// request — does not poll for the VM to actually disappear
+// (REQ-VMDELETE-040). A `NotFound` from OSAC (already deleted) is
+// treated as success (`204`), mirroring `control-plane`'s own
+// tolerance for this exact case (REQ-VMDELETE-020/DD-120) — this
+// endpoint therefore never returns `404`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1alpha1/vms/{vmId} (the `DeleteVM` operationId).
+func (c *ClientWithResponses) DeleteVMWithResponse(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*DeleteVMResponse, error) {
+	rsp, err := c.DeleteVM(ctx, vmId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteVMResponse(rsp)
+}
+
+// GetVMWithResponse Get virtual machine details
+//
+// Returns the VM's current status, including `internal_ip_address`/
+// `external_ip_address` echoed directly from OSAC (REQ-VMGET-030).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1alpha1/vms/{vmId} (the `GetVM` operationId).
+func (c *ClientWithResponses) GetVMWithResponse(ctx context.Context, vmId VMIdPath, reqEditors ...RequestEditorFn) (*GetVMResponse, error) {
+	rsp, err := c.GetVM(ctx, vmId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVMResponse(rsp)
 }
 
 // ParseListClustersResponse parses an HTTP response from a ListClustersWithResponse call
@@ -1510,6 +2318,121 @@ func ParseGetClusterResponse(rsp *http.Response) (*GetClusterResponse, error) {
 	return response, nil
 }
 
+// ParseListVMsResponse parses an HTTP response from a ListVMsWithResponse call
+func ParseListVMsResponse(rsp *http.Response) (*ListVMsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVMsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VirtualMachineList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateVMResponse parses an HTTP response from a CreateVMWithResponse call
+func ParseCreateVMResponse(rsp *http.Response) (*CreateVMResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateVMResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest VirtualMachine
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetVMsHealthResponse parses an HTTP response from a GetVMsHealthWithResponse call
 func ParseGetVMsHealthResponse(rsp *http.Response) (*GetVMsHealthResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1537,6 +2460,117 @@ func ParseGetVMsHealthResponse(rsp *http.Response) (*GetVMsHealthResponse, error
 			return nil, err
 		}
 		response.ApplicationproblemJSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteVMResponse parses an HTTP response from a DeleteVMWithResponse call
+func ParseDeleteVMResponse(rsp *http.Response) (*DeleteVMResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteVMResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetVMResponse parses an HTTP response from a GetVMWithResponse call
+func ParseGetVMResponse(rsp *http.Response) (*GetVMResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVMResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VirtualMachine
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON502 = &dest
 
 	}
 

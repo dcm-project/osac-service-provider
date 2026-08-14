@@ -21,9 +21,11 @@ import (
 	oapigen "github.com/dcm-project/osac-service-provider/internal/api/server"
 	"github.com/dcm-project/osac-service-provider/internal/cluster"
 	clusterhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/cluster"
+	vmhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/vm"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/util"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
+	"github.com/dcm-project/osac-service-provider/internal/vm"
 )
 
 // setValidEnv sets every required/commonly-used env var to a
@@ -143,6 +145,20 @@ func (s *minimalClustersServer) Delete(context.Context, *publicv1.ClustersDelete
 	return &publicv1.ClustersDeleteResponse{}, nil
 }
 
+// minimalClusterTemplatesServer backs Create's REQ-CREATE-080 template
+// lookup with a single-node-set template, so this test can stay focused on
+// proving request routing rather than node-set resolution (that's
+// internal/cluster's own test scope).
+type minimalClusterTemplatesServer struct {
+	publicv1.UnimplementedClusterTemplatesServer
+}
+
+func (s *minimalClusterTemplatesServer) Get(context.Context, *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+	return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+		NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}},
+	}}, nil
+}
+
 var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 	// TC-U-098: each of apiHandler's 4 forwarding methods reaches the real
 	// internal/cluster.Service (through clusterhandlers.Handler), proving
@@ -154,6 +170,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		grpcSrv := grpc.NewServer()
 		fake := &minimalClustersServer{}
 		publicv1.RegisterClustersServer(grpcSrv, fake)
+		publicv1.RegisterClusterTemplatesServer(grpcSrv, &minimalClusterTemplatesServer{})
 		go func() { _ = grpcSrv.Serve(lis) }()
 		defer grpcSrv.Stop()
 
@@ -166,7 +183,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = conn.Close() }()
 
-		svc := cluster.New(publicv1.NewClustersClient(conn), versionmatrix.DefaultMatrix)
+		svc := cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), versionmatrix.DefaultMatrix)
 		h := &apiHandler{cluster: clusterhandlers.NewHandler(svc, slog.New(slog.DiscardHandler))}
 		ctx := context.Background()
 
@@ -191,6 +208,120 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		Expect(fake.getCalls).To(Equal(1))
 
 		_, err = h.DeleteCluster(ctx, oapigen.DeleteClusterRequestObject{ClusterId: "X"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.deleteCalls).To(Equal(1))
+	})
+})
+
+// minimalComputeInstancesServer is a bufconn-backed fake OSAC
+// ComputeInstancesServer (same technique as
+// internal/vm/fixture_test.go) used only to prove apiHandler's 4
+// forwarding methods actually reach internal/vm — exhaustive VM CRUD
+// business-logic behavior itself is internal/vm's and
+// internal/handlers/vm's own test scope.
+type minimalComputeInstancesServer struct {
+	publicv1.UnimplementedComputeInstancesServer
+	createCalls, getCalls, listCalls, deleteCalls int
+}
+
+func (s *minimalComputeInstancesServer) Create(context.Context, *publicv1.ComputeInstancesCreateRequest) (*publicv1.ComputeInstancesCreateResponse, error) {
+	s.createCalls++
+	return &publicv1.ComputeInstancesCreateResponse{Object: &publicv1.ComputeInstance{Id: "X", Status: &publicv1.ComputeInstanceStatus{}}}, nil
+}
+
+func (s *minimalComputeInstancesServer) Get(context.Context, *publicv1.ComputeInstancesGetRequest) (*publicv1.ComputeInstancesGetResponse, error) {
+	s.getCalls++
+	return &publicv1.ComputeInstancesGetResponse{Object: &publicv1.ComputeInstance{Id: "X", Status: &publicv1.ComputeInstanceStatus{}}}, nil
+}
+
+func (s *minimalComputeInstancesServer) List(context.Context, *publicv1.ComputeInstancesListRequest) (*publicv1.ComputeInstancesListResponse, error) {
+	s.listCalls++
+	return &publicv1.ComputeInstancesListResponse{}, nil
+}
+
+func (s *minimalComputeInstancesServer) Delete(context.Context, *publicv1.ComputeInstancesDeleteRequest) (*publicv1.ComputeInstancesDeleteResponse, error) {
+	s.deleteCalls++
+	return &publicv1.ComputeInstancesDeleteResponse{}, nil
+}
+
+// minimalSubnetsServer always reports one READY default subnet, so
+// Create's default-network resolution (§4.5) short-circuits without this
+// test needing to know anything about its provisioning mechanics.
+type minimalSubnetsServer struct {
+	publicv1.UnimplementedSubnetsServer
+}
+
+func (minimalSubnetsServer) List(context.Context, *publicv1.SubnetsListRequest) (*publicv1.SubnetsListResponse, error) {
+	return &publicv1.SubnetsListResponse{
+		Size: 1, Total: 1,
+		Items: []*publicv1.Subnet{{Id: "subnet-existing", Status: &publicv1.SubnetStatus{State: publicv1.SubnetState_SUBNET_STATE_READY}}},
+	}, nil
+}
+
+// minimalVirtualNetworksServer is never called given minimalSubnetsServer
+// above always reports an existing default subnet; embedding the
+// Unimplemented type alone satisfies publicv1.VirtualNetworksServer.
+type minimalVirtualNetworksServer struct {
+	publicv1.UnimplementedVirtualNetworksServer
+}
+
+var _ = Describe("apiHandler's VM CRUD forwarding (unit)", func() {
+	// TC-U-099: each of apiHandler's 4 forwarding methods reaches the real
+	// internal/vm.Service (through vmhandlers.Handler), proving cmd/main's
+	// wiring itself — not a re-test of CRUD business logic, which is
+	// internal/vm's and internal/handlers/vm's own exhaustive scope (100%
+	// covered there).
+	It("routes all 4 VM operations through to the wired vm.Service (TC-U-099)", func() {
+		lis := bufconn.Listen(1024 * 1024)
+		grpcSrv := grpc.NewServer()
+		fake := &minimalComputeInstancesServer{}
+		publicv1.RegisterComputeInstancesServer(grpcSrv, fake)
+		publicv1.RegisterSubnetsServer(grpcSrv, minimalSubnetsServer{})
+		publicv1.RegisterVirtualNetworksServer(grpcSrv, minimalVirtualNetworksServer{})
+		go func() { _ = grpcSrv.Serve(lis) }()
+		defer grpcSrv.Stop()
+
+		conn, err := grpc.NewClient("passthrough:///bufnet",
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return lis.DialContext(ctx)
+			}),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = conn.Close() }()
+
+		svc := vm.New(
+			publicv1.NewComputeInstancesClient(conn),
+			publicv1.NewSubnetsClient(conn),
+			publicv1.NewVirtualNetworksClient(conn),
+		)
+		h := &apiHandler{vm: vmhandlers.NewHandler(svc, slog.New(slog.DiscardHandler))}
+		ctx := context.Background()
+
+		_, err = h.ListVMs(ctx, oapigen.ListVMsRequestObject{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.listCalls).To(Equal(1))
+
+		_, err = h.CreateVM(ctx, oapigen.CreateVMRequestObject{
+			Params: v1alpha1.CreateVMParams{Id: util.Ptr("X")},
+			Body: &v1alpha1.CreateVMJSONRequestBody{Spec: &v1alpha1.VMSpec{
+				Storage:  v1alpha1.VMStorage{Disks: []v1alpha1.VMDisk{{Name: "boot", Capacity: "100GB"}}},
+				GuestOs:  v1alpha1.VMGuestOS{Type: "rhel-9"},
+				Metadata: v1alpha1.VMMetadata{Name: "foo"},
+				ProviderHints: v1alpha1.VMProviderHints{Osac: v1alpha1.OSACVMProviderHints{
+					TemplateId:   "default-vm",
+					InstanceType: "standard-4-16",
+				}},
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.createCalls).To(Equal(1))
+
+		_, err = h.GetVM(ctx, oapigen.GetVMRequestObject{VmId: "X"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.getCalls).To(Equal(1))
+
+		_, err = h.DeleteVM(ctx, oapigen.DeleteVMRequestObject{VmId: "X"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.deleteCalls).To(Equal(1))
 	})

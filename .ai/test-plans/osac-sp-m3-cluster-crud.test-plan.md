@@ -47,7 +47,11 @@ done, regardless of coverage percentage:
    Delete) each require their `TC-I-*` to issue **two real, sequential HTTP
    requests** — not two direct package-level calls — since the guarantee
    being proven is about what a caller observes over the wire across
-   retries.
+   retries. The only sanctioned exception is a sub-case the spec proves
+   unreachable through any real HTTP handler in this milestone (documented
+   via an `SC-M3-*` clarification, e.g. `SC-M3-001`/`SC-M3-003` — see
+   §4.5's Coverage Matrix row); an untested `TC-I-*` with no such
+   documented reason is still an incomplete pyramid.
 4. **100% coverage of new testable code** (non-generated) in
    `internal/cluster/` and `internal/handlers/cluster/`, verified via
    `go test -cover` / `make test-cover`, the same way Milestones 1/2 closed
@@ -60,13 +64,16 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-200 | Create translates the full field set and dispatches exact values | REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-025, AC-CREATE-010 | Call `internal/cluster.Create` with `id="X"`, `spec={version:"1.29", nodes.worker.count:3, metadata.name:"foo", provider_hints.osac.template_id:"default-hcp"}` against a `bufconn` fake `ClustersServer`; assert the fake's recorded `Clusters/Create` request has `Cluster.id=="X"`, `spec.template=="default-hcp"`, `spec.node_sets["default-hcp"].size==3`, `spec.metadata.name=="foo"`, and `spec.release_image` equal to the placeholder table's mapped value for `"1.29"` (a specific non-empty string, not `"1.29"` itself). |
-| TC-U-201 | Ownership labels are set exactly, merged with caller labels | REQ-CREATE-030, AC-CREATE-020 | Same call with `spec.metadata.labels={"team":"platform"}`; assert the fake's recorded `Cluster.metadata.labels` equals exactly `{"team":"platform","dcm.io/managed-by":"dcm","dcm.io/instance-id":"X","dcm.io/service-type":"cluster"}`. |
-| TC-U-202 | `AlreadyExists` on Create triggers a Get and returns the existing resource, not a new one | REQ-CREATE-040, AC-CREATE-030 | Fake `Clusters/Create` returns `codes.AlreadyExists` for `id="X"`; fake `Clusters/Get("X")` returns a canned Cluster with `status.state=PROGRESSING`; call `Create`; assert the returned resource's `id=="X"` and `status=="PROGRESSING"` (the Get's values, not fabricated), and that the fake's `Get` call counter equals exactly `1`. |
-| TC-U-203 | Worker CPU/memory/storage hints never become a `host_type` override | REQ-CREATE-070, AC-CREATE-060 | Call `Create` with `spec.nodes.worker.{cpu:8,memory:"32GB",storage:"250GB"}`; assert the fake's recorded `node_sets[key].host_type` is the empty string. |
-| TC-U-204 | Version translation table covers each supported placeholder version | REQ-CREATE-025 | Table-driven: for each version in the placeholder table (e.g. `"1.28"`, `"1.29"`, `"1.30"`), call `Create`; assert the fake's recorded `spec.release_image` equals that version's specific documented mapped value (not merely non-empty) — and that an explicit `provider_hints.osac.release_image` override, when present, is used verbatim instead of the table lookup. |
-| TC-U-205 | Missing `id` query parameter is rejected before calling OSAC | REQ-CREATE-060, AC-CREATE-040 | Invoke the `Create` handler (StrictServerInterface layer) with no `id` param; assert it returns a `400`-mapped error and the fake OSAC server recorded zero `Clusters/Create` calls. |
-| TC-U-206 | Missing required spec field is rejected before calling OSAC | REQ-CREATE-060, AC-CREATE-050 | Invoke the `Create` handler with `spec.provider_hints.osac.template_id` absent; assert `400`-mapped error and zero fake OSAC calls. |
+| TC-U-200 | Create translates the full field set and dispatches exact values | REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-025, REQ-CREATE-080, AC-CREATE-010 | Exercises AC-CREATE-010 via `internal/cluster.Create` against `bufconn` fakes for both `ClusterTemplatesServer` (single node-set key, deliberately distinct from `template_id`) and `ClustersServer` (see spec §4.1 for the exact field values asserted, including the resolved `node_sets` key). |
+| TC-U-201 | Ownership labels are set exactly, merged with caller labels | REQ-CREATE-030, AC-CREATE-020 | Exercises AC-CREATE-020 via `internal/cluster.Create` against the bufconn fake. |
+| TC-U-202 | `AlreadyExists` on Create triggers a Get and returns the existing resource, not a new one | REQ-CREATE-040, AC-CREATE-030 | Exercises AC-CREATE-030's Create-then-Get-fallback path directly via `internal/cluster.Create` against the bufconn fake (the real-HTTP two-request guarantee is TC-I-201, per Rule 3). |
+| TC-U-203 | Worker CPU/memory/storage hints never become a `host_type` override | REQ-CREATE-070, AC-CREATE-060 | Exercises AC-CREATE-060 via `internal/cluster.Create` against the bufconn fake. |
+| TC-U-204 | Version translation table covers each supported placeholder version | REQ-CREATE-025 | Table-driven over the placeholder version table (spec §4.1); also asserts an explicit `provider_hints.osac.release_image` override is used verbatim instead of the table lookup. No dedicated AC — covered by AC-CREATE-010's general translation assertion. |
+| TC-U-205 | Missing `id` query parameter is rejected before calling OSAC | REQ-CREATE-060, AC-CREATE-040 | Exercises AC-CREATE-040 at the `StrictServerInterface` handler layer (no OSAC call reached). |
+| TC-U-206 | Missing required spec field is rejected before calling OSAC | REQ-CREATE-060, AC-CREATE-050 | Exercises AC-CREATE-050 at the handler layer. |
+| TC-U-207 | Multi-node-set template is rejected before calling `Clusters/Create` | REQ-CREATE-090, AC-CREATE-070 | Exercises AC-CREATE-070's multi-key case via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning two node-set keys; asserts `Clusters/Create` is never called. |
+| TC-U-208 | Unknown `template_id` maps `ClusterTemplates/Get`'s `NotFound` to 400, not 404 | REQ-CREATE-100, REQ-ERR-010, AC-CREATE-080 | Exercises AC-CREATE-080 via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning `NotFound`; asserts `Clusters/Create` is never called. |
+| TC-U-209 | Zero-node-set template is rejected before calling `Clusters/Create` | REQ-CREATE-090, AC-CREATE-070 | Exercises AC-CREATE-070's zero-key case via `internal/cluster.Create` against a `bufconn` fake `ClusterTemplatesServer` returning an empty `node_sets` map; asserts `Clusters/Create` is never called. |
 
 ---
 
@@ -74,9 +81,9 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-210 | `ACTIVE` cluster fetches kubeconfig exactly once | REQ-GET-010, REQ-GET-020, AC-GET-010 | Fake `Clusters/Get` returns `status.state=READY`; fake `Clusters/GetKubeconfig` returns `"kubeconfig-abc"`; call `internal/cluster.Get`; assert returned `status=="ACTIVE"`, `kubeconfig=="kubeconfig-abc"`, and the fake's `GetKubeconfig` call counter equals exactly `1`. |
-| TC-U-211 | Non-`ACTIVE` cluster never triggers a kubeconfig fetch | REQ-GET-030, AC-GET-020 | Fake `Clusters/Get` returns `status.state=PROGRESSING`; call `Get`; assert `status=="PROGRESSING"`, `kubeconfig==""`, and `GetKubeconfig`'s call counter equals exactly `0`. |
-| TC-U-212 | Nonexistent cluster maps to a not-found result | REQ-GET-040, AC-GET-030 | Fake `Clusters/Get` returns `codes.NotFound`; call `Get`; assert the returned error, when passed through the shared error mapper, produces HTTP `404`. |
+| TC-U-210 | `ACTIVE` cluster fetches kubeconfig exactly once | REQ-GET-010, REQ-GET-020, AC-GET-010 | Exercises AC-GET-010 via `internal/cluster.Get` against the bufconn fake. |
+| TC-U-211 | Non-`ACTIVE` cluster never triggers a kubeconfig fetch | REQ-GET-030, AC-GET-020 | Exercises AC-GET-020 via `internal/cluster.Get` against the bufconn fake. |
+| TC-U-212 | Nonexistent cluster maps to a not-found result | REQ-GET-040, AC-GET-030 | Exercises AC-GET-030's mapper-level outcome directly via `internal/cluster.Get` (the HTTP-level `404` assertion is TC-I-212). |
 
 ---
 
@@ -84,9 +91,9 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-220 | List applies the ownership filter, default page size, and exact field values | REQ-LIST-010, REQ-LIST-030, AC-LIST-010 | Fake `Clusters/List` records its request and returns 2 clusters with known `id`/`status.state`; call `internal/cluster.List` with no page params; assert the fake recorded `filter=="this.metadata.labels[\"dcm.io/managed-by\"] == \"dcm\""` and `limit==50`, and the returned entries' `id`/`status` equal the fake's canned values exactly. |
-| TC-U-221 | `page_token` round-trips through OSAC's `offset` | REQ-LIST-020, REQ-LIST-040, AC-LIST-020 | Fake `Clusters/List` returns a response with next `offset=50`; decode the returned `next_page_token` and feed it into a second `List` call; assert the fake's second recorded request has `offset==50` exactly. |
-| TC-U-222 | List entries never populate `kubeconfig` | REQ-LIST-030, AC-LIST-030 | Fake `Clusters/List` returns a `status.state=READY` cluster; fake `GetKubeconfig` fails the test if called; call `List`; assert the returned entry has no populated `kubeconfig` and `GetKubeconfig`'s call counter equals exactly `0`. |
+| TC-U-220 | List applies the ownership filter, default page size, and exact field values | REQ-LIST-010, REQ-LIST-030, AC-LIST-010 | Exercises AC-LIST-010 via `internal/cluster.List` against the bufconn fake. |
+| TC-U-221 | `page_token` round-trips through OSAC's `offset` | REQ-LIST-020, REQ-LIST-040, AC-LIST-020 | Exercises AC-LIST-020 via two sequential `internal/cluster.List` calls against the bufconn fake. |
+| TC-U-222 | List entries never populate `kubeconfig` | REQ-LIST-030, AC-LIST-030 | Exercises AC-LIST-030 via `internal/cluster.List` against the bufconn fake. |
 
 ---
 
@@ -94,9 +101,9 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-230 | Successful delete does not poll for confirmation | REQ-DELETE-010, REQ-DELETE-040, AC-DELETE-010 | Fake `Clusters/Delete` succeeds; call `internal/cluster.Delete`; assert it returns success and the fake's `Clusters/Get` call counter equals exactly `0` (no confirmation poll). |
-| TC-U-231 | `NotFound` on Delete is treated as success | REQ-DELETE-020, AC-DELETE-020 | Fake `Clusters/Delete` returns `codes.NotFound`; call `Delete`; assert it returns success (no error), not a not-found error. |
-| TC-U-232 | A genuine Delete failure is surfaced, not swallowed | REQ-DELETE-030, AC-DELETE-030 | Fake `Clusters/Delete` returns `codes.Unavailable`; call `Delete`; assert the returned error, through the shared error mapper, produces HTTP `502` — proving the `NotFound` carve-out does not apply here. |
+| TC-U-230 | Successful delete does not poll for confirmation | REQ-DELETE-010, REQ-DELETE-040, AC-DELETE-010 | Exercises AC-DELETE-010 via `internal/cluster.Delete` against the bufconn fake. |
+| TC-U-231 | `NotFound` on Delete is treated as success | REQ-DELETE-020, AC-DELETE-020 | Exercises AC-DELETE-020's single-call outcome directly via `internal/cluster.Delete` (the real, sequential two-HTTP-request guarantee is TC-I-231, per Rule 3). |
+| TC-U-232 | A genuine Delete failure is surfaced, not swallowed | REQ-DELETE-030, AC-DELETE-030 | Exercises AC-DELETE-030 via `internal/cluster.Delete` against the bufconn fake. |
 
 ---
 
@@ -104,9 +111,9 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-240 | Each precedence-rule input maps to its documented value | REQ-STATUS-010, REQ-STATUS-020, AC-STATUS-010 | Table-driven, one row per rule in REQ-STATUS-020: `Unavailable`→`UNAVAILABLE`; `NotFound`→`DELETED`; `state=FAILED`→`FAILED`; `state=DELETING`→`DELETING`; `state=DELETE_FAILED`→`FAILED`; `state=READY` (no conditions)→`ACTIVE`; `state=PROGRESSING`→`PROGRESSING`; `DEGRADED` condition `TRUE` + `state=READY`→`DEGRADED`; `state=UNSPECIFIED`→`FAILED`. Each row asserts the mapper's exact return value. |
-| TC-U-241 | `FAILED` state takes precedence over a simultaneous `DEGRADED` condition | REQ-STATUS-020, AC-STATUS-020 | Call the mapper with `state=FAILED` **and** a `DEGRADED` condition `TRUE` present together; assert it returns exactly `FAILED`. |
-| TC-U-242 | Connectivity failure (`Unavailable`) is never conflated with a real `NotFound` | REQ-STATUS-020, AC-STATUS-030 | Call the mapper once with a gRPC `Unavailable` outcome and once with `NotFound`; assert the first returns exactly `UNAVAILABLE` and the second exactly `DELETED`. |
+| TC-U-240 | Each precedence-rule input maps to its documented value | REQ-STATUS-010, REQ-STATUS-020, AC-STATUS-010 | Exercises AC-STATUS-010, table-driven over all 10 REQ-STATUS-020 rules, calling the mapper directly (pure unit, no bufconn needed). Rules 1/2 (`Unavailable`/`NotFound`) and 5/6 (`DELETING`/`DELETE_FAILED`) are unit-only by design — see SC-M3-003/SC-M3-001. |
+| TC-U-241 | `FAILED` state takes precedence over a simultaneous `DEGRADED` condition | REQ-STATUS-020, AC-STATUS-020 | Exercises AC-STATUS-020 by calling the mapper directly with both signals present. |
+| TC-U-242 | Connectivity failure (`Unavailable`) is never conflated with a real `NotFound` | REQ-STATUS-020, AC-STATUS-030 | Exercises AC-STATUS-030 by calling the mapper directly for each outcome. Per SC-M3-003, this rule has no `TC-I` counterpart in M3 by design — REQ-GET-040/REQ-ERR-010 resolve both outcomes as sync HTTP errors before the mapper runs. |
 
 ---
 
@@ -114,8 +121,8 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-250 | Each gRPC code maps to its documented HTTP status and `type` | REQ-ERR-010, REQ-ERR-020, AC-ERR-010 | Table-driven via the Get handler: fake `Clusters/Get` returns, in turn, `InvalidArgument`/`Unauthenticated`/`PermissionDenied`/`NotFound`/`Unavailable`/`Internal`; assert the resulting HTTP status is exactly `400`/`401`/`403`/`404`/`502`/`500` respectively and the decoded body's `type` matches the documented `v1alpha1.ErrorType` constant exactly. |
-| TC-U-251 | The same error-mapping function is used by Get, List, and Delete | REQ-ERR-030, AC-ERR-020 | Fake OSAC returns `PermissionDenied` from `Clusters/Get`, `Clusters/List`, and `Clusters/Delete` in three separate calls; assert all three handlers produce identical HTTP status (`403`) and identical `type` value. |
+| TC-U-250 | Each gRPC code maps to its documented HTTP status and `type` | REQ-ERR-010, REQ-ERR-020, AC-ERR-010 | Exercises AC-ERR-010 via the Get handler, table-driven over the 6 gRPC codes (spec §4.6). |
+| TC-U-251 | The same error-mapping function is used by Get, List, and Delete | REQ-ERR-030, AC-ERR-020 | Exercises AC-ERR-020 via the Get/List/Delete handlers against the bufconn fake. |
 
 ---
 
@@ -123,10 +130,12 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-200 | Create succeeds end-to-end over real HTTP | REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-030, REQ-CREATE-050, AC-CREATE-010, AC-CREATE-020 | Start the real HTTP server wired to a `bufconn` fake OSAC; issue a real `POST /api/v1alpha1/clusters?id=X` with a full valid body; assert the real HTTP response is `201` with `id=="X"` and `status=="PROGRESSING"` exactly, and the fake OSAC server independently recorded the Create call with the exact translated fields (mirrors TC-U-200/201, proven reachable through the real router). |
-| TC-I-201 | Idempotent Create: two real, sequential HTTP requests with the same `id` return the same resource | REQ-CREATE-040, AC-CREATE-030 | Issue `POST /api/v1alpha1/clusters?id=X` twice in sequence over real HTTP (not direct package calls); assert **both** responses are `201` with `id=="X"`, the second response's `status` reflects the existing (not re-created) cluster's state, and the fake OSAC server's cluster count is exactly `1` after both requests. |
-| TC-I-202 | Request validation is enforced at the real HTTP boundary | REQ-CREATE-060, AC-CREATE-040, AC-CREATE-050 | Issue a real `POST /api/v1alpha1/clusters` with no `id` query parameter, and separately one with a body missing `spec.provider_hints.osac.template_id`; assert both real responses are `400` (RFC 9457) and the fake OSAC server recorded zero Create calls for either. |
-| TC-I-203 | Host-sizing hints are not forwarded as a `host_type` override, over real HTTP | REQ-CREATE-070, AC-CREATE-060 | Issue a real Create request with `spec.nodes.worker.cpu=8`; assert the fake OSAC server's recorded `node_sets[key].host_type` is empty. |
+| TC-I-200 | Create succeeds end-to-end over real HTTP | REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-030, REQ-CREATE-050, REQ-CREATE-080, AC-CREATE-010, AC-CREATE-020 | Real-HTTP counterpart of TC-U-200/201 — same field-value assertions (incl. the resolved `node_sets` key), reached through the real router. |
+| TC-I-201 | Idempotent Create: two real, sequential HTTP requests with the same `id` return the same resource | REQ-CREATE-040, AC-CREATE-030 | Real-HTTP counterpart of TC-U-202; issues two sequential `POST` requests (not direct package calls), per Rule 3. |
+| TC-I-202 | Request validation is enforced at the real HTTP boundary | REQ-CREATE-060, AC-CREATE-040, AC-CREATE-050 | Real-HTTP counterpart of TC-U-205/206. |
+| TC-I-203 | Host-sizing hints are not forwarded as a `host_type` override, over real HTTP | REQ-CREATE-070, AC-CREATE-060 | Real-HTTP counterpart of TC-U-203. |
+| TC-I-204 | Multi-node-set template is rejected over real HTTP | REQ-CREATE-090, AC-CREATE-070 | Real-HTTP counterpart of TC-U-207. |
+| TC-I-205 | Unknown `template_id` returns 400, not 404, over real HTTP | REQ-CREATE-100, REQ-ERR-010, AC-CREATE-080 | Real-HTTP counterpart of TC-U-208. |
 
 ---
 
@@ -134,9 +143,9 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-210 | Get returns kubeconfig for an `ACTIVE` cluster over real HTTP | REQ-GET-010, REQ-GET-020, AC-GET-010 | Fake OSAC `Get` returns `READY`, fake `GetKubeconfig` returns a known value; issue a real `GET /api/v1alpha1/clusters/{id}`; assert `200`, `status=="ACTIVE"` exactly, `kubeconfig` equals the fake's exact value. |
-| TC-I-211 | Get omits kubeconfig for a non-`ACTIVE` cluster over real HTTP | REQ-GET-030, AC-GET-020 | Fake OSAC `Get` returns `PROGRESSING`; real `GET`; assert `status=="PROGRESSING"`, `kubeconfig==""` exactly. |
-| TC-I-212 | Get returns 404 for a nonexistent cluster over real HTTP | REQ-GET-040, AC-GET-030 | Fake OSAC `Get` returns `NotFound`; real `GET`; assert `404` with RFC 9457 `type` exactly `.../not-found`. |
+| TC-I-210 | Get returns kubeconfig for an `ACTIVE` cluster over real HTTP | REQ-GET-010, REQ-GET-020, AC-GET-010 | Real-HTTP counterpart of TC-U-210. |
+| TC-I-211 | Get omits kubeconfig for a non-`ACTIVE` cluster over real HTTP | REQ-GET-030, AC-GET-020 | Real-HTTP counterpart of TC-U-211. |
+| TC-I-212 | Get returns 404 for a nonexistent cluster over real HTTP | REQ-GET-040, AC-GET-030 | Real-HTTP counterpart of TC-U-212, asserting the HTTP-level `404`/RFC 9457 `type` that TC-U-212 doesn't cover. |
 
 ---
 
@@ -144,9 +153,10 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-220 | List returns exact entries with the ownership filter applied, over real HTTP | REQ-LIST-010, REQ-LIST-030, AC-LIST-010 | Fake OSAC `List` records its request, returns 2 known clusters; real `GET /api/v1alpha1/clusters`; assert the fake recorded the exact CEL filter, and the real response body's `results` match the canned values exactly. |
-| TC-I-221 | Pagination round-trips across two real, sequential HTTP requests | REQ-LIST-020, REQ-LIST-040, AC-LIST-020 | First real `GET /api/v1alpha1/clusters` triggers a fake response with next `offset=50`; feed the returned `next_page_token` into a second real `GET .../clusters?page_token=...`; assert the fake's second recorded request has `offset==50`. |
-| TC-I-222 | List responses never include `kubeconfig`, over real HTTP | REQ-LIST-030, AC-LIST-030 | Fake OSAC `List` returns a `READY` cluster; real `GET`; assert the response entry has no `kubeconfig` field and the fake `GetKubeconfig` was never called. |
+| TC-I-220 | List returns exact entries with the ownership filter applied, over real HTTP | REQ-LIST-010, REQ-LIST-030, AC-LIST-010 | Real-HTTP counterpart of TC-U-220. |
+| TC-I-221 | Pagination round-trips across two real, sequential HTTP requests | REQ-LIST-020, REQ-LIST-040, AC-LIST-020 | Real-HTTP counterpart of TC-U-221; issues two sequential `GET` requests. |
+| TC-I-222 | List responses never include `kubeconfig`, over real HTTP | REQ-LIST-030, AC-LIST-030 | Real-HTTP counterpart of TC-U-222. |
+| TC-I-223 | A `page_token` this SP never issued is rejected as `400`, without calling `Clusters/List` | REQ-LIST-020, REQ-ERR-010, AC-LIST-040 | No fake `Clusters/List` behavior configured (any call fails the test); real `GET /api/v1alpha1/clusters?page_token=not-valid-base64!!!`; assert `400` with `type` exactly `INVALIDARGUMENT`, and the fake's `List` call counter is exactly `0`. |
 
 ---
 
@@ -154,9 +164,9 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-230 | Delete succeeds over real HTTP | REQ-DELETE-010, REQ-DELETE-040, AC-DELETE-010 | Fake OSAC `Delete` succeeds; real `DELETE /api/v1alpha1/clusters/{id}`; assert `204` with empty body, and no `Clusters/Get` call was made by the SP afterward. |
-| TC-I-231 | Deleting an already-deleted cluster is idempotent across two real, sequential HTTP requests | REQ-DELETE-020, AC-DELETE-020 | Fake OSAC holds exactly one cluster `id=X`; issue real `DELETE /api/v1alpha1/clusters/X` twice in sequence; assert **both** real responses are `204` (the second because the fake's second `Delete` call returns `NotFound`, mapped to `204` not `404`). |
-| TC-I-232 | A genuine Delete failure surfaces over real HTTP, is not swallowed by the 404-tolerance carve-out | REQ-DELETE-030, AC-DELETE-030 | Fake OSAC `Delete` returns `Unavailable`; real `DELETE`; assert `502`, not `204`. |
+| TC-I-230 | Delete succeeds over real HTTP | REQ-DELETE-010, REQ-DELETE-040, AC-DELETE-010 | Real-HTTP counterpart of TC-U-230. |
+| TC-I-231 | Deleting an already-deleted cluster is idempotent across two real, sequential HTTP requests | REQ-DELETE-020, AC-DELETE-020 | Real-HTTP counterpart of TC-U-231; issues two sequential `DELETE` requests (not direct package calls), per Rule 3. |
+| TC-I-232 | A genuine Delete failure surfaces over real HTTP, is not swallowed by the 404-tolerance carve-out | REQ-DELETE-030, AC-DELETE-030 | Real-HTTP counterpart of TC-U-232. |
 
 ---
 
@@ -174,8 +184,8 @@ CRUD happy-path test would incidentally prove.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-240 | Status precedence is observable over real HTTP, not just at the unit level | REQ-STATUS-020, AC-STATUS-020 | Fake OSAC `Get` returns `state=FAILED` **and** a `DEGRADED` condition `TRUE` simultaneously; real `GET /api/v1alpha1/clusters/{id}`; assert the real response body's `status` is exactly `"FAILED"`. |
-| TC-I-250 | Each gRPC error code maps to its documented HTTP status over real HTTP, identically across handlers | REQ-ERR-010, REQ-ERR-020, REQ-ERR-030, AC-ERR-010, AC-ERR-020 | Table-driven over real HTTP: fake OSAC returns each of the 6 codes from `Clusters/Get`, and `PermissionDenied` additionally from `Clusters/List` and `Clusters/Delete`; assert each real response's HTTP status/`type` matches the documented mapping exactly, and the `PermissionDenied` case is identical (`403`, same `type`) across all three handlers. |
+| TC-I-240 | Status precedence is observable over real HTTP, not just at the unit level | REQ-STATUS-020, AC-STATUS-020 | Real-HTTP counterpart of TC-U-241, via `GET /api/v1alpha1/clusters/{id}`. |
+| TC-I-250 | Each gRPC error code maps to its documented HTTP status over real HTTP, identically across handlers | REQ-ERR-010, REQ-ERR-020, REQ-ERR-030, AC-ERR-010, AC-ERR-020 | Real-HTTP counterpart of TC-U-250/251. |
 
 ---
 
@@ -183,10 +193,10 @@ CRUD happy-path test would incidentally prove.
 
 | Spec Section | REQ Count | AC Count | TC-U (this file) | TC-I (this file) | Pyramid complete? |
 |---|---|---|---|---|---|
-| 4.1 Cluster Create | 7 | 6 | 7 (TC-U-200..206) | 4 (TC-I-200..203) | Yes — every AC has both tiers; AC-CREATE-030 covered by TC-U-202 (unit) + TC-I-201 (2 real sequential HTTP requests, per rule 3) |
+| 4.1 Cluster Create | 10 | 8 | 10 (TC-U-200..209) | 6 (TC-I-200..205) | Yes — every AC has both tiers; AC-CREATE-030 covered by TC-U-202 (unit) + TC-I-201 (2 real sequential HTTP requests, per rule 3); AC-CREATE-070's zero-key case (TC-U-209) is unit-only, same tier-split rationale as its multi-key case |
 | 4.2 Cluster Get | 4 | 3 | 3 (TC-U-210..212) | 3 (TC-I-210..212) | Yes |
-| 4.3 Cluster List | 4 | 3 | 3 (TC-U-220..222) | 3 (TC-I-220..222) | Yes |
+| 4.3 Cluster List | 4 | 4 | 3 (TC-U-220..222) | 4 (TC-I-220..223) | Yes — AC-LIST-040 covered by a pre-existing, untagged unit test in `list_unit_test.go` (base64/non-numeric `page_token` rejection) plus dedicated TC-I-223 for the real-HTTP boundary |
 | 4.4 Cluster Delete | 4 | 3 | 3 (TC-U-230..232) | 3 (TC-I-230..232) | Yes — AC-DELETE-020 covered by TC-U-231 (unit) + TC-I-231 (2 real sequential HTTP requests, per rule 3) |
-| 4.5 Status Mapping | 3 | 3 | 3 (TC-U-240..242) | 1 dedicated (TC-I-240) + incidentally via TC-I-210/211/220 | Yes |
+| 4.5 Status Mapping | 3 | 3 | 3 (TC-U-240..242) | 1 dedicated (TC-I-240) + incidentally via TC-I-210/211/220 | Yes — AC-STATUS-020 has both tiers (TC-U-241 + TC-I-240); AC-STATUS-010's rules 1/2/5/6 and all of AC-STATUS-030 are unit-only by design, not an incomplete pyramid (SC-M3-001/SC-M3-003 — those gRPC outcomes are resolved as sync HTTP errors before the mapper runs in M3) |
 | 4.6 Error Mapping | 3 | 2 | 2 (TC-U-250..251) | 1 dedicated (TC-I-250) + incidentally via TC-I-202/212/232 | Yes |
-| **Total** | **25** | **20** | **21** | **15** | |
+| **Total** | **28** | **23** | **24** | **18** | |

@@ -17,21 +17,22 @@ import (
 )
 
 // Service implements Cluster Create/Get/List/Delete against OSAC's
-// Clusters gRPC service. Constructed from a Bootstrap.Conn()-backed client
-// (publicv1.NewClustersClient) per DD-020 — no new Bootstrap accessor is
-// added.
+// Clusters gRPC service. Constructed from Bootstrap.Conn()-backed clients
+// (publicv1.NewClustersClient, publicv1.NewClusterTemplatesClient) per
+// DD-020 — no new Bootstrap accessor is added.
 type Service struct {
-	client publicv1.ClustersClient
-	matrix versionmatrix.Matrix
+	client    publicv1.ClustersClient
+	templates publicv1.ClusterTemplatesClient
+	matrix    versionmatrix.Matrix
 }
 
-// New constructs a Service wrapping the given Clusters client. matrix is
-// consulted by Create's release_image translation (REQ-VERSION-060) and by
-// SupportsVersion (REQ-VERSION-070) — the same instance main.go loads once
-// at startup and also injects into internal/registration, so the two can
-// never drift apart.
-func New(client publicv1.ClustersClient, matrix versionmatrix.Matrix) *Service {
-	return &Service{client: client, matrix: matrix}
+// New constructs a Service wrapping the given Clusters/ClusterTemplates
+// clients. matrix is consulted by Create's release_image translation
+// (REQ-VERSION-060) and by SupportsVersion (REQ-VERSION-070) — the same
+// instance main.go loads once at startup and also injects into
+// internal/registration, so the two can never drift apart.
+func New(client publicv1.ClustersClient, templates publicv1.ClusterTemplatesClient, matrix versionmatrix.Matrix) *Service {
+	return &Service{client: client, templates: templates, matrix: matrix}
 }
 
 // SupportsVersion reports whether version has an entry in s's injected
@@ -49,7 +50,13 @@ func (s *Service) SupportsVersion(version string) bool {
 // current state — REQ-CREATE-040/DD-100: this SP is the real idempotency
 // backstop, since upstream (control-plane) retry-safety has a known gap.
 func (s *Service) Create(ctx context.Context, id string, spec v1alpha1.ClusterSpec) (v1alpha1.Cluster, error) {
-	obj := s.toOSACCluster(id, spec)
+	nodeSetKey, err := s.resolveNodeSetKey(ctx, spec.ProviderHints.Osac.TemplateId)
+	if err != nil {
+		return v1alpha1.Cluster{}, err
+	}
+
+	obj := s.toOSACCluster(id, spec, nodeSetKey)
+	version := spec.Version
 
 	resp, err := s.client.Create(ctx, &publicv1.ClustersCreateRequest{Object: obj})
 	if err != nil {
@@ -58,13 +65,45 @@ func (s *Service) Create(ctx context.Context, id string, spec v1alpha1.ClusterSp
 			if getErr != nil {
 				return v1alpha1.Cluster{}, getErr
 			}
-			return toAPICluster(getResp.GetObject(), nil), nil
+			// Same request, same spec.version — echo it here too so the
+			// retried path doesn't return a different body shape than the
+			// first-time path (SC-M3-002).
+			return toAPICluster(getResp.GetObject(), &version), nil
 		}
 		return v1alpha1.Cluster{}, err
 	}
 
-	version := spec.Version
 	return toAPICluster(resp.GetObject(), &version), nil
+}
+
+// resolveNodeSetKey looks up templateID via ClusterTemplates/Get and
+// returns its single node-set key (REQ-CREATE-080) — the key is per-template
+// and never equal to templateID itself, so it can only be discovered this
+// way (DD-110). A template with zero or more than one node-set key is
+// rejected as InvalidArgument (REQ-CREATE-090): this milestone's single
+// nodes.worker.count has no way to say which key it applies to. An unknown
+// templateID is also InvalidArgument, not the NotFound a raw passthrough
+// would produce (REQ-CREATE-100) — it's a bad value in the caller's own
+// request, not a missing SP-managed resource.
+func (s *Service) resolveNodeSetKey(ctx context.Context, templateID string) (string, error) {
+	resp, err := s.templates.Get(ctx, &publicv1.ClusterTemplatesGetRequest{Id: templateID})
+	if err != nil {
+		if grpcstatus.Code(err) == codes.NotFound {
+			return "", grpcstatus.Errorf(codes.InvalidArgument, "template %q not found", templateID)
+		}
+		return "", err
+	}
+
+	nodeSets := resp.GetObject().GetNodeSets()
+	if len(nodeSets) != 1 {
+		return "", grpcstatus.Errorf(codes.InvalidArgument,
+			"template %q defines %d node sets, expected exactly 1", templateID, len(nodeSets))
+	}
+	var key string
+	for k := range nodeSets {
+		key = k
+	}
+	return key, nil
 }
 
 // Get calls Clusters/Get(id), maps the result via MapStatus, and — only
@@ -77,7 +116,7 @@ func (s *Service) Get(ctx context.Context, id string) (v1alpha1.Cluster, error) 
 	}
 
 	result := toAPICluster(resp.GetObject(), nil)
-	if result.Status != v1alpha1.ClusterStatusACTIVE {
+	if *result.Status != v1alpha1.ClusterStatusACTIVE {
 		// REQ-GET-030: kubeconfig is the empty string (not omitted) for any
 		// non-ACTIVE status — distinct from List, which omits it entirely
 		// (REQ-LIST-030) since toAPICluster never sets it.

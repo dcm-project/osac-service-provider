@@ -27,14 +27,8 @@ func (h *Handler) CreateCluster(ctx context.Context, req oapigen.CreateClusterRe
 // validateCreateRequest implements REQ-CREATE-060's request validation,
 // returning a synthetic gRPC InvalidArgument error — mapped to 400 by the
 // same shared mapError as any OSAC-originated error (REQ-ERR-030) — before
-// ever dispatching to OSAC. Both req.Params.Id and req.Body.Spec are
-// pointers that can genuinely be nil: the "id" query parameter and the
-// body's "spec" property are schema-optional (AEP-133 compliance, DD-110),
-// so — unlike before DD-110 — the router's generated ServerInterfaceWrapper
-// no longer rejects a wholly-absent "id" (or an empty JSON object body)
-// ahead of this handler ever running. This is now the sole enforcement
-// point for REQ-CREATE-010/060's "control-plane always supplies both"
-// requirement.
+// ever dispatching to OSAC. This is the sole enforcement point for "id"/
+// "spec", which are schema-optional per DD-113 (AEP-133).
 //
 // The final case (REQ-VERSION-080) hard-rejects an unsupported
 // spec.version instead of silently falling back to OSAC's template

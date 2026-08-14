@@ -39,6 +39,7 @@ type fakeClustersServer struct {
 	createCalls []*publicv1.ClustersCreateRequest
 	deleteCalls []*publicv1.ClustersDeleteRequest
 	getCalls    []*publicv1.ClustersGetRequest
+	listCalls   []*publicv1.ClustersListRequest
 }
 
 func (s *fakeClustersServer) Create(_ context.Context, req *publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error) {
@@ -70,7 +71,10 @@ func (s *fakeClustersServer) Get(_ context.Context, req *publicv1.ClustersGetReq
 }
 
 func (s *fakeClustersServer) List(_ context.Context, req *publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
+	s.mu.Lock()
+	s.listCalls = append(s.listCalls, req)
 	fn := s.listFunc
+	s.mu.Unlock()
 	if fn != nil {
 		return fn(req)
 	}
@@ -117,10 +121,29 @@ func (s *fakeClustersServer) DeleteCallCount() int {
 	return len(s.deleteCalls)
 }
 
+func (s *fakeClustersServer) ListCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.listCalls)
+}
+
 func (s *fakeClustersServer) GetCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.getCalls)
+}
+
+// fakeClusterTemplatesServer backs Create's REQ-CREATE-080 node-set-key
+// lookup for this package's handler-level tests, which don't otherwise
+// care about node-set resolution — a single fixed key is enough here.
+type fakeClusterTemplatesServer struct {
+	publicv1.UnimplementedClusterTemplatesServer
+}
+
+func (s *fakeClusterTemplatesServer) Get(context.Context, *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+	return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
+		NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}},
+	}}, nil
 }
 
 // discardLogger silences handler logging (e.g. httperror.WriteResponse's
@@ -150,6 +173,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -160,7 +184,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix)
 	return &fixture{
 		handler: clusterhandlers.NewHandler(svc, discardLogger),
 		fake:    fake,
@@ -187,12 +211,35 @@ func (stubHealth) GetVMsHealth(context.Context, oapigen.GetVMsHealthRequestObjec
 	return nil, errors.New("not implemented")
 }
 
-// realHandler combines the real clusterhandlers.Handler with stubHealth so
-// the result satisfies the full oapigen.StrictServerInterface, exactly as
-// cmd/osac-service-provider/main.go's composite handler does.
+// stubVM stands in for internal/handlers/vm.Handler's 4 StrictServerInterface
+// methods (VM CRUD, added Milestone 4) so realHandler below satisfies the
+// full interface without pulling in internal/handlers/vm — this package's
+// tests exercise only Cluster CRUD.
+type stubVM struct{}
+
+func (stubVM) ListVMs(context.Context, oapigen.ListVMsRequestObject) (oapigen.ListVMsResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubVM) CreateVM(context.Context, oapigen.CreateVMRequestObject) (oapigen.CreateVMResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubVM) GetVM(context.Context, oapigen.GetVMRequestObject) (oapigen.GetVMResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (stubVM) DeleteVM(context.Context, oapigen.DeleteVMRequestObject) (oapigen.DeleteVMResponseObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+// realHandler combines the real clusterhandlers.Handler with stubHealth and
+// stubVM so the result satisfies the full oapigen.StrictServerInterface,
+// exactly as cmd/osac-service-provider/main.go's composite handler does.
 type realHandler struct {
 	*clusterhandlers.Handler
 	stubHealth
+	stubVM
 }
 
 // integrationFixture starts a real HTTP server (loopback listener, same
@@ -219,6 +266,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -229,7 +277,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix)
 	h := &realHandler{Handler: clusterhandlers.NewHandler(svc, discardLogger)}
 	strict := oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(discardLogger),

@@ -50,14 +50,14 @@ edits Milestone 3's own files directly (`internal/registration/registration.go`,
 `internal/cluster/translate.go`, `internal/handlers/cluster/create.go`).
 Consequently this milestone's branch/PR stacks directly on top of
 `feat/milestone-3-cluster-crud` (mirroring this repo's own e2e PR chain
-precedent: `#24` on `#23` on `#20` on `#18`), not on `main` — see DD-115.
+precedent: `#24` on `#23` on `#20` on `#18`), not on `main` — see DD-133.
 
 **Reference documents:**
 
 - [OSAC SP Enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md) — the enhancement's own "the SP maintains an internal compatibility matrix" language
 - [Milestone 1 spec](./osac-sp.spec.md) — SC-001 (superseded by this milestone, see below), REQ-REG-040
 - [Milestone 3 spec](./osac-sp-m3-cluster-crud.spec.md) — REQ-CREATE-025, REQ-CREATE-060 (this milestone's `validateCreateRequest` extension reuses the exact same `InvalidArgument`/`mapError` path that requirement already established)
-- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-112 through DD-115 (new, this milestone)
+- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-130 through DD-133 (new, this milestone)
 - `acm-cluster-service-provider` (sibling SP, same OpenShift-provisioning problem) — precedent for the hardcoded-default-plus-optional-JSON-override pattern and hard-rejection-of-unsupported-versions behavior adopted below
 
 ---
@@ -71,7 +71,7 @@ a new top-level `internal/` package rather than inside either existing
 consumer, specifically to avoid an awkward cross-import between
 `internal/registration` and `internal/cluster` in either direction (neither
 currently imports the other, and this milestone must not introduce that
-coupling just to share one map) — see DD-112.
+coupling just to share one map) — see DD-130.
 
 Two existing packages become **consumers**, each holding their own
 `versionmatrix.Matrix` value (the same value, since both are constructed
@@ -154,7 +154,7 @@ JSON file.
 | REQ-VERSION-010 | The package MUST expose a `Matrix` type mapping a Kubernetes minor version string (e.g. `"1.29"`) to an OSAC `release_image` string, with a `Lookup(version string) (string, bool)` method returning the mapped image and whether `version` is present | MUST | |
 | REQ-VERSION-020 | The package MUST expose a hardcoded `DefaultMatrix` value containing exactly the same 5 entries as Milestone 3's `releaseImageByVersion` (`"1.29"`-`"1.33"` -> the OpenShift `4.16.0`-`4.20.0` `-multi` release images) — this milestone carries the data forward unchanged, it does not add or remove entries | MUST | Data continuity with M1 SC-001 / M3 REQ-CREATE-025 |
 | REQ-VERSION-030 | `Matrix` MUST expose a `SupportedVersions() []string` method returning the matrix's keys sorted in ascending lexical order, for deterministic consumption by registration payloads and tests | MUST | |
-| REQ-VERSION-040 | The package MUST expose `Load(path string) (Matrix, error)`: when `path == ""`, it MUST return `DefaultMatrix` unchanged; when `path != ""`, it MUST read `path` as a JSON object (`{"<k8s-version>": "<release_image>", ...}`) and, on success, return **that file's content alone** as the resulting `Matrix` — fully replacing, not merging with, `DefaultMatrix`. `Load` MUST return a non-nil error (and a nil `Matrix`) if `path != ""` and the file is missing, unreadable, not valid JSON, or decodes to zero entries | MUST | Full-replace (not merge) and fail-fast-on-empty are both deliberate — see DD-113 |
+| REQ-VERSION-040 | The package MUST expose `Load(path string) (Matrix, error)`: when `path == ""`, it MUST return `DefaultMatrix` unchanged; when `path != ""`, it MUST read `path` as a JSON object (`{"<k8s-version>": "<release_image>", ...}`) and, on success, return **that file's content alone** as the resulting `Matrix` — fully replacing, not merging with, `DefaultMatrix`. `Load` MUST return a non-nil error (and a nil `Matrix`) if `path != ""` and the file is missing, unreadable, not valid JSON, or decodes to zero entries | MUST | Full-replace (not merge) and fail-fast-on-empty are both deliberate — see DD-131 |
 
 #### Configuration Introduced
 
@@ -215,7 +215,7 @@ optional configuration surface controlling `Load`'s `path` argument.
 | REQ-VERSION-050 | `internal/registration.Registrar` MUST accept a `versionmatrix.Matrix` at construction and its cluster registration payload's `kubernetes_supported_versions` MUST be exactly `matrix.SupportedVersions()` — the package-level `kubernetesSupportedVersions` variable (M1) is removed | MUST | Supersedes `osac-sp.spec.md` SC-001; single source of truth, no possible drift between registration and translation |
 | REQ-VERSION-060 | `internal/cluster.Service` MUST accept a `versionmatrix.Matrix` at construction (`New(client, matrix)`); `releaseImage()` MUST consult the injected matrix's `Lookup` instead of the package-level `releaseImageByVersion` map (M3) — the existing override precedence (`provider_hints.osac.release_image`, when non-empty, always wins over any matrix lookup) MUST be unchanged | MUST | Supersedes `osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-025's "hardcoded placeholder table" wording |
 | REQ-VERSION-070 | `internal/cluster.Service` MUST expose `SupportsVersion(version string) bool`, reporting whether `version` has a matrix entry, for `internal/handlers/cluster`'s pre-flight validation (REQ-VERSION-080) to query without duplicating or directly importing the matrix | MUST | Keeps the matrix instance itself owned by exactly one component (`Service`) even though two packages need to consult it |
-| REQ-VERSION-080 | `internal/handlers/cluster.Handler`'s existing `validateCreateRequest` (M3, REQ-CREATE-060) MUST gain one more pre-flight case: when the request's `provider_hints.osac.release_image` is absent or empty **and** `spec.version` is not supported (per REQ-VERSION-070's `SupportsVersion`), the handler MUST reject the request with the same synthetic `codes.InvalidArgument` gRPC status used for the function's other validation failures — mapped to `400 Bad Request` by the existing shared `mapError`/`internal/grpcerror` machinery (REQ-ERR-030) — before ever calling `Service.Create`/dispatching to OSAC. An explicit non-empty `release_image` override MUST bypass this check entirely, even for a `spec.version` with no matrix entry | MUST | Hard rejection, not silent fallback to OSAC's template default `release_image` — see DD-113. No new `v1alpha1.ErrorType`/schema value needed; `INVALIDARGUMENT` already fits, matching REQ-CREATE-060's existing precedent |
+| REQ-VERSION-080 | `internal/handlers/cluster.Handler`'s existing `validateCreateRequest` (M3, REQ-CREATE-060) MUST gain one more pre-flight case: when the request's `provider_hints.osac.release_image` is absent or empty **and** `spec.version` is not supported (per REQ-VERSION-070's `SupportsVersion`), the handler MUST reject the request with the same synthetic `codes.InvalidArgument` gRPC status used for the function's other validation failures — mapped to `400 Bad Request` by the existing shared `mapError`/`internal/grpcerror` machinery (REQ-ERR-030) — before ever calling `Service.Create`/dispatching to OSAC. An explicit non-empty `release_image` override MUST bypass this check entirely, even for a `spec.version` with no matrix entry | MUST | Hard rejection, not silent fallback to OSAC's template default `release_image` — see DD-131. No new `v1alpha1.ErrorType`/schema value needed; `INVALIDARGUMENT` already fits, matching REQ-CREATE-060's existing precedent |
 | REQ-VERSION-090 | `internal/config.Config` MUST add an optional `SP_VERSION_MATRIX_PATH` environment variable (empty/unset is valid and MUST result in `DefaultMatrix` being used); `cmd/osac-service-provider`'s `run` MUST call `versionmatrix.Load(cfg.VersionMatrix.Path)` once at startup, before starting any subsystem, and MUST fail fast (return a non-nil error, causing `mainRun` to exit non-zero) if `Load` returns an error | MUST | Mirrors REQ-XC-CFG-020's existing fail-fast convention (`osac-sp.spec.md`) for the case where the var *is* set but its file is missing/malformed |
 
 #### Configuration Introduced
@@ -299,7 +299,7 @@ See `osac-sp.spec.md` §6 for the full table of pre-existing configuration
 
 ## 7. Design Decisions
 
-See `.ai/decisions/osac-sp.decisions.md` DD-112 through DD-115.
+See `.ai/decisions/osac-sp.decisions.md` DD-130 through DD-133.
 
 ---
 

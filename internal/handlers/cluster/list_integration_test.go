@@ -51,9 +51,9 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 		Expect(recordedFilter).To(Equal(`this.metadata.labels["dcm.io/managed-by"] == "dcm"`))
 		Expect(list.Results).To(HaveLen(2))
 		Expect(*list.Results[0].Id).To(Equal("c1"))
-		Expect(list.Results[0].Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
+		Expect(*list.Results[0].Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
 		Expect(*list.Results[1].Id).To(Equal("c2"))
-		Expect(list.Results[1].Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*list.Results[1].Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 	})
 
 	// TC-I-221 (REQ-LIST-020/040, AC-LIST-020): pagination round-trips
@@ -106,5 +106,19 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 		entry, ok := results[0].(map[string]interface{})
 		Expect(ok).To(BeTrue())
 		Expect(entry).NotTo(HaveKey("kubeconfig"))
+	})
+
+	// TC-I-223 (REQ-LIST-020, REQ-ERR-010, AC-LIST-040): a page_token this
+	// SP never issued is rejected as 400 at the real HTTP boundary,
+	// without ever calling Clusters/List.
+	It("rejects a malformed page_token at the real HTTP boundary, without calling List (TC-I-223)", func() {
+		resp := listClusters(f, "?page_token=not-valid-base64!!!")
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		var body v1alpha1.Error
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
+		Expect(f.fake.ListCallCount()).To(Equal(0))
 	})
 })

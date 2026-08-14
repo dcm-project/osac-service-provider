@@ -47,7 +47,7 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(resp.Body).Decode(&cluster)).To(Succeed())
 		Expect(*cluster.Id).To(Equal("X"))
-		Expect(cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 
 		Expect(f.fake.CreateCallCount()).To(Equal(1))
 	})
@@ -80,13 +80,13 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(second.Body).Decode(&cluster)).To(Succeed())
 		Expect(*cluster.Id).To(Equal("X"))
-		Expect(cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 		Expect(f.fake.GetCallCount()).To(Equal(1))
 	})
 
 	// TC-I-202 (REQ-CREATE-060, AC-CREATE-040/050): request validation is
 	// enforced at the real HTTP boundary. Both the id query parameter and
-	// the body's spec property are schema-optional (AEP-133, DD-110), so
+	// the body's spec property are schema-optional (AEP-133, DD-113), so
 	// the generated router wrapper accepts a request missing either one —
 	// this package's own validateCreateRequest is the sole enforcement
 	// point for both cases.

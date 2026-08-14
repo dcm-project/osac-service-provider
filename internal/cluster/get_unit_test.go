@@ -42,7 +42,7 @@ var _ = Describe("Service.Get (Topic 4.2 Cluster Get)", func() {
 		result, err := f.svc.Get(context.Background(), "X")
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(result.Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
+		Expect(*result.Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
 		Expect(*result.Kubeconfig).To(Equal("kubeconfig-abc"))
 		Expect(f.fake.GetKubeconfigCallCount()).To(Equal(1))
 		// SC-M3-002: node_sets echoes OSAC's status.node_sets map directly.
@@ -64,7 +64,7 @@ var _ = Describe("Service.Get (Topic 4.2 Cluster Get)", func() {
 		result, err := f.svc.Get(context.Background(), "X")
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(result.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
+		Expect(*result.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 		// REQ-GET-030: kubeconfig is the empty string, not omitted, for a
 		// non-ACTIVE cluster.
 		Expect(result.Kubeconfig).NotTo(BeNil())

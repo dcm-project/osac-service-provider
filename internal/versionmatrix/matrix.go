@@ -3,7 +3,7 @@
 // values (Milestone 6). It is the single source of truth previously
 // duplicated across internal/registration (kubernetesSupportedVersions)
 // and internal/cluster (releaseImageByVersion) — see
-// .ai/decisions/osac-sp.decisions.md DD-112.
+// .ai/decisions/osac-sp.decisions.md DD-130.
 //
 // This package deliberately depends on nothing else in this repository,
 // to avoid coupling internal/registration and internal/cluster (which do
@@ -66,7 +66,7 @@ func (m Matrix) SupportedVersions() []string {
 // (REQ-VERSION-040) — an override that resolves to zero supported
 // versions is treated as a misconfiguration, not a legal (if useless) one,
 // since it would silently reject every future Create call with no
-// diagnostic pointing at the cause (see DD-113).
+// diagnostic pointing at the cause (see DD-131).
 func Load(path string) (Matrix, error) {
 	if path == "" {
 		return DefaultMatrix, nil
