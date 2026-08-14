@@ -124,7 +124,15 @@ jobs:
           # through as a null document.
           yq eval-all 'select(. != null) | select(.kind != "TLSRoute")' /tmp/ffs-rendered.yaml \
             > /tmp/ffs-rendered-filtered.yaml
-          kubectl apply -f /tmp/ffs-rendered-filtered.yaml
+          kubectl apply -f /tmp/ffs-rendered-filtered.yaml || {
+            echo "::group::triage: raw render (head)"
+            head -5 /tmp/ffs-rendered.yaml | cat -A
+            echo "::endgroup::"
+            echo "::group::triage: filtered manifest, full content"
+            cat -A /tmp/ffs-rendered-filtered.yaml
+            echo "::endgroup::"
+            exit 1
+          }
           # Only wait on what osac-sp's health check actually exercises
           # (fulfillment-grpc-server's Capabilities service) — the chart's
           # Deployments carry no common selector label to wait on as a
