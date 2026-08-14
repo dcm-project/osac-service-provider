@@ -165,8 +165,27 @@ spec:
               value: "osac-admin"
             - name: SP_OSAC_OIDC_CLIENT_SECRET
               value: "this-does-not-match-any-vendored-client-secret" # TC-TB-050
+            # Deliberately points nowhere real: this variant only exists
+            # for TC-TB-050, which hits its own /health HTTP endpoint
+            # directly and never touches control-plane. Pointing it at
+            # the real dcm-control-plane (as an earlier version of this
+            # manifest did) makes it register under the same default
+            # provider names ("osac-sp-cluster"/"osac-sp-vm") as the good
+            # osac-sp Deployment above, in the same shared control-plane
+            # instance this suite's own registration_test.go/health_test.go
+            # assert against — the two Deployments then race to
+            # (idempotently) re-POST the same names, and whichever
+            # registers last wins, breaking those Phase A assertions.
+            # Confirmed by CI: ConsistOf("osac-sp-cluster", "osac-sp-vm")
+            # failed with the bad-auth endpoint winning the race, and
+            # control-plane's health monitor reported "unhealthy" for
+            # both registrations instead of "ready" for both. An
+            # unroutable hostname keeps this instance's registration loop
+            # permanently retrying in the background (by design — see
+            # internal/registration's "never blocks, never crashes"
+            # convention) without ever reaching control-plane at all.
             - name: DCM_REGISTRATION_URL
-              value: "http://dcm-control-plane:8080/api/v1alpha1"
+              value: "http://osac-sp-bad-auth-registration-intentionally-unroutable:8080/api/v1alpha1"
             - name: SP_ENDPOINT
               value: "http://osac-service-provider-bad-auth:8080"
           volumeMounts:
