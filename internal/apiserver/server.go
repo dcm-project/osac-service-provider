@@ -110,7 +110,7 @@ func (s *Server) WithOnReady(fn func(context.Context)) *Server {
 // response with an RFC 9457 application/problem+json body.
 func newBadRequestHandler(logger *slog.Logger) func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
-		httperror.WriteResponse(w, logger, http.StatusBadRequest, v1alpha1.INVALIDARGUMENT, "Bad Request", err.Error(), requestInstance(r))
+		httperror.WriteResponse(w, logger, http.StatusBadRequest, v1alpha1.ErrorTypeINVALIDARGUMENT, "Bad Request", err.Error(), requestInstance(r))
 	}
 }
 
@@ -126,7 +126,7 @@ func NewRequestErrorHandler(logger *slog.Logger) func(http.ResponseWriter, *http
 func NewResponseErrorHandler(logger *slog.Logger) func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
 		logger.Error("strict handler response error", "error", err)
-		httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.INTERNAL, httperror.InternalTitle, httperror.InternalDetail, requestInstance(r))
+		httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL, httperror.InternalTitle, httperror.InternalDetail, requestInstance(r))
 	}
 }
 
@@ -184,7 +184,7 @@ func recoveryMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 						return
 					}
 
-					httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.INTERNAL, httperror.InternalTitle, httperror.InternalDetail, requestInstance(r))
+					httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL, httperror.InternalTitle, httperror.InternalDetail, requestInstance(r))
 				}
 			}()
 			next.ServeHTTP(sw, r)
