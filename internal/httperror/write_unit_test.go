@@ -33,14 +33,14 @@ var _ = Describe("WriteResponse", func() {
 		w := httptest.NewRecorder()
 		logger := slog.New(slog.DiscardHandler)
 
-		httperror.WriteResponse(w, logger, http.StatusBadRequest, v1alpha1.INVALIDARGUMENT, "Bad Request", "the request was malformed", util.Ptr("/api/v1alpha1/clusters/health"))
+		httperror.WriteResponse(w, logger, http.StatusBadRequest, v1alpha1.ErrorTypeINVALIDARGUMENT, "Bad Request", "the request was malformed", util.Ptr("/api/v1alpha1/clusters/health"))
 
 		Expect(w.Code).To(Equal(http.StatusBadRequest))
 		Expect(w.Header().Get("Content-Type")).To(Equal("application/problem+json"))
 
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(w.Body).Decode(&body)).To(Succeed())
-		Expect(body.Type).To(Equal(v1alpha1.INVALIDARGUMENT))
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
 		Expect(body.Title).To(Equal("Bad Request"))
 		Expect(*body.Status).To(Equal(int32(http.StatusBadRequest)))
 		Expect(*body.Detail).To(Equal("the request was malformed"))
@@ -53,7 +53,7 @@ var _ = Describe("WriteResponse", func() {
 		w := httptest.NewRecorder()
 		logger := slog.New(slog.DiscardHandler)
 
-		httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.INTERNAL, httperror.InternalTitle, httperror.InternalDetail, nil)
+		httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL, httperror.InternalTitle, httperror.InternalDetail, nil)
 
 		var raw map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &raw)).To(Succeed())
@@ -72,7 +72,7 @@ var _ = Describe("WriteResponse", func() {
 		w := &failingResponseWriter{ResponseRecorder: httptest.NewRecorder()}
 
 		Expect(func() {
-			httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.INTERNAL, httperror.InternalTitle, httperror.InternalDetail, nil)
+			httperror.WriteResponse(w, logger, http.StatusInternalServerError, v1alpha1.ErrorTypeINTERNAL, httperror.InternalTitle, httperror.InternalDetail, nil)
 		}).NotTo(Panic())
 
 		Expect(logBuf.String()).To(ContainSubstring("failed to encode error response"))

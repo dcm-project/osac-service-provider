@@ -41,12 +41,12 @@ var _ = Describe("ComputeInstancesServer", func() {
 	// TC-U-117: Create rejects a duplicate id
 	It("rejects Create with a duplicate id, preserving the original (TC-U-117)", func() {
 		_, err := srv.Create(ctx, &publicv1.ComputeInstancesCreateRequest{
-			Object: &publicv1.ComputeInstance{Id: "x", Spec: &publicv1.ComputeInstanceSpec{Template: "first"}},
+			Object: &publicv1.ComputeInstance{Id: "x", Spec: &publicv1.ComputeInstanceSpec{Template: &publicv1.ComputeInstanceTemplateReference{Id: "first"}}},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = srv.Create(ctx, &publicv1.ComputeInstancesCreateRequest{
-			Object: &publicv1.ComputeInstance{Id: "x", Spec: &publicv1.ComputeInstanceSpec{Template: "second"}},
+			Object: &publicv1.ComputeInstance{Id: "x", Spec: &publicv1.ComputeInstanceSpec{Template: &publicv1.ComputeInstanceTemplateReference{Id: "second"}}},
 		})
 		st, ok := status.FromError(err)
 		Expect(ok).To(BeTrue())
@@ -55,7 +55,7 @@ var _ = Describe("ComputeInstancesServer", func() {
 		listResp, err := srv.List(ctx, &publicv1.ComputeInstancesListRequest{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listResp.GetItems()).To(HaveLen(1))
-		Expect(listResp.GetItems()[0].GetSpec().GetTemplate()).To(Equal("first"))
+		Expect(listResp.GetItems()[0].GetSpec().GetTemplate().GetId()).To(Equal("first"))
 	})
 
 	// TC-U-119: Create sets COMPUTE_INSTANCE_STATE_RUNNING and round-trips via Get/List

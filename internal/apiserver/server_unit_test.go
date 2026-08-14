@@ -26,8 +26,12 @@ import (
 // fakeServerInterface satisfies oapigen.ServerInterface with a swappable
 // health implementation shared by both routes (DD-010/REQ-HLT-015), per the
 // unit test plan's convention of registering handlers directly rather than
-// going through the strict adapter/business logic.
+// going through the strict adapter/business logic. oapigen.Unimplemented is
+// embedded so the non-health routes (Cluster CRUD from Milestone 3, VM CRUD
+// from Milestone 4) are satisfied without this package needing to know
+// anything about them — this package's tests exercise only health.
 type fakeServerInterface struct {
+	oapigen.Unimplemented
 	getHealth func(w http.ResponseWriter, r *http.Request)
 }
 
@@ -105,7 +109,7 @@ var _ = Describe("Server middleware", func() {
 
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
-		Expect(body.Type).To(Equal(v1alpha1.INTERNAL))
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINTERNAL))
 		Expect(string(body.Type)).To(Equal("https://dcm-project.github.io/problems/internal"),
 			"type must be the RFC 9457 project-controlled URI, not a bare code")
 
@@ -209,7 +213,7 @@ var _ = Describe("Server middleware", func() {
 
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
-		Expect(body.Type).To(Equal(v1alpha1.INTERNAL))
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINTERNAL))
 		Expect(string(body.Type)).To(Equal("https://dcm-project.github.io/problems/internal"),
 			"type must be the RFC 9457 project-controlled URI, not a bare code")
 
@@ -418,7 +422,7 @@ var _ = Describe("Strict-adapter error handlers", func() {
 
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(w.Body).Decode(&body)).To(Succeed())
-		Expect(body.Type).To(Equal(v1alpha1.INVALIDARGUMENT))
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
 		Expect(*body.Instance).To(Equal("/api/v1alpha1/clusters/health?bad=param"))
 	})
 
@@ -435,7 +439,7 @@ var _ = Describe("Strict-adapter error handlers", func() {
 
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(w.Body).Decode(&body)).To(Succeed())
-		Expect(body.Type).To(Equal(v1alpha1.INTERNAL))
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINTERNAL))
 		Expect(*body.Detail).To(Equal(httperror.InternalDetail))
 		Expect(*body.Detail).NotTo(ContainSubstring("sensitive"))
 	})
