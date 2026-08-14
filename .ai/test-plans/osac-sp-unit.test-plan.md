@@ -194,9 +194,18 @@ it's called.
 Prior to this addition, this package had unit-level coverage only for
 `run`'s happy-path wiring indirectly via `main_integration_test.go` (see
 `osac-sp-integration.test-plan.md`); its top-level error-wrapping branches
-and `mainRun`'s exit-code mapping were untested. Cases below call `run`/
-`mainRun` directly and in-process — no real OSAC/Keycloak/control-plane
-fakes needed, since each case fails before reaching those collaborators.
+and `mainRun`'s exit-code mapping were untested. TC-U-094..097 below call
+`run`/`mainRun` directly and in-process — no real OSAC/Keycloak/
+control-plane fakes needed, since each case fails before reaching those
+collaborators.
+
+TC-U-099 (Milestone 4) covers a different concern introduced once VM CRUD
+landed: `apiHandler` now composes `internal/health.Handler` with
+`internal/handlers/vm.Handler` to satisfy the full, larger
+`oapigen.StrictServerInterface` — this proves that composition's 4 new
+forwarding methods are wired to the real `internal/vm.Service`, using a
+minimal `bufconn` fake (distinct from `internal/handlers/vm`'s own, richer
+fixture, which already exhaustively covers the CRUD behavior itself).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -204,7 +213,9 @@ fakes needed, since each case fails before reaching those collaborators.
 | TC-U-095 | `run` wraps and returns a listener-bind failure | REQ-HTTP-030 (negative case) | Set `SP_SERVER_ADDRESS` to an address already bound by a test-held listener; call `run`; assert it returns a non-nil error mentioning "listening". |
 | TC-U-096 | `run` wraps and returns an OSAC bootstrap construction failure | REQ-OSAC-040 (negative case) | Set `SP_OSAC_TLS_ENABLED=true` and `SP_OSAC_TLS_CERT_FILE` to a nonexistent path; call `run`; assert it returns a non-nil error mentioning "creating OSAC client bootstrap". |
 | TC-U-097 | `mainRun` returns exit code `1` when `run` fails | REQ-XC-CFG-020 | Leave a required env var unset (same trigger as TC-U-094); call `mainRun` directly; assert it returns exactly `1`, in-process, without invoking `os.Exit`. |
-| TC-U-114 | `run` wraps and returns a status-publisher construction failure (Milestone 5) | REQ-PUBLISH-020 (negative case) | Set `DCM_NATS_URL` to a syntactically-invalid URL (`"://not-a-valid-url"`, same value as `internal/statuspublisher`'s own TC-U-417) so `statuspublisher.NewPublisher` fails synchronously on `nats.Connect`'s URL parsing, before any live broker is needed; call `run`; assert it returns a non-nil error mentioning "creating status publisher". (`TC-U-098`/`TC-U-099` are already claimed by Milestone 3/4's own `apiHandler` CRUD-forwarding wiring tests in this same file once those branches merge — see DD-075's stacked-branch validation — so this case uses the next free ID above M2's `TC-U-113` instead, to avoid a numbering collision.) |
+| TC-U-098 | `apiHandler`'s 4 Cluster forwarding methods each reach the wired `internal/cluster.Service` (Milestone 3) | REQ-CREATE-010, REQ-GET-010, REQ-LIST-010, REQ-DELETE-010 (wiring only — exhaustive CRUD business logic is `internal/cluster`'s and `internal/handlers/cluster`'s own scope, already 100%-covered there) | Construct a real `apiHandler` wrapping a real `clusterhandlers.Handler`/`cluster.Service` dialed against a minimal `bufconn` fake OSAC `Clusters`/`ClusterTemplates` server pair; call each of `ListClusters`/`CreateCluster`/`GetCluster`/`DeleteCluster` on `apiHandler` directly; assert the fake's respective call counter is exactly `1` after each — proving `main.go`'s composition actually reaches `internal/cluster`, not a re-test of what it does once there. |
+| TC-U-099 | `apiHandler`'s 4 VM forwarding methods each reach the wired `internal/vm.Service` (Milestone 4) | REQ-VMCREATE-010, REQ-VMGET-010, REQ-VMLIST-010, REQ-VMDELETE-010 (wiring only — exhaustive CRUD business logic is `internal/vm`'s and `internal/handlers/vm`'s own scope, already 100%-covered there) | Construct a real `apiHandler` wrapping a real `vmhandlers.Handler`/`vm.Service` dialed against a minimal `bufconn` fake OSAC server trio; call each of `ListVMs`/`CreateVM`/`GetVM`/`DeleteVM` on `apiHandler` directly; assert the fake's respective call counter is exactly `1` after each — proving `main.go`'s composition actually reaches `internal/vm`, not a re-test of what it does once there. |
+| TC-U-114 | `run` wraps and returns a status-publisher construction failure (Milestone 5) | REQ-PUBLISH-020 (negative case) | Set `DCM_NATS_URL` to a syntactically-invalid URL (`"://not-a-valid-url"`, same value as `internal/statuspublisher`'s own TC-U-417) so `statuspublisher.NewPublisher` fails synchronously on `nats.Connect`'s URL parsing, before any live broker is needed; call `run`; assert it returns a non-nil error mentioning "creating status publisher". Uses the next free ID above M2's `TC-U-113` since `TC-U-098`/`TC-U-099` above already claim the ones this case's own note originally reserved. |
 
 **Coverage exceptions (documented in-code, not tested):**
 - `main()`'s single `os.Exit(mainRun())` statement — observing it would
@@ -265,4 +276,4 @@ handler code will call it.
 | M2 4.2 Shared Connection Accessor | 2 | 3 | 6 (TC-U-100..105) | Full unit coverage. |
 | N/A `internal/httperror` (cross-cutting, REQ-HTTP-070) | 0 (no dedicated section; implements REQ-HTTP-070) | 0 | 3 (TC-U-090..092) | Direct/isolated coverage of the RFC 9457 response writer shared by all error paths above. |
 | N/A `internal/util` (generic helper, no REQ) | 0 | 0 | 1 (TC-U-093) | Coverage-completeness only. |
-| N/A `cmd/osac-service-provider` unit-level (REQ-XC-CFG-020, REQ-HTTP-030, REQ-OSAC-040, REQ-PUBLISH-020) | 0 (no dedicated section; covers existing REQs at a new layer) | 0 | 5 (TC-U-094..097, TC-U-114) | `run`/`mainRun`'s own error-wrapping branches, not previously unit-tested (only integration-tested via the happy path). TC-U-114 (Milestone 5) covers `run`'s new `statuspublisher.NewPublisher` error-wrap branch. Two lines remain a documented, in-code exception — see section 8. |
+| N/A `cmd/osac-service-provider` unit-level (REQ-XC-CFG-020, REQ-HTTP-030, REQ-OSAC-040, REQ-CREATE-010, REQ-GET-010, REQ-LIST-010, REQ-DELETE-010, REQ-VMCREATE-010, REQ-VMGET-010, REQ-VMLIST-010, REQ-VMDELETE-010, REQ-PUBLISH-020) | 0 (no dedicated section; covers existing REQs at a new layer) | 0 | 7 (TC-U-094..099, TC-U-114) | `run`/`mainRun`'s own error-wrapping branches (TC-U-094..097), `apiHandler`'s Cluster (TC-U-098, Milestone 3) and VM (TC-U-099, Milestone 4) CRUD forwarding wiring, plus `run`'s `statuspublisher.NewPublisher` error-wrap branch (TC-U-114, Milestone 5). Two lines remain a documented, in-code exception — see section 8. |
