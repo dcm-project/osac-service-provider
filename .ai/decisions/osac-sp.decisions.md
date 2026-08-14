@@ -1704,22 +1704,30 @@ conditionally-skipped block, which `kubectl apply` otherwise rejects
 outright with `apiVersion not set, kind not set` (reproduced in
 isolation to confirm root cause).
 
-**Actual root cause of the persistent CI failure** (took 3 more CI
-iterations to isolate, including two disproven theories — yq version and
-kubectl 1.35-vs-1.36 client-side validation strictness — both ruled out
-by direct local reproduction): `helm template`'s OCI pull status
-(`Pulled: ...`, `Digest: ...`) is written to **stdout**, not stderr. The
-step's original `helm template ... > /tmp/ffs-rendered.yaml` redirect
-therefore prepended those two lines as a bogus first YAML document with
-no `apiVersion`/`kind` — invisible in every local repro because manual
-spiking had always incidentally separated stderr
-(`2>/tmp/ffs-rendered.stderr`) while iterating on unrelated problems.
-Fixed by adding that same stderr redirect to the CI step itself. Lesson:
-a fix validated only via local interactive reproduction, without also
-diffing the exact shell invocation against the actual CI step text, can
-mask an unrelated discrepancy in the redirect/pipeline itself — worth
-remembering for future `helm template | filter | kubectl apply` steps in
-this repo.
+**Actual root cause of the persistent CI failure** (took 5 CI iterations
+to isolate, including three disproven theories along the way — yq
+version, kubectl 1.35-vs-1.36 client-side validation strictness, and
+"stderr redirection alone fixes it" — each ruled out or falsified by a
+subsequent CI run): `helm template`'s OCI pull status (`Pulled: ...`,
+`Digest: ...`) lands on **stdout or stderr depending on the installed
+Helm build** — this repo's local Helm v4.1.1 writes it to stderr (why
+every interactive local repro looked clean), but `azure/setup-helm@v4`'s
+unpinned `version: latest` in CI resolves to a build that writes it to
+stdout, where it prepends a bogus first YAML document with no
+`apiVersion`/`kind` that `kubectl apply` rejects outright. A stdout/stderr
+redirect fix (the natural first attempt) is therefore *not* portable
+across Helm versions/environments. Fixed by stripping both lines by
+content (`grep -Ev '^(Pulled|Digest): '`) after merging stdout+stderr,
+which is invariant to which stream a given Helm build chooses.
+
+**Process lesson for this repo:** a fix validated only by reasoning
+about "which stream should X go to" and confirming via local
+reproduction, without accounting for tool-version drift between the
+local dev machine and CI's freshly-resolved `latest` action inputs, can
+look conclusively correct locally and still fail in CI for an unrelated
+reason. Prefer content-based filtering over stream-based redirection
+when post-processing third-party CLI output whose stream discipline
+isn't part of its documented/stable contract.
 
 **Related requirements:** REQ-TB-010, REQ-TB-050
 

@@ -93,6 +93,7 @@ jobs:
 
       - name: Install fulfillment-service
         run: |
+          set -o pipefail
           # The chart unconditionally renders Gateway API `TLSRoute`
           # objects for its ingress-proxy, even though nothing in this
           # workflow needs external/TLS-terminated ingress — osac-sp talks
@@ -105,18 +106,19 @@ jobs:
           # only the `TLSRoute` kind. Everything else in the chart
           # (Deployments/Services/Certificates/etc.) is applied as-is.
           # `helm template`'s OCI pull status ("Pulled: ...", "Digest:
-          # ...") is written to stdout, not stderr — capturing only
-          # stdout without separating stderr (an earlier version of this
-          # step's mistake) prepends those two lines as a bogus first
-          # YAML document with no apiVersion/kind, which kubectl apply
-          # then rejects outright. Root-caused via this workflow's own
-          # repeated CI failures: not reproducible locally, where manual
-          # spiking had always incidentally redirected stderr separately.
+          # ...") lands on stdout or stderr depending on the installed
+          # Helm build (confirmed empirically: this repo's local Helm
+          # v4.1.1 writes it to stderr, but `azure/setup-helm@v4`'s
+          # "latest" resolves to a build that writes it to stdout) — so
+          # redirecting stderr away isn't a reliable fix by itself.
+          # Strip both lines by content instead, whichever stream they
+          # land on, before handing the file to yq/kubectl: left as-is,
+          # they render as a bogus leading YAML document with no
+          # apiVersion/kind, which kubectl apply rejects outright.
           helm template ffs-fulfillment-service oci://ghcr.io/osac-project/charts/fulfillment-service \
             --version "${{ env.FULFILLMENT_SERVICE_CHART_VERSION }}" \
             --values test/e2e/tierb-config/fulfillment-service-values.yaml \
-            > /tmp/ffs-rendered.yaml 2>/tmp/ffs-rendered.stderr
-          cat /tmp/ffs-rendered.stderr
+            2>&1 | grep -Ev '^(Pulled|Digest): ' > /tmp/ffs-rendered.yaml
           # `select(. != null)` additionally guards against a real,
           # separate finding: some of the chart's templates emit a
           # `---\n# Source: ...` separator with no body for a
@@ -125,9 +127,6 @@ jobs:
           yq eval-all 'select(. != null) | select(.kind != "TLSRoute")' /tmp/ffs-rendered.yaml \
             > /tmp/ffs-rendered-filtered.yaml
           kubectl apply -f /tmp/ffs-rendered-filtered.yaml || {
-            echo "::group::triage: raw render (head)"
-            head -5 /tmp/ffs-rendered.yaml | cat -A
-            echo "::endgroup::"
             echo "::group::triage: filtered manifest, full content"
             cat -A /tmp/ffs-rendered-filtered.yaml
             echo "::endgroup::"
