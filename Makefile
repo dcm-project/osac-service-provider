@@ -55,7 +55,7 @@ test-cover:
 lint:
 	golangci-lint run ./...
 
-check: fmt vet lint test
+check: fmt vet lint check-aep test
 
 tidy:
 	go mod tidy
@@ -101,9 +101,12 @@ check-generate-proto: generate-proto
 
 generate: generate-api generate-proto
 
-# Check AEP compliance
+# Check AEP compliance. Uses npx (not a global install) so this runs with zero
+# local setup, matching CI's own `npm install -g @stoplight/spectral-cli` step
+# (see .github/workflows/check-aep.yaml) closely enough to catch AEP-133-class
+# violations locally instead of only after a PR is pushed.
 check-aep:
-	spectral lint --fail-severity=warn ./api/v1alpha1/openapi.yaml
+	npx --yes @stoplight/spectral-cli lint --fail-severity=warn ./api/v1alpha1/openapi.yaml
 
 check-container-engine:
 	@if [ -z "$(CONTAINER_ENGINE)" ]; then \
