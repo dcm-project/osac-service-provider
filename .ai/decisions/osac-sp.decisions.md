@@ -1702,14 +1702,24 @@ must also drop null documents (`select(. != null)`) — some of the chart's
 templates emit a bare `---` separator with no body for a
 conditionally-skipped block, which `kubectl apply` otherwise rejects
 outright with `apiVersion not set, kind not set` (reproduced in
-isolation to confirm root cause). **Still under investigation as of this
-addendum:** CI continued failing with the identical error even after the
-null-document fix, and the failure was not reproducible locally against
-an identical chart render/values/kubectl-version combination (ruled out:
-yq version, kubectl 1.35 vs. 1.36, leftover Gateway API CRDs on the
-render-time cluster — none of these reproduce it). The workflow now dumps
-the filtered manifest to the CI log on apply failure so the next run's
-real content settles this instead of further offline guessing.
+isolation to confirm root cause).
+
+**Actual root cause of the persistent CI failure** (took 3 more CI
+iterations to isolate, including two disproven theories — yq version and
+kubectl 1.35-vs-1.36 client-side validation strictness — both ruled out
+by direct local reproduction): `helm template`'s OCI pull status
+(`Pulled: ...`, `Digest: ...`) is written to **stdout**, not stderr. The
+step's original `helm template ... > /tmp/ffs-rendered.yaml` redirect
+therefore prepended those two lines as a bogus first YAML document with
+no `apiVersion`/`kind` — invisible in every local repro because manual
+spiking had always incidentally separated stderr
+(`2>/tmp/ffs-rendered.stderr`) while iterating on unrelated problems.
+Fixed by adding that same stderr redirect to the CI step itself. Lesson:
+a fix validated only via local interactive reproduction, without also
+diffing the exact shell invocation against the actual CI step text, can
+mask an unrelated discrepancy in the redirect/pipeline itself — worth
+remembering for future `helm template | filter | kubectl apply` steps in
+this repo.
 
 **Related requirements:** REQ-TB-010, REQ-TB-050
 

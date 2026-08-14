@@ -104,28 +104,27 @@ jobs:
           # so render+filter+apply instead of `helm install`, dropping
           # only the `TLSRoute` kind. Everything else in the chart
           # (Deployments/Services/Certificates/etc.) is applied as-is.
+          # `helm template`'s OCI pull status ("Pulled: ...", "Digest:
+          # ...") is written to stdout, not stderr — capturing only
+          # stdout without separating stderr (an earlier version of this
+          # step's mistake) prepends those two lines as a bogus first
+          # YAML document with no apiVersion/kind, which kubectl apply
+          # then rejects outright. Root-caused via this workflow's own
+          # repeated CI failures: not reproducible locally, where manual
+          # spiking had always incidentally redirected stderr separately.
           helm template ffs-fulfillment-service oci://ghcr.io/osac-project/charts/fulfillment-service \
             --version "${{ env.FULFILLMENT_SERVICE_CHART_VERSION }}" \
             --values test/e2e/tierb-config/fulfillment-service-values.yaml \
-            > /tmp/ffs-rendered.yaml
-          # `select(. != null)` is required, not cosmetic: some of the
-          # chart's templates emit a `---\n# Source: ...` separator with no
-          # body for a conditionally-skipped block, which yq happily
-          # passes through as a null document — `kubectl apply` then
-          # rejects the whole file with "apiVersion not set, kind not set"
-          # (confirmed by reproducing it in isolation during triage).
+            > /tmp/ffs-rendered.yaml 2>/tmp/ffs-rendered.stderr
+          cat /tmp/ffs-rendered.stderr
+          # `select(. != null)` additionally guards against a real,
+          # separate finding: some of the chart's templates emit a
+          # `---\n# Source: ...` separator with no body for a
+          # conditionally-skipped block, which yq would otherwise pass
+          # through as a null document.
           yq eval-all 'select(. != null) | select(.kind != "TLSRoute")' /tmp/ffs-rendered.yaml \
             > /tmp/ffs-rendered-filtered.yaml
-          echo "--- yq version ---"
-          yq --version
-          echo "--- rendered doc count / kinds ---"
-          yq eval-all '.kind' /tmp/ffs-rendered-filtered.yaml
-          kubectl apply -f /tmp/ffs-rendered-filtered.yaml || {
-            echo "::group::filtered manifest (apply failed, dumping for triage)"
-            cat -A /tmp/ffs-rendered-filtered.yaml
-            echo "::endgroup::"
-            exit 1
-          }
+          kubectl apply -f /tmp/ffs-rendered-filtered.yaml
           # Only wait on what osac-sp's health check actually exercises
           # (fulfillment-grpc-server's Capabilities service) — the chart's
           # Deployments carry no common selector label to wait on as a
