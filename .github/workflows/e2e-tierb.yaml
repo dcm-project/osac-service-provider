@@ -93,10 +93,31 @@ jobs:
 
       - name: Install fulfillment-service
         run: |
-          helm upgrade ffs-fulfillment-service oci://ghcr.io/osac-project/charts/fulfillment-service \
-            --install --version "${{ env.FULFILLMENT_SERVICE_CHART_VERSION }}" \
+          # The chart unconditionally renders Gateway API `TLSRoute`
+          # objects for its ingress-proxy, even though nothing in this
+          # workflow needs external/TLS-terminated ingress — osac-sp talks
+          # to fulfillment-grpc-server in-cluster. Installing the Gateway
+          # API CRDs just to satisfy `helm install`'s CRD-existence check
+          # pulls in a dependency (and a `v1alpha3` vs. this cluster's
+          # `v1alpha2` version mismatch, confirmed via a live spike) with
+          # no corresponding controller to ever reconcile the resource —
+          # so render+filter+apply instead of `helm install`, dropping
+          # only the `TLSRoute` kind. Everything else in the chart
+          # (Deployments/Services/Certificates/etc.) is applied as-is.
+          helm template ffs-fulfillment-service oci://ghcr.io/osac-project/charts/fulfillment-service \
+            --version "${{ env.FULFILLMENT_SERVICE_CHART_VERSION }}" \
             --values test/e2e/tierb-config/fulfillment-service-values.yaml \
-            --wait --timeout 5m
+            > /tmp/ffs-rendered.yaml
+          yq eval-all 'select(.kind != "TLSRoute")' /tmp/ffs-rendered.yaml \
+            > /tmp/ffs-rendered-filtered.yaml
+          kubectl apply -f /tmp/ffs-rendered-filtered.yaml
+          # Only wait on what osac-sp's health check actually exercises
+          # (fulfillment-grpc-server's Capabilities service) — the chart's
+          # Deployments carry no common selector label to wait on as a
+          # group, and fulfillment-console-proxy (an interactive web
+          # console frontend, unrelated to gRPC health) was observed
+          # flaky/not-ready in a live spike with no bearing on this suite.
+          kubectl wait --for=condition=Available deployment/fulfillment-grpc-server --timeout=5m
 
       # --- dcm-control-plane (unchanged from Phase A) ---
       - name: Sparse-checkout control-plane's chart
