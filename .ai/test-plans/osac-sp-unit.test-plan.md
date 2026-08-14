@@ -196,9 +196,18 @@ it's called.
 Prior to this addition, this package had unit-level coverage only for
 `run`'s happy-path wiring indirectly via `main_integration_test.go` (see
 `osac-sp-integration.test-plan.md`); its top-level error-wrapping branches
-and `mainRun`'s exit-code mapping were untested. Cases below call `run`/
-`mainRun` directly and in-process — no real OSAC/Keycloak/control-plane
-fakes needed, since each case fails before reaching those collaborators.
+and `mainRun`'s exit-code mapping were untested. TC-U-094..097 below call
+`run`/`mainRun` directly and in-process — no real OSAC/Keycloak/
+control-plane fakes needed, since each case fails before reaching those
+collaborators.
+
+TC-U-099 (Milestone 4) covers a different concern introduced once VM CRUD
+landed: `apiHandler` now composes `internal/health.Handler` with
+`internal/handlers/vm.Handler` to satisfy the full, larger
+`oapigen.StrictServerInterface` — this proves that composition's 4 new
+forwarding methods are wired to the real `internal/vm.Service`, using a
+minimal `bufconn` fake (distinct from `internal/handlers/vm`'s own, richer
+fixture, which already exhaustively covers the CRUD behavior itself).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -206,6 +215,7 @@ fakes needed, since each case fails before reaching those collaborators.
 | TC-U-095 | `run` wraps and returns a listener-bind failure | REQ-HTTP-030 (negative case) | Set `SP_SERVER_ADDRESS` to an address already bound by a test-held listener; call `run`; assert it returns a non-nil error mentioning "listening". |
 | TC-U-096 | `run` wraps and returns an OSAC bootstrap construction failure | REQ-OSAC-040 (negative case) | Set `SP_OSAC_TLS_ENABLED=true` and `SP_OSAC_TLS_CERT_FILE` to a nonexistent path; call `run`; assert it returns a non-nil error mentioning "creating OSAC client bootstrap". |
 | TC-U-097 | `mainRun` returns exit code `1` when `run` fails | REQ-XC-CFG-020 | Leave a required env var unset (same trigger as TC-U-094); call `mainRun` directly; assert it returns exactly `1`, in-process, without invoking `os.Exit`. |
+| TC-U-099 | `apiHandler`'s 4 VM forwarding methods each reach the wired `internal/vm.Service` (Milestone 4) | REQ-VMCREATE-010, REQ-VMGET-010, REQ-VMLIST-010, REQ-VMDELETE-010 (wiring only — exhaustive CRUD business logic is `internal/vm`'s and `internal/handlers/vm`'s own scope, already 100%-covered there) | Construct a real `apiHandler` wrapping a real `vmhandlers.Handler`/`vm.Service` dialed against a minimal `bufconn` fake OSAC server trio; call each of `ListVMs`/`CreateVM`/`GetVM`/`DeleteVM` on `apiHandler` directly; assert the fake's respective call counter is exactly `1` after each — proving `main.go`'s composition actually reaches `internal/vm`, not a re-test of what it does once there. |
 
 **Coverage exceptions (documented in-code, not tested):**
 - `main()`'s single `os.Exit(mainRun())` statement — observing it would
@@ -266,4 +276,4 @@ handler code will call it.
 | M2 4.2 Shared Connection Accessor | 2 | 3 | 6 (TC-U-100..105) | Full unit coverage. |
 | N/A `internal/httperror` (cross-cutting, REQ-HTTP-070) | 0 (no dedicated section; implements REQ-HTTP-070) | 0 | 3 (TC-U-090..092) | Direct/isolated coverage of the RFC 9457 response writer shared by all error paths above. |
 | N/A `internal/util` (generic helper, no REQ) | 0 | 0 | 1 (TC-U-093) | Coverage-completeness only. |
-| N/A `cmd/osac-service-provider` unit-level (REQ-XC-CFG-020, REQ-HTTP-030, REQ-OSAC-040) | 0 (no dedicated section; covers existing REQs at a new layer) | 0 | 4 (TC-U-094..097) | `run`/`mainRun`'s own error-wrapping branches, not previously unit-tested (only integration-tested via the happy path). Two lines remain a documented, in-code exception — see section 8. |
+| N/A `cmd/osac-service-provider` unit-level (REQ-XC-CFG-020, REQ-HTTP-030, REQ-OSAC-040, REQ-VMCREATE-010, REQ-VMGET-010, REQ-VMLIST-010, REQ-VMDELETE-010) | 0 (no dedicated section; covers existing REQs at a new layer) | 0 | 5 (TC-U-094..097, TC-U-099) | `run`/`mainRun`'s own error-wrapping branches (TC-U-094..097), plus `apiHandler`'s VM CRUD forwarding wiring (TC-U-099, Milestone 4). Two lines remain a documented, in-code exception — see section 8. |

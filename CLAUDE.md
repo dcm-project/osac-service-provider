@@ -48,13 +48,13 @@ make build               # Build binary to bin/osac-service-provider
 make test                # Run all tests (Ginkgo v2, race detector)
 make test-cover          # Run tests with coverage
 make lint                # Run golangci-lint
-make check               # fmt + vet + lint + test
+make check               # fmt + vet + lint + check-aep + test
 make generate-api        # Regenerate code from api/v1alpha1/openapi.yaml (oapi-codegen)
 make check-generate-api  # Verify generated OpenAPI code is up to date (CI check)
 make generate-proto      # Regenerate OSAC gRPC client from proto/ (buf; requires buf CLI)
 make check-generate-proto # Verify generated proto code is up to date (CI check)
 make generate            # generate-api + generate-proto
-make check-aep           # Validate OpenAPI spec against AEP standards (requires spectral)
+make check-aep           # Validate OpenAPI spec against AEP standards (via npx, no local install needed; DD-114)
 ```
 
 ### Running specific tests
