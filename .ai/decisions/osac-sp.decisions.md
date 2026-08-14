@@ -1702,7 +1702,14 @@ must also drop null documents (`select(. != null)`) — some of the chart's
 templates emit a bare `---` separator with no body for a
 conditionally-skipped block, which `kubectl apply` otherwise rejects
 outright with `apiVersion not set, kind not set` (reproduced in
-isolation to confirm root cause before fixing).
+isolation to confirm root cause). **Still under investigation as of this
+addendum:** CI continued failing with the identical error even after the
+null-document fix, and the failure was not reproducible locally against
+an identical chart render/values/kubectl-version combination (ruled out:
+yq version, kubectl 1.35 vs. 1.36, leftover Gateway API CRDs on the
+render-time cluster — none of these reproduce it). The workflow now dumps
+the filtered manifest to the CI log on apply failure so the next run's
+real content settles this instead of further offline guessing.
 
 **Related requirements:** REQ-TB-010, REQ-TB-050
 
