@@ -1579,6 +1579,122 @@ both unaffected by the repo move.
 
 ---
 
+## DD-145: Vendored realm built from `INSTALL.md`'s authoritative `KeycloakRealmImport`, not the `it` package's test-fixture realm — corrects REQ-TB-020
+
+**Decision:** `test/e2e/tierb-config/realm.json` is a minimal Keycloak
+realm-export JSON assembled directly from
+`osac-project/osac`'s `fulfillment-service/docs/INSTALL.md`'s
+`KeycloakRealmImport` example (the `spec.realm` field there is a
+`RealmRepresentation` — the same schema a plain `--import-realm` file uses,
+confirmed by inspecting the CR), not derived from
+`fulfillment-service/it/charts/keycloak/files/realm.json` as DD-143/REQ-TB-020
+originally assumed.
+
+**Correction to REQ-TB-020:** verified directly against the real
+`it/charts/keycloak/files/realm.json` (2209 lines, fetched from `main`) that
+it contains **no** `client_credentials` service-account client at all — only
+the interactive `osac-cli` public client. `osac-admin`/`osac-controller` are
+real client IDs (confirmed via `it_tool.go`'s `adminClientId`/
+`controllerClientId` constants and independently via `INSTALL.md`'s own
+`osac login --client-id osac-admin` example), but the `it` package creates
+them **programmatically** against Keycloak's admin API at test-setup time —
+they are not in the static file, so vendoring that file alone (REQ-TB-020's
+original plan) would not have produced a usable client-credentials login.
+
+**Further correction — the actual claims OSAC checks:** REQ-TB-020 guessed
+`organization`/`groups`/`realm_access.roles` (pattern-matched from
+generic Keycloak+OPA blog content during spec-writing, not confirmed against
+OSAC's own docs). `INSTALL.md` §"Configure the Keycloak realm" states
+plainly: *"The realm must also be configured so that access tokens include
+the `username` and `groups` claims"*, via three custom `clientScopes`
+(`osac-api` — an `oidc-audience-mapper` audience claim, not a role claim;
+`username`; `groups`) assigned as `defaultDefaultClientScopes`. No
+`organization` or `realm_access.roles` claim is mentioned anywhere in the
+production install doc. REQ-TB-020 is corrected accordingly.
+
+**Vendored realm contents** (`test/e2e/tierb-config/realm.json`), copied
+near-verbatim from `INSTALL.md`'s CR example with test-only static secrets
+substituted for the doc's `openssl rand` placeholders (NFR-TB-020):
+
+- `clientScopes`: `osac-api` (audience mapper, `included.custom.audience:
+  osac-api`), `username`, `groups` — assigned via `defaultDefaultClientScopes`
+- `clients`: `osac-cli` (public, unused by this suite but included for
+  parity with the real realm shape), `osac-admin` (confidential,
+  `serviceAccountsEnabled`, the client `osac-sp` itself authenticates as —
+  same one `INSTALL.md`'s own `osac login` example uses), `osac-controller`
+  (confidential, `realm-management` roles — required by
+  `fulfillment-service`'s own chart's `auth.controllerCredentials`/`idp.credentials`,
+  not by `osac-sp`)
+- `users`: `service-account-osac-admin`, `service-account-osac-controller`
+
+**Addendum (confirmed via live `kind` spike, same day):** a real
+`client_credentials` grant against the deployed realm returns `aud:
+"osac-api"` and `username: "service-account-osac-admin"` exactly as
+expected, but **no `groups` claim at all** — Keycloak's
+`oidc-group-membership-mapper` omits the claim entirely (not an empty
+array) when the subject has zero group memberships, and this vendored
+realm's `users` entries never assign `service-account-osac-admin`/
+`service-account-osac-controller` to any group, matching `INSTALL.md`'s own
+reference realm (which does the same). `INSTALL.md`'s own verification
+steps only check the `username` claim for exactly this reason. TC-TB-020
+was corrected to not assert `groups` presence; REQ-TB-020's "carry...a
+`groups` claim" wording describes the *mapper being configured* (which it
+is, and would emit the claim for any principal that actually has group
+memberships), not a claim guaranteed present on every token this specific
+realm can issue.
+
+**Related requirements:** REQ-TB-020 (corrected wording), REQ-TB-030
+
+---
+
+## DD-146: `fulfillment-service` is installed via its real, published OCI chart (`variant: kind`), not a hand-written manifest — and requires cert-manager
+
+**Decision:** `ffs-fulfillment-service` is installed with
+`helm install ... oci://ghcr.io/osac-project/charts/fulfillment-service --version vX.Y.Z`
+(pinned, REQ-TB-050), using the chart's built-in `variant: kind` mode — not a
+hand-written plain `Deployment`/`Service` manifest as originally implied by
+this spec's Phase 1 architecture diagram's `ffs-fulfillment-service (NEW —
+pinned image/chart from ghcr.io/osac-project/*, replaces osac-mock-provider)`
+line, which undersold how much the chart itself already handles.
+
+**New, previously-undocumented prerequisite:** the chart's own README lists
+_cert-manager_ as a hard prerequisite regardless of `variant`
+(`certs.issuerRef`/`certs.caBundle.configMap` have no default — "Required" in
+the chart's own parameter table). This was not called out anywhere in
+`osac-sp-e2e-tier-b.spec.md`'s original architecture (§2) — a genuine spec
+gap, not a Phase-1-vs-Phase-2 scoping choice. NFR-TB-010's resource budget
+must additionally account for cert-manager's 3 pods (controller, webhook,
+cainjector), still comfortably within the 16 GB/4 vCPU free-tier budget.
+
+**Rationale for the chart over a hand-written manifest:** matches this
+spec's own §2 vendoring-plan table (`fulfillment-service` row: "Pin real,
+versioned images... and their published OCI Helm charts directly"), and the
+`control-plane` precedent already established in Phase A
+(`osac-sp-e2e-suite.spec.md` §2) — pulled chart, not hand-authored manifest,
+for anything with its own official chart.
+
+**Resolved via live `kind` spike (this same day):** `fulfillment-grpc-server`
+hard-rejects a plain-HTTP issuer at JWKS-cache construction time —
+`failed to create JWKS cache: issuer URL '...' must use the HTTPS scheme` —
+so `ffs-keycloak` was switched to also terminate TLS, using a `cert-manager`
+`Certificate` issued by the same self-signed `osac-ca` `ClusterIssuer` the
+chart's own components trust via `certs.caBundle`. `auth.issuerUrl`/`idp.url`
+now both point at `https://ffs-keycloak:8443/realms/osac`.
+
+**Second-order finding, same spike:** enabling `KC_HTTPS_CERTIFICATE_FILE`/
+`KC_HTTPS_CERTIFICATE_KEY_FILE` on Keycloak 26.3 also switches its
+_management interface_ (port 9000 — `/health/ready`, `/health/live`) from
+HTTP to HTTPS, undocumented in the parameter's own description. The
+`readinessProbe`/`livenessProbe` in `test/e2e/manifests-tierb/keycloak.yaml`
+must set `scheme: HTTPS`, or the pod flips permanently `Unready` with
+"connection refused" once TLS is turned on — this is not optional plumbing,
+it's a hard coupling in Keycloak's own Quarkus runtime between "any HTTPS
+cert configured" and "management interface moves to HTTPS too."
+
+**Related requirements:** REQ-TB-010, REQ-TB-050
+
+---
+
 ## DD-144: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
 
 **Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)

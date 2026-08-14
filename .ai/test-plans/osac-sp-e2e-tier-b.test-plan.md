@@ -46,7 +46,7 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-TB-030 | `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC | REQ-TB-030, REQ-TB-040, AC-TB-010 | Same polling discipline as TC-E2E-050/060 (`Eventually`, DD-142); `GET` both `/api/v1alpha1/clusters/health` and `/vms/health` directly; assert `status == "healthy"` with connectivity/token sub-fields reflecting a real success — this is the same assertion shape as TC-E2E-050/060, re-run against `ffs-keycloak`/`ffs-fulfillment-service` instead of `osac-mock-provider`, closing the auth-fidelity gap DD-132 documented as structurally untestable in Phase A. |
+| TC-TB-030 | `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC | REQ-TB-030, REQ-TB-040, AC-TB-010 | No new spec: `health_test.go`'s existing, tier-agnostic "osac-sp health, against the real mock backend" `Describe` block (TC-E2E-050/060 — `status == "healthy"`, empty `Detail`) already runs unconditionally against whatever `OSAC_SP_URL` points at; `.github/workflows/e2e-tierb.yaml` just points it at `ffs-keycloak`/`ffs-fulfillment-service` instead of `osac-mock-provider`, closing the auth-fidelity gap DD-132 documented as structurally untestable in Phase A, with no new assertion code needed (see `tierb_test.go`'s file-level doc comment). |
 
 ---
 

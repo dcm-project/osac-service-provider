@@ -88,9 +88,10 @@ without re-design once M2 lands, per REQ-TB-090.
 kind cluster
 ├── dcm-postgres, dcm-nats, dcm-control-plane   (unchanged from Phase A)
 ├── osac-service-provider                       (unchanged from Phase A, this repo's own manifest)
+├── cert-manager        (NEW — upstream release manifest; hard prerequisite of fulfillment-service's own chart, all variants — see DD-146)
 ├── ffs-postgres        (NEW — plain manifest, this repo's own; 2 DBs: keycloak, service)
 ├── ffs-keycloak        (NEW — plain manifest; official Keycloak image + vendored realm.json)
-└── ffs-fulfillment-service (NEW — pinned image/chart from ghcr.io/osac-project/*, replaces osac-mock-provider)
+└── ffs-fulfillment-service (NEW — real published chart, `oci://ghcr.io/osac-project/charts/fulfillment-service`, pinned `--version`, `variant: kind`; replaces osac-mock-provider — see DD-146)
 ```
 
 - `osac-mock-provider` (Phase A) is **removed** from the stack in Tier B
@@ -149,7 +150,7 @@ kind cluster
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-TB-010 | The Tier B workflow MUST deploy real Postgres, real Keycloak (official image + vendored realm import), and real `fulfillment-service` (pinned image + chart) in place of `osac-mock-provider`, leaving `control-plane`+`osac-sp` deployment unchanged from Phase A | MUST | |
-| REQ-TB-020 | The vendored Keycloak realm config MUST define `client_credentials`-capable clients whose issued tokens carry `organization`, `groups`, and `realm_access.roles` claims via protocol mappers, matching what real OSAC's OPA authz interceptor checks | MUST | Source: `fulfillment-service/it/charts/keycloak/files/realm.json` |
+| REQ-TB-020 | The vendored Keycloak realm config MUST define `client_credentials`-capable clients (`osac-admin`, `osac-controller`) whose issued tokens carry `username` and `groups` claims plus an `osac-api` audience claim, via the same custom `clientScopes` real OSAC's own production install doc defines | MUST | Source: `fulfillment-service/docs/INSTALL.md`'s `KeycloakRealmImport` example — corrected from an earlier, unverified assumption (`organization`/`realm_access.roles`); see DD-145 |
 | REQ-TB-030 | `osac-sp`'s `SP_OSAC_OIDC_ISSUER_URL`/`SP_OSAC_OIDC_CLIENT_ID`/`_SECRET`/`SP_OSAC_FULFILLMENT_ADDRESS` MUST point at the real `ffs-keycloak`/`ffs-fulfillment-service` services, with credentials matching a real vendored client | MUST | |
 | REQ-TB-040 | The e2e suite MUST assert `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC — not just against the Phase A mock | MUST | Same assertions as `AC-E2E-030`, re-run against the real backend |
 | REQ-TB-050 | The workflow MUST pin exact `vX.Y.Z` image/chart tags for every OSAC component (never `main`/`latest`) | MUST | Upstream's own `check-floating-tags.yaml` CI guard confirms `main`/`latest` are untrusted as "current" |
