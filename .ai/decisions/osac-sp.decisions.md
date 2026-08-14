@@ -355,6 +355,20 @@ values (and regenerated code) change — no handler logic changes.
 
 ---
 
+**Note on `DD-200`/`DD-201` (superseded, not present below):** PR #16
+(`main` @ `52f9b8b`) proposed `DD-200`/`DD-201` as pre-M5, "proposed, not yet
+ratified" research notes recommending `DCM_NATS_URL` and `js.Publish`. This
+milestone's own `DD-071`/`DD-072` below independently reached the identical
+conclusions, ratified against what was actually built (with a spike/test
+confirming each, not just proposed) and renumbered into the normal sequence
+— PR #25's own description flagged this exact collision ahead of time and
+recommended closing #16 as superseded rather than merging it separately.
+Since #16 merged to `main` first anyway, this merge drops its now-redundant
+proposal text in favor of the ratified `DD-071`/`DD-072` content, rather than
+carrying two numbered entries for the same conclusion.
+
+---
+
 ## DD-071: `DCM_NATS_URL` on `DCMConfig`; CloudEvents envelope via the SDK; `data` includes `id` for both Cluster and VM
 
 **Decision:** name the NATS broker URL config field `DCM_NATS_URL` (a new
