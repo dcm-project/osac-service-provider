@@ -66,8 +66,12 @@ var _ = Describe("Service.List (Topic 4.3 Cluster List)", func() {
 	// TC-U-221 (REQ-LIST-020/040, AC-LIST-020): page_token round-trips
 	// through OSAC's offset correctly, across two calls.
 	It("round-trips page_token through OSAC's offset (TC-U-221)", func() {
+		items := make([]*publicv1.Cluster, 50)
+		for i := range items {
+			items[i] = &publicv1.Cluster{Id: "c1", Status: &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY}}
+		}
 		f.fake.listFunc = func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
-			return &publicv1.ClustersListResponse{Size: 50, Total: 100}, nil
+			return &publicv1.ClustersListResponse{Size: 50, Total: 100, Items: items}, nil
 		}
 
 		first, err := f.svc.List(context.Background(), v1alpha1.ListClustersParams{})
@@ -101,6 +105,18 @@ var _ = Describe("Service.List (Topic 4.3 Cluster List)", func() {
 		Expect(result.Results).To(HaveLen(1))
 		Expect(result.Results[0].Kubeconfig).To(BeNil())
 		Expect(f.fake.GetKubeconfigCallCount()).To(Equal(0))
+	})
+
+	// TC-U-223 (REQ-LIST-040, AC-LIST-050, regression): a Size/Total
+	// mismatch never reissues the same page_token.
+	It("never reissues the same page_token on a Size/Total mismatch (TC-U-223)", func() {
+		f.fake.listFunc = func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
+			return &publicv1.ClustersListResponse{Items: nil, Size: 0, Total: 5}, nil
+		}
+
+		result, err := f.svc.List(context.Background(), v1alpha1.ListClustersParams{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.NextPageToken).To(BeNil(), "an empty page must never emit a next_page_token, regardless of Total")
 	})
 
 	// Supplementary (REQ-ERR-010/030 precondition): a List RPC failure is

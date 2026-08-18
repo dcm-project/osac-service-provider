@@ -305,7 +305,7 @@ pagination.
 | REQ-LIST-010 | The SP MUST call `Clusters/List` with CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm"` on every call — this filter is always applied and is not caller-configurable (the REST API exposes no raw-filter passthrough) | MUST | Ownership Tracking |
 | REQ-LIST-020 | The SP MUST translate `max_page_size` (query, default `50` when omitted) to OSAC's `limit`, and encode/decode `page_token` as an opaque wrapper around OSAC's `offset` | MUST | |
 | REQ-LIST-030 | The response MUST be the AEP-132 pagination wrapper `{"results": [...], "next_page_token": "..."}`, with each entry mapped via the same status mapper as Get (§4.5), omitting the `kubeconfig` field entirely (List never fetches it — see AC-LIST-030) | MUST | |
-| REQ-LIST-040 | `next_page_token` MUST be empty/absent exactly when OSAC's `List` response indicates no further results (not merely when the current page is short) | MUST | |
+| REQ-LIST-040 | `next_page_token` MUST be empty/absent exactly when OSAC's `List` response indicates no further results (not merely when the current page is short). The next offset MUST be computed from the number of results actually received (`len(results)`), not `resp.GetSize()`; an empty page (zero results) MUST NOT emit a `next_page_token`, regardless of what `Total` reports | MUST | DD-134 — a `Size`/`Total` mismatch must never cause the same `page_token` to be reissued, which would make a faithfully-paginating caller loop forever |
 
 #### Configuration Introduced
 
@@ -340,6 +340,13 @@ None.
 - **Given** no fake `Clusters/List` behavior is configured (any call would panic/fail the test)
 - **When** `GET /api/v1alpha1/clusters?page_token=not-valid-base64!!!` is called
 - **Then** the response is `400 Bad Request` with `type` exactly `INVALIDARGUMENT`, and the fake's `List` call counter is exactly `0` — proving the token is rejected during request parsing, before any OSAC RPC
+
+##### AC-LIST-050: A `Size`/`Total` mismatch never reissues the same `page_token` (regression)
+
+- **Validates:** REQ-LIST-040
+- **Given** a fake `Clusters/List` that returns zero items with `Size=0` while `Total=5` (a buggy/inconsistent upstream response) for a request at `offset=0`
+- **When** `GET /api/v1alpha1/clusters` is called
+- **Then** the response's `next_page_token` MUST be absent — never a token that would decode back to `offset=0` and reissue the exact same page
 
 #### Dependencies
 

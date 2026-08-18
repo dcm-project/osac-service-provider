@@ -356,7 +356,7 @@ List.
 | REQ-VMLIST-010 | The SP MUST call `ComputeInstances/List` with CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm"` on every call | MUST | Ownership Tracking |
 | REQ-VMLIST-020 | The SP MUST translate `max_page_size` (query, default `50` when omitted) to OSAC's `limit`, and encode/decode `page_token` as an opaque wrapper around OSAC's `offset` | MUST | |
 | REQ-VMLIST-030 | The response MUST be the AEP-132 pagination wrapper `{"results": [...], "next_page_token": "..."}`, with each entry mapped via the same status mapper as Get (§4.6), including the same `internal_ip_address`/`external_ip_address` echo as Get (REQ-VMGET-030) — unlike Cluster's `kubeconfig`, this costs no extra RPC since it's already present on each `ComputeInstancesListResponse` item | MUST | |
-| REQ-VMLIST-040 | `next_page_token` MUST be empty/absent exactly when OSAC's `List` response indicates no further results | MUST | |
+| REQ-VMLIST-040 | `next_page_token` MUST be empty/absent exactly when OSAC's `List` response indicates no further results. The next offset MUST be computed from `len(results)` actually received, not `resp.GetSize()`; an empty page MUST NOT emit a `next_page_token` regardless of `Total` | MUST | DD-134; mirrors `internal/cluster`'s List fix exactly |
 
 #### Configuration Introduced
 
@@ -384,6 +384,13 @@ None.
 - **Given** no fake `ComputeInstances/List` behavior is configured (any call would panic/fail the test)
 - **When** `GET /api/v1alpha1/vms?page_token=not-valid-base64!!!` is called
 - **Then** the response is `400 Bad Request` with `type` exactly `INVALIDARGUMENT`, and the fake's `List` call counter is exactly `0` — proving the token is rejected during request parsing, before any OSAC RPC
+
+##### AC-VMLIST-040: A `Size`/`Total` mismatch never reissues the same `page_token` (regression)
+
+- **Validates:** REQ-VMLIST-040
+- **Given** a fake `ComputeInstances/List` that returns zero items with `Size=0` while `Total=5` for a request at `offset=0`
+- **When** `GET /api/v1alpha1/vms` is called
+- **Then** the response's `next_page_token` MUST be absent
 
 #### Dependencies
 

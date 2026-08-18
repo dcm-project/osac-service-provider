@@ -59,10 +59,14 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 	// TC-I-221 (REQ-LIST-020/040, AC-LIST-020): pagination round-trips
 	// across two real, sequential HTTP requests.
 	It("round-trips page_token through OSAC's offset across two real HTTP requests (TC-I-221)", func() {
+		items := make([]*publicv1.Cluster, 50)
+		for i := range items {
+			items[i] = &publicv1.Cluster{Id: "c1", Status: &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY}}
+		}
 		var recordedOffsets []int32
 		f.fake.listFunc = func(req *publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
 			recordedOffsets = append(recordedOffsets, req.GetOffset())
-			return &publicv1.ClustersListResponse{Size: 50, Total: 100}, nil
+			return &publicv1.ClustersListResponse{Size: 50, Total: 100, Items: items}, nil
 		}
 
 		first := listClusters(f, "")

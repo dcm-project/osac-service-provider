@@ -80,6 +80,7 @@ Identical to Milestone 3's rules — binding, not advisory:
 |-------|-----------|-----------|-------------|
 | TC-U-320 | List applies the ownership filter, default page size, and exact field values including IP echo | REQ-VMLIST-010, REQ-VMLIST-030, AC-VMLIST-010 | Fake `ComputeInstances/List` records its request, returns 2 instances with known `id`/`status.state`/`internal_ip_address`; call `internal/vm.List` with no page params; assert the fake recorded `filter=="this.metadata.labels[\"dcm.io/managed-by\"] == \"dcm\""` and `limit==50`, and returned entries' fields equal the fake's canned values exactly. |
 | TC-U-321 | `page_token` round-trips through OSAC's `offset` | REQ-VMLIST-020, REQ-VMLIST-040, AC-VMLIST-020 | Fake `ComputeInstances/List` returns a response with next `offset=50`; decode the returned `next_page_token` and feed it into a second `List` call; assert the fake's second recorded request has `offset==50` exactly. |
+| TC-U-322 | A `Size`/`Total` mismatch never reissues the same `page_token` (regression) | REQ-VMLIST-040, AC-VMLIST-040 | Fake `ComputeInstances/List` returns `Items: nil, Size: 0, Total: 5` at `offset=0`; call `internal/vm.List`; assert `NextPageToken` is nil. |
 
 ---
 

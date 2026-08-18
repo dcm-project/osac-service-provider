@@ -62,10 +62,14 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 	// TC-I-321 (REQ-VMLIST-020/040, AC-VMLIST-020): pagination round-trips
 	// across two real, sequential HTTP requests.
 	It("round-trips page_token through OSAC's offset across two real HTTP requests (TC-I-321)", func() {
+		items := make([]*publicv1.ComputeInstance, 50)
+		for i := range items {
+			items[i] = &publicv1.ComputeInstance{Id: "v1", Status: &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING}}
+		}
 		var recordedOffsets []int32
 		f.fake.listFunc = func(req *publicv1.ComputeInstancesListRequest) (*publicv1.ComputeInstancesListResponse, error) {
 			recordedOffsets = append(recordedOffsets, req.GetOffset())
-			return &publicv1.ComputeInstancesListResponse{Size: 50, Total: 100}, nil
+			return &publicv1.ComputeInstancesListResponse{Size: 50, Total: 100, Items: items}, nil
 		}
 
 		first := listVMs(f, "")
