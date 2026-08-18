@@ -1177,3 +1177,29 @@ since both binaries may run side by side in the same `kind` pod/namespace
 once Phase 2 wires them together.
 
 **Related requirements:** REQ-MOCK-110
+
+---
+
+## DD-135: `.golangci.yml` hardened with 10 additional linters, evidence-tested before adoption
+
+**Decision:** added `nestif`, `errorlint`, `forcetypeassert`, `predeclared`,
+`perfsprint`, `intrange`, `gocyclo` (`min-complexity: 15`), `funlen`
+(`lines: 80`, `statements: 50`), `goconst` (`min-occurrences: 3`), and
+`exhaustive` (`default-signifies-exhaustive: true`) to the linter set this
+repo shares verbatim with every sibling DCM Go service provider
+(`control-plane`, `environment-agent`, `k8s-network-service-provider`,
+`k8s-storage-service-provider` all carry the identical file). Explicitly
+**not** added: `dupl`, `noctx` (see Rationale).
+
+**Rationale:** triggered by two real review nits on [PR #25](https://github.com/dcm-project/osac-service-provider/pull/25) that manual review caught but no linter would have (`internal/statuspoll`: two guard-`if`s that should have been one condition; a repeated string literal that should have been a constant) — the concrete goal was closing exactly that gap, plus general AI-generated-code hardening, without adding noise.
+
+Each candidate was run against this repo's actual code before being adopted, not chosen from a generic "best practices" list:
+- `nestif`/`errorlint`/`forcetypeassert`/`predeclared`/`perfsprint`/`intrange`/`gocyclo`/`funlen`: **zero** current hits — pure forward-looking regression guards, free to adopt.
+- `exhaustive`: naively fires on 5 switches over `codes.Code`/`ClusterState`, but 4 already have a deliberate `default:` catch-all (the documented `internal/grpcerror.Classify` pattern, e.g.). Setting `default-signifies-exhaustive: true` drops this to exactly 1 real hit — `internal/cluster/status.go`'s intentional partial-match-then-fallthrough switch (checks terminal states first, falls through to a `DEGRADED` condition check, falls through again to a final exhaustive switch) — annotated with a justified `//nolint:exhaustive` rather than restructured, since the fallthrough is the intended design. This is the single most valuable addition: a safety net against silently mishandling a future new OSAC proto enum value.
+- `goconst` (`min-occurrences: 3`): 4 hits, all pre-existing test-only literals (`internal/osac/bootstrap_unit_test.go`'s repeated CA-file path, `internal/registration/registration_unit_test.go`'s repeated content-type/service-type strings) — extracted to fixture-local constants. This is the exact linter that would have auto-caught the PR #25 nit.
+- `dupl`: 25 hits, but every one is the deliberate Cluster/VM/Subnet/VirtualNetwork structural mirroring already established as an intentional non-generic design elsewhere in this codebase (`test/mockprovider`'s per-resource-type servers, `internal/cluster`/`internal/vm`'s parallel service packages). Enabling it would force either an unwanted generics refactor or ~12 blanket `//nolint`s — noise, not signal. Left off.
+- `noctx`: 6 hits, all `net.Listen`/`net.DialTimeout` at process-startup or test-probe call sites with no real cancellation need. Stylistic modernization, not a correctness or AI-slop risk. Left off.
+
+Deliberately scoped to this repo first, not simultaneously rolled out to sibling SPs — this repo's `.golangci.yml` already functions as the de facto shared template (byte-identical across 4 other repos), so validating the change here first, then propagating, is lower-risk than a coordinated multi-repo change.
+
+**Related requirements:** none (tooling/process decision, no REQ/AC).
