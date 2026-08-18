@@ -6,8 +6,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/dcm-project/osac-service-provider/internal/mockprovider"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
 
 var _ = Describe("CapabilitiesServer", func() {

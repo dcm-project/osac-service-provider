@@ -42,7 +42,7 @@ rather than silently deferring them.
   not one of them yet, see REQ-E2E-030)
 - `internal/config/config.go` — the exact env-var contract this phase's
   `osac-sp` manifest must satisfy (`SP_SERVER_*`, `SP_OSAC_*`, `DCM_*`, `SP_*`)
-- `internal/mockprovider/config.go` — the exact env-var contract this phase's
+- `test/mockprovider/config.go` — the exact env-var contract this phase's
   `osac-mock-provider` manifest must satisfy (`MOCK_GRPC_ADDRESS`,
   `MOCK_OIDC_ADDRESS`)
 - [Design Decisions](../decisions/osac-sp.decisions.md) — new decisions for
