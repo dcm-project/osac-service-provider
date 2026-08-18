@@ -1,0 +1,27 @@
+# Build stage
+FROM registry.access.redhat.com/ubi9/go-toolset:1.25.5 AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+USER root
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o osac-mock-provider ./cmd/osac-mock-provider
+
+# Runtime stage
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+WORKDIR /app
+
+COPY --from=builder /app/osac-mock-provider .
+
+# MOCK_GRPC_ADDRESS and MOCK_OIDC_ADDRESS are required (REQ-MOCK-110, no
+# built-in default) and must be supplied at runtime — e.g. `-e
+# MOCK_GRPC_ADDRESS=:9090 -e MOCK_OIDC_ADDRESS=:9091`, matching the ports
+# documented below.
+EXPOSE 9090 9091
+
+ENTRYPOINT ["./osac-mock-provider"]
