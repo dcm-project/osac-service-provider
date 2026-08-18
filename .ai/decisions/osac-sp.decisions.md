@@ -356,128 +356,6 @@ values (and regenerated code) change — no handler logic changes.
 
 ---
 
-## DD-080: Cluster CRUD dispatches via `control-plane`'s synchronous direct-REST contract, not gRPC/CloudEvents — and only Create/Delete are actually invoked by `control-plane`
-
-**Decision:** Milestone 3's four Cluster REST handlers are built as a full
-CRUDL surface (matching the AEP/OpenAPI-first convention every sibling SP
-follows), but the spec explicitly documents that `control-plane` (Phase 1,
-DD-050) only ever calls **Create** and **Delete** on this SP's registered
-endpoint — `Get`/`List`/`Update` are served entirely from `control-plane`'s
-own Postgres store and never reach this SP. Create's request/response shape
-and Delete's `NotFound`-tolerance are dictated by `control-plane`'s actual
-outbound dispatch code, not by a generic REST-resource assumption.
-
-**Rationale:** Verified directly against
-[`internal/sp/service/resource_manager/service_type_instance.go`](https://github.com/dcm-project/control-plane/blob/f243dfaa2e2752c63202432409e78cc2a4ad7d85/internal/sp/service/resource_manager/service_type_instance.go)
-(commit `f243dfa`) rather than any OpenAPI document — `control-plane`'s own
-`api/sp/v1alpha1/resource_manager/openapi.yaml` describes a *different*,
-catalog-facing API (`/service-type-instances`) than what it sends outbound
-to a registered provider's `Endpoint`, so reading that spec alone would have
-been a category error (the same mistake DD-060 already corrected once for
-OIDC discovery — citing superficially-similar-but-wrong code). The actual
-outbound contract:
-
-- `GetInstance`/`ListInstances` read only `s.store` — zero calls to
-  `provider.Endpoint` for either. `UpdateInstance` doesn't exist as a
-  provider-dispatch path at all.
-- `createInstanceWithProvider`: `POST {endpoint}?id={id}` (query parameter,
-  not a body field), body `{"spec": request.Spec}`, response unmarshaled
-  into `ProviderResponse{ID string `json:"id"`; Status string
-  `json:"status"`}` (`convert.go`) — extra fields in the SP's response are
-  silently ignored, not rejected, so returning the full `Cluster` resource
-  (id/status top-level) is compatible.
-- `deleteInstanceWithProvider`: `DELETE {endpoint}/{id}` (path segment).
-  `if resp.IsError() && resp.StatusCode() != 404` — a `404` from the SP is
-  explicitly excluded from the error branch, i.e. treated as a successful
-  delete, not surfaced as a `ProviderError`.
-- `control-plane` does not parse RFC 7807/9457 bodies from the SP — any
-  `>=400` becomes a generic `ProviderError` string. RFC 9457 compliance
-  (DD-070) is still correct for API-contract consistency and any direct/
-  non-`control-plane` caller, just not something `control-plane` itself
-  interprets structurally today.
-
-Enhancement [PR #96](https://github.com/dcm-project/enhancements/pull/96)
-(open, unmerged) already reflects this corrected contract for Cluster/VM —
-used as this milestone's interim source of truth per issue #1's own note.
-
-**Related requirements:** REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-050, REQ-DELETE-010, REQ-DELETE-020
-
----
-
-## DD-090: `Cluster.status` uses DCM's full 7-value canonical vocabulary, not the 5-value subset in the enhancement doc's own table
-
-**Decision:** The status mapper (M3 spec §4.5) returns one of DCM's full
-canonical 7 values — `PROGRESSING | ACTIVE | DEGRADED | UNAVAILABLE | FAILED
-| DELETING | DELETED` — including `UNAVAILABLE` and `DELETING`, even though
-only `UNAVAILABLE` has a real driving signal from OSAC today.
-
-**Rationale:** Read
-[`service-provider-status-reporting.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#L266-281)
-directly rather than trusting enhancement PR #96's own Status Mapping
-table, which only lists 5 values (`PROGRESSING`/`ACTIVE`/`DEGRADED`/
-`FAILED`/`DELETED`) — that table documents which *signals OSAC currently
-sends*, not the full *contract DCM requires the SP to speak*. The primary
-doc is unambiguous that the target vocabulary is the full 7 values, with
-distinct semantics for each (e.g. `UNAVAILABLE` = "previously available but
-now unreachable and not progressing toward recovery", distinct from
-`DEGRADED` = "reachable but critical components unhealthy"). This is a
-different, DCM-wide vocabulary from the ad-hoc per-SP enums other sibling
-SPs invented before any `control-plane` dispatch integration existed (e.g.
-`acm-cluster-sp`'s `PENDING|PROVISIONING|READY|FAILED|DELETING|DELETED|
-UNAVAILABLE` — close but not identical wording, and not the authoritative
-source). `UNAVAILABLE` is legitimately SP-detectable via an OSAC gRPC
-connectivity failure (distinct from a real `NotFound`), but only through
-the future Milestone 5 async status-polling loop — this milestone's
-synchronous Create/Get/List already resolve that same gRPC outcome as a
-sync HTTP error (REQ-ERR-010), not a `200` response body (SC-M3-003).
-`DELETING`/`DELETE_FAILED` are proto-defined but currently unreachable in
-practice (SC-M3-001). All four are still required enum values for forward
-compatibility and DCM-wide consistency, not values the SP can skip because
-nothing exercises them synchronously yet.
-
-**Related requirements:** REQ-STATUS-010, REQ-STATUS-020
-
----
-
-## DD-100: SP-side idempotent Create-on-`AlreadyExists`→`Get` is a hard requirement, not a best-effort nicety
-
-**Decision:** REQ-CREATE-040 (Create's `AlreadyExists`→`Get` fallback) is
-specified as a `MUST` with dedicated, mandatory test coverage
-(AC-CREATE-030), not an optional robustness improvement that could be
-deferred or left partially tested.
-
-**Rationale:** `control-plane`'s `internal/catalog/service/catalog_item_instance.go`
-Create path (and the duplicated pattern in
-`internal/placement/service/placement.go`) performs an unconditional
-rollback on any error — deleting the local DB row keyed on the caller's
-`id`, with no branch distinguishing "definitely rejected" from
-"ambiguous/timeout." A retry with the same caller-facing `id` therefore
-mints a **new internal `resourceID`** and dispatches a second,
-differently-IDed Create to the SP, defeating the `id`-based idempotency the
-catalog API promises. No orphan-reconciliation exists to catch this.
-Separately, `control-plane`'s outbound HTTP client retries network failures
-3x (`resty.SetRetryCount(3)`), so the SP can legitimately receive the same
-`id` twice from a connection-level hiccup alone. Filed as
-[`control-plane#38`](https://github.com/dcm-project/control-plane/issues/38)
-— not fixable from within `osac-service-provider`. Both the general
-[`sp-resource-manager.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/sp-resource-manager/sp-resource-manager.md#L487-L502)
-and OSAC-specific
-[`osac-sp.md`](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#idempotent-creation)
-enhancement docs already push the final idempotency guarantee down to the
-SP — this decision makes that guarantee an enforced, tested contract rather
-than an assumed one.
-
-**Related requirements:** REQ-CREATE-040
-
----
-
-## DD-110: Cluster Create resolves node-set keys via `ClusterTemplates/Get`, not from `template_id` — and rejects multi-node-set templates for this milestone
-
-**Decision:** Before dispatching `Clusters/Create`, the SP calls
-`ClusterTemplates/Get(template_id)` and uses the returned `node_sets` map's
-key to construct `spec.node_sets[key].size` from the request's
-`nodes.worker.count`. If the template defines more than one node-set key,
-the SP rejects the request with `400 Bad Request` rather than guessing
 which key to size — multi-node-set templates are out of scope for this
 milestone's single `nodes.worker.count` sizing dimension.
 
@@ -1179,3 +1057,123 @@ choice (not `acm-cluster-service-provider`'s) for consistency with this
 repo's own convention, not that sibling's.
 
 **Related requirements:** none yet — M5 not started.
+
+---
+
+## DD-130: Single `test/mockprovider` package, not one sub-package per service
+
+**Decision:** `cmd/osac-mock-provider`'s five fake gRPC services
+(`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`,
+`VirtualNetworks`) and its OIDC discovery+token stub all live directly in
+one flat package, `test/mockprovider` — one Go file per
+service/concern (`clusters.go`, `computeinstances.go`, `subnets.go`,
+`virtualnetworks.go`, `capabilities.go`, `oidc.go`, `store.go`,
+`config.go`), not `test/mockprovider/clusters/`,
+`test/mockprovider/oidc/`, etc.
+
+**Rationale:** every file in this package shares one concern — faking
+OSAC's backend surface for `osac-sp`'s own client code to dial — and all
+five gRPC services share the exact same generic, unexported storage engine
+(`resourceStore[T]`, see DD-131), which would otherwise need to be exported
+(or duplicated) to cross sub-package boundaries for no benefit: nothing
+outside this mock ever needs to depend on, say, `mockprovider/clusters`
+without also needing the other four services and the OIDC stub to form a
+working substitute. This mirrors the existing repo's own flat-package
+convention for single-concern internal packages (e.g. `internal/osac`,
+`internal/registration`) rather than the multi-file-but-nested-directory
+shape of, say, `internal/api/server` (which is generated, not
+hand-authored).
+
+**Note on DD numbering:** this decision (and DD-131..133 below) were
+originally numbered DD-130+ on a branch cut directly from `main` while
+`main`'s own decisions file still ended at DD-070. By the time this branch
+merged, M3/M4 (Cluster/VM CRUD) had already landed on `main` and claimed
+DD-080..129 — clear of this range, so no renumbering was needed.
+
+**Related requirements:** REQ-MOCK-010, REQ-MOCK-070, REQ-MOCK-080
+
+---
+
+## DD-131: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
+
+**Decision:** All four CRUD-capable fake services (`Clusters`,
+`ComputeInstances`, `Subnets`, `VirtualNetworks`) share one generic
+`resourceStore[T]` type (`test/mockprovider/store.go`) — a
+`sync.Mutex`-protected, `map[string]T`-backed, insertion-ordered store with
+`create`/`insert`/`get`/`list`/`delete` methods — rather than each service
+hand-rolling its own map/mutex pair. `create` performs the duplicate-`id`
+check `Clusters`/`ComputeInstances` need (`ALREADY_EXISTS` on a second
+`Create` for the same caller-supplied `id`, REQ-MOCK-020); `insert` skips
+that check unconditionally, for `Subnets`/`VirtualNetworks`' always-fresh,
+server-generated `id`s (REQ-MOCK-021), where a duplicate-`id` branch would
+be dead code (a `google/uuid` v4 collision is not a realistically testable
+condition).
+
+**Rationale:** the four services' CRUD semantics are otherwise identical
+(insertion-ordered `List` with `offset`/`limit` clamping, `NOT_FOUND` on
+unknown `id` for `Get`/`Delete`) and differ only in (a) whether `Create`
+accepts a caller-supplied `id` or always generates one and (b) which
+protobuf message type and status-enum value each wraps around the stored
+object. Centralizing the storage engine keeps that duplication to a single
+`switch`-free generic type instead of four near-identical hand-rolled
+implementations, while still keeping each service's own file focused on its
+service-specific translation logic (building the right typed
+request/response, setting the right initial `status.state`).
+
+**Consequence:** `resourceStore[T]` is unexported — it is purely an
+implementation detail of this package's five services, never referenced by
+`cmd/osac-mock-provider` or any external caller, so it carries no API
+stability obligation of its own.
+
+**Related requirements:** REQ-MOCK-020, REQ-MOCK-021, REQ-MOCK-030,
+REQ-MOCK-040, REQ-MOCK-050, REQ-MOCK-060
+
+---
+
+## DD-132: No real JWT signing for the OIDC token stub
+
+**Decision:** `test/mockprovider.OIDCHandler`'s `/token` endpoint issues
+a static, opaque bearer token string (not a real, cryptographically signed
+JWT) for a valid `client_credentials` grant, and never validates the
+`client_id`/`client_secret` credentials presented against anything.
+
+**Rationale:** the mock's own gRPC server (the thing that token is actually
+*for*) doesn't enforce auth either — `test/mockprovider`'s five gRPC
+services accept every request unconditionally, regardless of what (if any)
+bearer metadata is attached — so a real, verifiable JWT would be signing a
+promise nothing on either side of this mock ever checks. The only real
+production code this mock needs to satisfy end-to-end is `osac-sp`'s own
+`internal/osac.discoveringTokenSource`/`clientcredentials.Config`-backed
+token fetch (REQ-OSAC-010/011), which only requires a syntactically valid
+OAuth2 token response body (`access_token`/`token_type`/`expires_in`) — it
+never inspects the token's own contents. Matches
+`cmd/osac-service-provider/main_integration_test.go`'s own fake Keycloak,
+which takes the identical shortcut for the same reason.
+
+**Related requirements:** REQ-MOCK-090
+
+---
+
+## DD-133: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
+
+**Decision:** `test/mockprovider.Config` is a flat, two-field struct
+(`GRPCAddress`, `OIDCAddress`, both required/fail-fast) read via
+`MOCK_GRPC_ADDRESS`/`MOCK_OIDC_ADDRESS` — a new, independent env-var
+namespace, not a reuse of `internal/config.Config`'s shape or any of its
+existing `SP_`/`DCM_` prefixes.
+
+**Rationale:** this binary is not a service provider registering with
+`control-plane` and has no OSAC client of its own to configure — the only
+two things it needs are its own two listen addresses — so
+`internal/config.Config`'s `Server`/`OSAC`/`DCM`/`Provider` sub-structs
+would each be either entirely unused or actively misleading (e.g. an `OSAC`
+sub-struct on the binary that *is* the OSAC stand-in). A fresh, minimal,
+purpose-built `Config` avoids importing meaning (and required env vars)
+that don't apply, while still reusing the same `caarlos0/env` loading
+convention (`LoadConfig`, fail-fast via the `notEmpty` tag) as
+`internal/config.Load`. The `MOCK_` prefix (rather than reusing `SP_`)
+keeps this binary's env vars unambiguously distinct from the real SP's own,
+since both binaries may run side by side in the same `kind` pod/namespace
+once Phase 2 wires them together.
+
+**Related requirements:** REQ-MOCK-110
