@@ -77,6 +77,7 @@ types" convention (see `.ai/test-plans/osac-sp-unit.test-plan.md`, section
 | TC-U-415 | `Start`/`Done` are idempotent and mirror `Registrar`'s shape | REQ-PUBLISH-060, AC-PUBLISH-050 | Call `Start(ctx)` twice; assert (via an internal call counter guarded by `-race`) only one worker goroutine ever runs; cancel `ctx`; assert `Done()`'s channel closes exactly once. |
 | TC-U-416 | `Close` closes the underlying NATS connection | REQ-PUBLISH-090 | Construct a `Publisher` against a fake/real connection wrapper recording `Close()` calls; call `Publisher.Close()`; assert the underlying connection's `Close` was called exactly once. |
 | TC-U-417 | `NewPublisher` wraps and returns a NATS connect failure | REQ-PUBLISH-020 | Call `NewPublisher("://not-a-valid-url", logger)` — `nats.Connect` fails synchronously on URL parsing, no live broker needed; assert a non-nil error wrapping "connecting to NATS" and a nil `*Publisher`. |
+| TC-U-418 | A retry sends the latest value, never resending one superseded during backoff (regression) | REQ-PUBLISH-080, AC-PUBLISH-040 | Fake `jsPublisher` fails only the first call; call `Publish(st, "vm-1", "DELETED", ...)`, `Start(ctx)`, wait for the failed first attempt, then call `Publish(st, "vm-1", "RUNNING", ...)` while the worker is backing off before its retry; assert the retry (second attempt) carries `"RUNNING"` directly, never resending the now-stale `"DELETED"` a second time. Confirmed to fail against the pre-fix `deliver` (which retried a value captured once at pop time) and pass against `deliverLatest` (which re-reads the pending map before every attempt). |
 
 **Coverage note:** `NewPublisher`'s `jetstream.New(nc)` error-wrap branch is
 not exercised by any TC here — `jetstream.New` is called with no
@@ -109,6 +110,9 @@ section 4's coverage note).
 | TC-U-461 | Cluster message derivation maps each non-error status to its own condition type | REQ-POLL-060 | Table-driven over `PROGRESSING`→`CLUSTER_CONDITION_TYPE_PROGRESSING`, `DEGRADED`→`CLUSTER_CONDITION_TYPE_DEGRADED`, `FAILED`→`CLUSTER_CONDITION_TYPE_FAILED`; assert each looks up the correspondingly-typed condition only, ignoring a differently-typed condition present in the same list. |
 | TC-U-462 | VM message uses a synthesized default per status when no `RESTART_FAILED` condition is present | REQ-POLL-070, AC-POLL-050 | Table-driven over all 8 `v1alpha1.VMStatus` values with an empty condition list; assert each produces its own distinct synthesized default (e.g. `"vm is running"`, `"vm is stopped"`) — not a single generic string reused for every status. |
 | TC-U-463 | A `TRUE` `RESTART_FAILED` condition's message is surfaced regardless of primary status | REQ-POLL-070, AC-POLL-050 | Status `RUNNING` plus a `RESTART_FAILED` condition with `status=TRUE, message="ssh key rotation failed"`; assert the derived message incorporates `"ssh key rotation failed"`. A `RESTART_FAILED` condition with `status=FALSE` present alongside MUST NOT be surfaced (assert the synthesized default is used instead). |
+| TC-U-464 | `Source` is built from the caller-supplied provider names, not a hardcoded literal | REQ-POLL-015, AC-POLL-015 | Construct a `Poller` via `New(..., "custom-cluster", "custom-vm", ...)`; run a cycle publishing one Cluster and one VM update; assert the fake `Publisher` observed `ServiceType.Source=="dcm/providers/custom-cluster"` for the Cluster call and `"dcm/providers/custom-vm"` for the VM call. |
+| TC-U-465 | A hung `List` call is bounded by `ListTimeout` and treated as a failure (regression) | REQ-POLL-025, AC-POLL-080 | Fake `ClustersClient.List` blocks past a short configured `StatusConfig.ListTimeout`; fake `ComputeInstancesClient.List` succeeds; run one cycle; assert cluster processing is skipped for that cycle (no `Publish` calls for clusters) while VM processing completes normally. |
+| TC-U-466 | Pagination terminates when a page reports `Size=0` while `Total>0` (regression) | REQ-POLL-020, AC-POLL-010 | Fake `ClustersClient.List` returns `{Items: [], Size: 0, Total: 5}` on every call; run one cycle; assert the fake received exactly 1 `List` call (the loop terminated on the empty page rather than looping forever with `offset` stuck). |
 
 ---
 
@@ -140,10 +144,12 @@ section 4's coverage note).
 | REQ-PUBLISH-050 / AC-PUBLISH-020 (non-blocking) | TC-U-410 | TC-I-400 |
 | REQ-PUBLISH-060 / AC-PUBLISH-050 (lifecycle) | TC-U-415 | TC-I-401 |
 | REQ-PUBLISH-070 / AC-PUBLISH-030 (retry) | TC-U-412 | TC-I-401 |
-| REQ-PUBLISH-080 / AC-PUBLISH-040 (coalescing) | TC-U-413, TC-U-414 | TC-I-400 |
+| REQ-PUBLISH-080 / AC-PUBLISH-040 (coalescing) | TC-U-413, TC-U-414, TC-U-418 | TC-I-400 |
 | REQ-PUBLISH-090 (Close) | TC-U-416 | TC-I-400 (implicit via suite teardown) |
 | REQ-POLL-010 (config) | — (env-parsing, no new logic) | — |
-| REQ-POLL-020 / AC-POLL-010 (list+filter+paging) | TC-U-450 | TC-I-450 |
+| REQ-POLL-015 / AC-POLL-015 (Source from caller-supplied names) | TC-U-464 | TC-I-450 |
+| REQ-POLL-020 / AC-POLL-010 (list+filter+paging) | TC-U-450, TC-U-466 | TC-I-450 |
+| REQ-POLL-025 / AC-POLL-080 (per-`List` timeout) | TC-U-465 | TC-I-450 |
 | REQ-POLL-030 (MapStatus call) | TC-U-451..455 (exercised via cycle outcomes) | TC-I-450 |
 | REQ-POLL-040 / AC-POLL-020 (diff+publish) | TC-U-451, TC-U-452 | TC-I-450 |
 | REQ-POLL-050 / AC-POLL-030 (disappeared→DELETED) | TC-U-453 | TC-I-450 (single-resource case implicitly covered by the same wiring proof) |

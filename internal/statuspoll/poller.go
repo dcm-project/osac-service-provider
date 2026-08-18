@@ -40,12 +40,20 @@ const listPageSize int32 = 100
 // (REQ-POLL-050).
 const disappearedMessage = "resource no longer found"
 
-// clusterServiceType and vmServiceType bind the CloudEvents
-// subject/type/source attributes for each service type (DD-071), matching
-// internal/statuspublisher's own documented values exactly.
-var (
-	clusterServiceType = statuspublisher.ServiceType{Subject: "dcm.cluster", Type: "dcm.status.cluster", Source: "dcm/providers/osac-sp-cluster"}
-	vmServiceType      = statuspublisher.ServiceType{Subject: "dcm.vm", Type: "dcm.status.vm", Source: "dcm/providers/osac-sp-vm"}
+// defaultListTimeout bounds each individual List call (REQ-POLL-025) when
+// cfg.ListTimeout is unset/non-positive, so a hung OSAC backend can never
+// wedge the poll loop indefinitely — same resilience principle as this
+// repo's own DD-091 (an unbounded wait must always be time-boxed, since an
+// unresponsive dependency is not itself a fatal condition).
+const defaultListTimeout = 10 * time.Second
+
+// clusterSubject and vmSubject are the fixed (non-provider-specific) halves
+// of each service type's CloudEvents attributes (DD-071); Source is
+// provider-specific and built per-Poller in New from the caller-supplied
+// provider names (REQ-PUBLISH-030).
+const (
+	clusterSubject = "dcm.cluster"
+	vmSubject      = "dcm.vm"
 )
 
 // clustersClient is the subset of publicv1.ClustersClient this package
@@ -85,7 +93,17 @@ type Poller struct {
 	publisher        publisher
 	interval         time.Duration
 	resyncEvery      int
+	listTimeout      time.Duration
 	logger           *slog.Logger
+
+	// clusterServiceType/vmServiceType bind the CloudEvents
+	// subject/type/source attributes for each service type (DD-071).
+	// Source is built from the caller-supplied provider name (REQ-PUBLISH-030)
+	// rather than hardcoded, so it always matches whatever name this SP
+	// actually registered under (internal/registration), even if
+	// SP_PROVIDER_CLUSTER_NAME/SP_PROVIDER_VM_NAME override the default.
+	clusterServiceType statuspublisher.ServiceType
+	vmServiceType      statuspublisher.ServiceType
 
 	startOnce sync.Once
 	done      chan struct{}
@@ -99,22 +117,33 @@ type Poller struct {
 }
 
 // New constructs a Poller. A non-positive cfg.ResyncEvery is treated as 1
-// (every cycle resyncs) rather than panicking on a modulo-by-zero.
-func New(clusters clustersClient, computeInstances computeInstancesClient, pub publisher, cfg config.StatusConfig, logger *slog.Logger) *Poller {
+// (every cycle resyncs) rather than panicking on a modulo-by-zero. A
+// non-positive cfg.ListTimeout falls back to defaultListTimeout.
+// clusterProviderName/vmProviderName should be the exact names this SP
+// registered under (cfg.Provider.ClusterName/VMName) so published events'
+// CloudEvents source always matches the registered provider identity.
+func New(clusters clustersClient, computeInstances computeInstancesClient, pub publisher, clusterProviderName, vmProviderName string, cfg config.StatusConfig, logger *slog.Logger) *Poller {
 	resyncEvery := cfg.ResyncEvery
 	if resyncEvery <= 0 {
 		resyncEvery = 1
 	}
+	listTimeout := cfg.ListTimeout
+	if listTimeout <= 0 {
+		listTimeout = defaultListTimeout
+	}
 	return &Poller{
-		clusters:         clusters,
-		computeInstances: computeInstances,
-		publisher:        pub,
-		interval:         cfg.PollInterval,
-		resyncEvery:      resyncEvery,
-		logger:           logger,
-		done:             make(chan struct{}),
-		clusterCache:     make(map[string]cachedStatus),
-		vmCache:          make(map[string]cachedStatus),
+		clusters:           clusters,
+		computeInstances:   computeInstances,
+		publisher:          pub,
+		clusterServiceType: statuspublisher.ServiceType{Subject: clusterSubject, Type: "dcm.status.cluster", Source: "dcm/providers/" + clusterProviderName},
+		vmServiceType:      statuspublisher.ServiceType{Subject: vmSubject, Type: "dcm.status.vm", Source: "dcm/providers/" + vmProviderName},
+		interval:           cfg.PollInterval,
+		resyncEvery:        resyncEvery,
+		listTimeout:        listTimeout,
+		logger:             logger,
+		done:               make(chan struct{}),
+		clusterCache:       make(map[string]cachedStatus),
+		vmCache:            make(map[string]cachedStatus),
 	}
 }
 
@@ -180,7 +209,7 @@ func (p *Poller) pollClusters(ctx context.Context, resync bool) {
 		if _, ok := seen[id]; ok {
 			continue
 		}
-		p.publisher.Publish(clusterServiceType, id, string(v1alpha1.ClusterStatusDELETED), disappearedMessage)
+		p.publisher.Publish(p.clusterServiceType, id, string(v1alpha1.ClusterStatusDELETED), disappearedMessage)
 		delete(p.clusterCache, id)
 	}
 }
@@ -189,7 +218,7 @@ func (p *Poller) publishClusterIfNeeded(id, status, message string, resync bool)
 	cached, ok := p.clusterCache[id]
 	changed := !ok || cached.status != status || cached.message != message
 	if changed || resync {
-		p.publisher.Publish(clusterServiceType, id, status, message)
+		p.publisher.Publish(p.clusterServiceType, id, status, message)
 	}
 	p.clusterCache[id] = cachedStatus{status: status, message: message}
 }
@@ -215,7 +244,7 @@ func (p *Poller) pollVMs(ctx context.Context, resync bool) {
 		if _, ok := seen[id]; ok {
 			continue
 		}
-		p.publisher.Publish(vmServiceType, id, string(v1alpha1.VMStatusDELETED), disappearedMessage)
+		p.publisher.Publish(p.vmServiceType, id, string(v1alpha1.VMStatusDELETED), disappearedMessage)
 		delete(p.vmCache, id)
 	}
 }
@@ -224,57 +253,73 @@ func (p *Poller) publishVMIfNeeded(id, status, message string, resync bool) {
 	cached, ok := p.vmCache[id]
 	changed := !ok || cached.status != status || cached.message != message
 	if changed || resync {
-		p.publisher.Publish(vmServiceType, id, status, message)
+		p.publisher.Publish(p.vmServiceType, id, status, message)
 	}
 	p.vmCache[id] = cachedStatus{status: status, message: message}
 }
 
 // listClusters pages through every Cluster matching ownershipFilter
-// (REQ-POLL-020), mirroring internal/cluster/list.go's own offset/limit
-// pagination math exactly.
+// (REQ-POLL-020). Each page's own List call is bounded by p.listTimeout
+// (REQ-POLL-025) so a hung backend can never wedge the poll loop
+// indefinitely. Offset advances by the number of items actually received
+// (len(items)), not the server-reported resp.GetSize() — a defensive
+// choice against a Size/Total mismatch (e.g. a buggy or inconsistent
+// response reporting Size=0 while Total>0) that would otherwise stall
+// offset forever and loop indefinitely; len(items)==0 always terminates
+// the page loop outright, regardless of what Total claims.
 func (p *Poller) listClusters(ctx context.Context) ([]*publicv1.Cluster, error) {
 	var all []*publicv1.Cluster
 	var offset int32
 	for {
-		resp, err := p.clusters.List(ctx, &publicv1.ClustersListRequest{
+		listCtx, cancel := context.WithTimeout(ctx, p.listTimeout)
+		resp, err := p.clusters.List(listCtx, &publicv1.ClustersListRequest{
 			Filter: util.Ptr(ownershipFilter),
 			Limit:  util.Ptr(listPageSize),
 			Offset: util.Ptr(offset),
 		})
+		cancel()
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, resp.GetItems()...)
-		nextOffset := offset + resp.GetSize()
-		if nextOffset >= resp.GetTotal() {
+		items := resp.GetItems()
+		all = append(all, items...)
+		if len(items) == 0 {
 			break
 		}
-		offset = nextOffset
+		offset += int32(len(items))
+		if offset >= resp.GetTotal() {
+			break
+		}
 	}
 	return all, nil
 }
 
 // listComputeInstances pages through every ComputeInstance matching
-// ownershipFilter (REQ-POLL-020), mirroring internal/vm/list.go's own
-// offset/limit pagination math exactly.
+// ownershipFilter (REQ-POLL-020), mirroring listClusters's own
+// timeout/offset-advancement approach exactly (see its doc comment).
 func (p *Poller) listComputeInstances(ctx context.Context) ([]*publicv1.ComputeInstance, error) {
 	var all []*publicv1.ComputeInstance
 	var offset int32
 	for {
-		resp, err := p.computeInstances.List(ctx, &publicv1.ComputeInstancesListRequest{
+		listCtx, cancel := context.WithTimeout(ctx, p.listTimeout)
+		resp, err := p.computeInstances.List(listCtx, &publicv1.ComputeInstancesListRequest{
 			Filter: util.Ptr(ownershipFilter),
 			Limit:  util.Ptr(listPageSize),
 			Offset: util.Ptr(offset),
 		})
+		cancel()
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, resp.GetItems()...)
-		nextOffset := offset + resp.GetSize()
-		if nextOffset >= resp.GetTotal() {
+		items := resp.GetItems()
+		all = append(all, items...)
+		if len(items) == 0 {
 			break
 		}
-		offset = nextOffset
+		offset += int32(len(items))
+		if offset >= resp.GetTotal() {
+			break
+		}
 	}
 	return all, nil
 }

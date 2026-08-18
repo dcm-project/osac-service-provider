@@ -145,7 +145,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	poller := statuspoll.New(
 		publicv1.NewClustersClient(osacBootstrap.Conn()),
 		publicv1.NewComputeInstancesClient(osacBootstrap.Conn()),
-		publisher, cfg.Status, logger,
+		publisher, cfg.Provider.ClusterName, cfg.Provider.VMName, cfg.Status, logger,
 	)
 	poller.Start(ctx)
 

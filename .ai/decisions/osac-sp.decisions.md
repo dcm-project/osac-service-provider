@@ -1341,6 +1341,69 @@ on M3/M4 either way) adds review overhead without upside.
 
 ---
 
+## DD-076: Review-found fixes — coalescing worker re-reads latest value on retry, per-`List` timeout, `len(items)`-based pagination, caller-supplied `Source`
+
+**Decision:** four fixes made during review of [PR #25](https://github.com/dcm-project/osac-service-provider/pull/25), all in `internal/statuspoll`/`internal/statuspublisher`:
+
+1. `Publisher`'s delivery worker (`deliverLatest`, formerly `deliver`) now
+ re-reads the current pending value for its key from the map before
+ *every* retry attempt, instead of retrying a value captured once when
+ first popped. The entry is removed from the pending map only once
+ delivered, and only if unchanged since (`removeIfUnchanged`) — never
+ pre-emptively at pop time. This was a real correctness gap: the old
+ `deliver` already violated REQ-PUBLISH-080/DD-072's own documented
+ "worker always re-reads the current map value before each attempt"
+ guarantee for exactly the case that matters most — an update superseding
+ another one *while it is being retried* (as opposed to superseding one
+ still in its very first, not-yet-failed attempt, which the pre-existing
+ TC-U-413 did cover). TC-U-418 is the regression test; confirmed to fail
+ against the pre-fix code (3 delivery attempts, stale value resent) and
+ pass against the fix (2 attempts, latest value only).
+2. `listClusters`/`listComputeInstances` (`internal/statuspoll/poller.go`)
+ now advance pagination `offset` by `len(resp.GetItems())`, not
+ `resp.GetSize()`, and terminate the page loop outright once a page
+ returns zero items. The prior `Size`-based advancement could loop
+ forever if a response ever reported `Size=0` while `Total>0` (a
+ buggy/inconsistent server response) — trusting the peer's self-reported
+ size field for loop-termination progress is less robust than trusting
+ what was actually received.
+3. Each individual `List` call is now bounded by a new
+ `StatusConfig.ListTimeout` (`SP_STATUS_LIST_TIMEOUT`, default `10s`,
+ REQ-POLL-025), applied per-page (not once for the whole paginated
+ sequence, since a large listing needs one fresh deadline per page, not
+ one shared budget). A timeout is treated identically to any other
+ `List` error (REQ-POLL-090's existing "log and skip this service type"
+ path) — no new error-handling branch needed. Without this, a hung OSAC
+ backend could wedge the poll loop indefinitely, the same failure class
+ DD-091 already fixed for the registration self-probe elsewhere in this
+ codebase.
+4. `statuspoll.New` now takes `clusterProviderName`/`vmProviderName`
+ parameters (wired from `cfg.Provider.ClusterName`/`VMName` in
+ `cmd/osac-service-provider/main.go`) and builds each `ServiceType.Source`
+ from them, rather than two package-level `var`s hardcoding
+ `"osac-sp-cluster"`/`"osac-sp-vm"` regardless of config. Those literals
+ happened to match `ProviderConfig`'s own defaults, masking the gap until
+ someone actually overrides `SP_PROVIDER_CLUSTER_NAME`/`SP_PROVIDER_VM_NAME`
+ (already a supported, real config knob used by `internal/registration`) —
+ at which point the registered provider identity and the reported
+ CloudEvents `source` would silently diverge. REQ-PUBLISH-030 already
+ specified `source` as "caller-supplied per service type"; this package is
+ that caller, and REQ-POLL-015 makes the obligation explicit on this side
+ too.
+
+**Rationale:** none of these are new features — all four are the
+implementation catching up to guarantees already promised either by this
+milestone's own spec (REQ-PUBLISH-080, REQ-PUBLISH-030) or by an established
+codebase-wide resilience convention (DD-091's "no unbounded wait on a
+dependency"). Filed as one DD since all four were found in the same review
+pass and share the same theme: a documented guarantee that the first
+implementation didn't fully satisfy.
+
+**Related requirements:** REQ-POLL-015, REQ-POLL-020, REQ-POLL-025,
+REQ-PUBLISH-030, REQ-PUBLISH-080
+
+---
+
 ## Validation evidence: M3+M4+M5 merged worktree (DD-075)
 
 Per DD-075, the full stack was validated on a throwaway worktree merging all

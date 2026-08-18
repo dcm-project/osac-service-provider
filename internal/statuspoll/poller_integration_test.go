@@ -142,7 +142,7 @@ var _ = Describe("End-to-end poll wiring over real gRPC", func() {
 		publisher := &itFakePublisher{}
 
 		poller := statuspoll.New(clustersClient, computeInstancesClient, publisher,
-			config.StatusConfig{PollInterval: time.Hour, ResyncEvery: 100}, slog.New(slog.DiscardHandler))
+			"osac-sp-cluster", "osac-sp-vm", config.StatusConfig{PollInterval: time.Hour, ResyncEvery: 100}, slog.New(slog.DiscardHandler))
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

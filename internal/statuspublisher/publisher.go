@@ -197,9 +197,9 @@ func (p *Publisher) Close() error {
 func (p *Publisher) run(ctx context.Context) {
 	defer close(p.done)
 	for {
-		key, val, ok := p.nextPending()
+		key, ok := p.peekPendingKey()
 		if ok {
-			p.deliver(ctx, key, val)
+			p.deliverLatest(ctx, key)
 			select {
 			case <-ctx.Done():
 				return
@@ -216,25 +216,66 @@ func (p *Publisher) run(ctx context.Context) {
 	}
 }
 
-// nextPending pops (removes) an arbitrary pending entry. Only one entry per
-// key ever exists at a time, so pop order across distinct keys does not
-// affect the per-key delivery guarantees in REQ-PUBLISH-080.
-func (p *Publisher) nextPending() (pendingKey, pendingValue, bool) {
+// peekPendingKey returns an arbitrary pending key without removing it.
+// Unlike a pop, this lets deliverLatest keep re-reading the map for the
+// current value of this key across retries (see deliverLatest) instead of
+// working from a value fixed at the moment the key was selected. Only one
+// entry per key ever exists at a time, so selection order across distinct
+// keys does not affect the per-key delivery guarantees in REQ-PUBLISH-080.
+func (p *Publisher) peekPendingKey() (pendingKey, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for k, v := range p.pending {
-		delete(p.pending, k)
-		return k, v, true
+	for k := range p.pending {
+		return k, true
 	}
-	return pendingKey{}, pendingValue{}, false
+	return pendingKey{}, false
 }
 
-// deliver publishes val, retrying with exponential backoff until it
-// succeeds or ctx is cancelled. No enqueued update is ever silently dropped
+// currentValue returns key's current value in the pending map, if any.
+func (p *Publisher) currentValue(key pendingKey) (pendingValue, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	v, ok := p.pending[key]
+	return v, ok
+}
+
+// removeIfUnchanged deletes key from the pending map only if it still maps
+// to delivered — i.e. no newer Publish call raced in between this value
+// being read for delivery and its send completing. If a newer value has
+// since been recorded, it is left in place for the next deliverLatest call
+// to pick up, rather than being incorrectly discarded as "already sent".
+func (p *Publisher) removeIfUnchanged(key pendingKey, delivered pendingValue) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if current, ok := p.pending[key]; ok && current == delivered {
+		delete(p.pending, key)
+	}
+}
+
+// deliverLatest retries key's delivery with exponential backoff until it
+// succeeds or ctx is cancelled, re-reading the *current* pending value for
+// key before every single attempt (DD-072) — never a value captured once
+// at the start. This guarantees a status update that arrives while an
+// earlier delivery for the same resource is still retrying is what
+// actually gets sent on the next attempt, instead of the worker blindly
+// resending an already-superseded value until it happens to succeed
+// (REQ-PUBLISH-080). No enqueued update is ever silently dropped
 // (REQ-PUBLISH-070).
-func (p *Publisher) deliver(ctx context.Context, key pendingKey, val pendingValue) {
+func (p *Publisher) deliverLatest(ctx context.Context, key pendingKey) {
 	backoff := p.initialBackoff
 	for {
+		// Coverage exception (documented, not tested): key can only be
+		// removed from p.pending by removeIfUnchanged, which this same
+		// call's own loop only reaches on its return path — run's single
+		// background worker is the only writer, so no other goroutine can
+		// race a removal in between. Kept as a defensive guard against a
+		// future second worker or removal path rather than fabricated to
+		// hit it.
+		val, ok := p.currentValue(key)
+		if !ok {
+			return
+		}
+
 		// Coverage exception (documented, not tested): buildEnvelope cannot
 		// fail for any input reachable from this codebase today (see its
 		// own coverage-exception comments); this branch guards against a
@@ -243,10 +284,12 @@ func (p *Publisher) deliver(ctx context.Context, key pendingKey, val pendingValu
 		if err != nil {
 			p.logger.Error("failed to build status envelope; dropping malformed update",
 				"error", err, "resource_id", key.resourceID, "subject", key.subject)
+			p.removeIfUnchanged(key, val)
 			return
 		}
 
 		if _, err := p.js.Publish(ctx, val.serviceType.Subject, raw); err == nil {
+			p.removeIfUnchanged(key, val)
 			return
 		} else {
 			p.logger.Warn("status publish failed, retrying",

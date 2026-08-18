@@ -239,6 +239,47 @@ var _ = Describe("Publish lifecycle", func() {
 		Expect(payload).To(Equal(StatusPayload{ID: "vm-1", Status: "RUNNING", Message: "instance is running"}))
 	})
 
+	// TC-U-418: regression test for a real bug found in review — a retry
+	// must re-read the *current* pending value before each attempt
+	// (DD-072), not keep resending whatever value it first captured. Forces
+	// the first delivery attempt to fail (entering backoff), publishes a
+	// newer update for the same resource while the worker is waiting to
+	// retry, and asserts the retry sends that newer value directly — never
+	// resending the now-stale one it originally captured.
+	It("retries with the latest value, never resending one superseded during backoff (TC-U-418)", func() {
+		fake := &fakeJS{
+			publishFunc: func(idx int, _ string, _ []byte) error {
+				if idx == 0 {
+					return context.DeadlineExceeded
+				}
+				return nil
+			},
+		}
+		initialBackoff := 300 * time.Millisecond
+		p := newPublisher(fake, func() {}, discardLogger, WithInitialBackoff(initialBackoff), WithMaxBackoff(time.Second))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		p.Publish(vmType, "vm-1", "DELETED", "resource no longer found")
+		p.Start(ctx)
+
+		Eventually(fake.Attempts, time.Second).Should(HaveLen(1), "the first attempt must fail and enter backoff")
+		p.Publish(vmType, "vm-1", "RUNNING", "instance is running")
+
+		Eventually(fake.Attempts, 2*time.Second).Should(HaveLen(2), "the retry must occur after backoff")
+
+		statusOf := func(a recordedCall) string {
+			var payload StatusPayload
+			Expect(json.Unmarshal(decodeEnvelope(a.payload).Data, &payload)).To(Succeed())
+			return payload.Status
+		}
+		attempts := fake.Attempts()
+		Expect(statusOf(attempts[0])).To(Equal("DELETED"), "the first attempt legitimately carried the value known at that time")
+		Expect(statusOf(attempts[1])).To(Equal("RUNNING"), "the retry must send the latest known value, not resend the stale DELETED")
+
+		Consistently(fake.Attempts, 200*time.Millisecond).Should(HaveLen(2), "no further redelivery once the latest value has been sent")
+	})
+
 	// TC-U-413: a newer update supersedes a stale one still pending delivery.
 	// The stale first attempt may still reach the fake (its bytes were
 	// already handed to Publish() before it blocked — REQ-PUBLISH-080 only

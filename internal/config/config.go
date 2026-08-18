@@ -60,8 +60,9 @@ type ProviderConfig struct {
 //
 // Implements REQ-POLL-010.
 type StatusConfig struct {
-	PollInterval time.Duration `env:"POLL_INTERVAL" envDefault:"30s"`
-	ResyncEvery  int           `env:"RESYNC_EVERY"  envDefault:"10"`
+	PollInterval time.Duration `env:"POLL_INTERVAL"  envDefault:"30s"`
+	ResyncEvery  int           `env:"RESYNC_EVERY"   envDefault:"10"`
+	ListTimeout  time.Duration `env:"LIST_TIMEOUT"   envDefault:"10s"`
 }
 
 // Config is the root configuration for the service provider.

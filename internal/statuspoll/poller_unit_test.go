@@ -23,16 +23,22 @@ import (
 // runCycle calls so a test can drive multi-cycle scenarios by mutating
 // fake state directly, without any internal cycle-tracking of its own.
 type fakeClustersClient struct {
-	mu        sync.Mutex
-	calls     []*publicv1.ClustersListRequest
-	responder func(offset int32) (*publicv1.ClustersListResponse, error)
+	mu                  sync.Mutex
+	calls               []*publicv1.ClustersListRequest
+	responder           func(offset int32) (*publicv1.ClustersListResponse, error)
+	blockUntilCancelled bool
 }
 
-func (f *fakeClustersClient) List(_ context.Context, req *publicv1.ClustersListRequest, _ ...grpc.CallOption) (*publicv1.ClustersListResponse, error) {
+func (f *fakeClustersClient) List(ctx context.Context, req *publicv1.ClustersListRequest, _ ...grpc.CallOption) (*publicv1.ClustersListResponse, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, req)
 	responder := f.responder
+	blockUntilCancelled := f.blockUntilCancelled
 	f.mu.Unlock()
+	if blockUntilCancelled {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if responder == nil {
 		return &publicv1.ClustersListResponse{}, nil
 	}
@@ -81,6 +87,27 @@ func (f *fakeClustersClient) SetError(err error) {
 	f.responder = func(int32) (*publicv1.ClustersListResponse, error) {
 		return nil, err
 	}
+}
+
+// SetInconsistentEmptyPage serves a single page reporting Size=0 while
+// Total remains positive — a buggy/inconsistent server response, used to
+// regression-test that pagination terminates rather than looping forever
+// trusting the Size field for offset advancement (TC-U-466).
+func (f *fakeClustersClient) SetInconsistentEmptyPage(total int32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.responder = func(int32) (*publicv1.ClustersListResponse, error) {
+		return &publicv1.ClustersListResponse{Items: nil, Size: 0, Total: total}, nil
+	}
+}
+
+// SetBlockingUntilCancelled makes List block until its context is
+// cancelled/expires, then return ctx.Err() — simulating a hung backend
+// bounded only by the caller's own per-call timeout (TC-U-465).
+func (f *fakeClustersClient) SetBlockingUntilCancelled() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blockUntilCancelled = true
 }
 
 // fakeComputeInstancesClient mirrors fakeClustersClient for ComputeInstances.
@@ -223,7 +250,7 @@ var _ = Describe("Poll cycle: listing, diffing, resync", func() {
 	})
 
 	newPoller := func(resyncEvery int) *Poller {
-		return New(clusters, computeInstances, publisher, config.StatusConfig{PollInterval: time.Hour, ResyncEvery: resyncEvery}, discardLogger)
+		return New(clusters, computeInstances, publisher, "osac-sp-cluster", "osac-sp-vm", config.StatusConfig{PollInterval: time.Hour, ResyncEvery: resyncEvery}, discardLogger)
 	}
 
 	// TC-U-450 (REQ-POLL-020, AC-POLL-010): pages through all results
@@ -253,14 +280,48 @@ var _ = Describe("Poll cycle: listing, diffing, resync", func() {
 		var clusterIDs, vmIDs []string
 		for _, call := range publisher.Calls() {
 			switch call.st.Subject {
-			case clusterServiceType.Subject:
+			case clusterSubject:
 				clusterIDs = append(clusterIDs, call.resourceID)
-			case vmServiceType.Subject:
+			case vmSubject:
 				vmIDs = append(vmIDs, call.resourceID)
 			}
 		}
 		Expect(clusterIDs).To(ConsistOf("c-0", "c-1", "c-2", "c-3", "c-4"))
 		Expect(vmIDs).To(ConsistOf("vm-0", "vm-1", "vm-2", "vm-3", "vm-4"))
+	})
+
+	// TC-U-466 (REQ-POLL-020, AC-POLL-010, regression): pagination
+	// terminates outright once a page returns zero items, even if Total
+	// claims more remain — guards against a Size=0/Total>0 response
+	// stalling offset (previously advanced by the server-reported Size
+	// field, not len(items)) and looping forever.
+	It("terminates pagination when a page reports Size=0 while Total>0 (TC-U-466)", func() {
+		clusters.SetInconsistentEmptyPage(5)
+
+		p := newPoller(100)
+		p.runCycle(ctx)
+
+		Expect(clusters.Calls()).To(HaveLen(1), "the page loop must terminate on the first empty page rather than looping forever trusting Size")
+	})
+
+	// TC-U-464 (REQ-POLL-015, AC-POLL-015, regression): Source is built
+	// from the caller-supplied provider names, not a hardcoded literal
+	// independent of config.
+	It("builds Source from the caller-supplied provider names (TC-U-464)", func() {
+		p := New(clusters, computeInstances, publisher, "custom-cluster", "custom-vm",
+			config.StatusConfig{PollInterval: time.Hour, ResyncEvery: 100}, discardLogger)
+		clusters.SetItems([]*publicv1.Cluster{readyCluster("c-1")})
+		computeInstances.SetItems([]*publicv1.ComputeInstance{runningVM("vm-1")})
+
+		p.runCycle(ctx)
+
+		clusterCalls := publisher.CallsFor("c-1")
+		Expect(clusterCalls).To(HaveLen(1))
+		Expect(clusterCalls[0].st.Source).To(Equal("dcm/providers/custom-cluster"))
+
+		vmCalls := publisher.CallsFor("vm-1")
+		Expect(vmCalls).To(HaveLen(1))
+		Expect(vmCalls[0].st.Source).To(Equal("dcm/providers/custom-vm"))
 	})
 
 	// TC-U-451 (REQ-POLL-040, AC-POLL-020): a changed status is published
@@ -356,6 +417,25 @@ var _ = Describe("Poll cycle: listing, diffing, resync", func() {
 		Expect(ids).To(ContainElement("c-1"))
 	})
 
+	// TC-U-465 (REQ-POLL-025, AC-POLL-080, regression): a hung List call
+	// is bounded by ListTimeout and treated as a failure — cluster
+	// processing is skipped for that cycle while VM processing still
+	// completes normally.
+	It("bounds a hung List call by ListTimeout and skips that service type (TC-U-465)", func() {
+		clusters.SetBlockingUntilCancelled()
+		computeInstances.SetItems([]*publicv1.ComputeInstance{runningVM("vm-1")})
+
+		p := New(clusters, computeInstances, publisher, "osac-sp-cluster", "osac-sp-vm",
+			config.StatusConfig{PollInterval: time.Hour, ResyncEvery: 100, ListTimeout: 50 * time.Millisecond}, discardLogger)
+
+		start := time.Now()
+		p.runCycle(ctx)
+		Expect(time.Since(start)).To(BeNumerically("<", time.Second), "the cycle must not block on the hung List call past its own ListTimeout")
+
+		Expect(publisher.CallsFor("c-1")).To(BeEmpty(), "cluster processing must be skipped for this cycle")
+		Expect(publisher.CallsFor("vm-1")).To(HaveLen(1), "VM processing must still complete normally")
+	})
+
 	// Symmetric case for TC-U-455/REQ-POLL-090: a ComputeInstances.List
 	// failure skips only VM processing for that cycle; Cluster processing
 	// (and the loop) still proceeds.
@@ -397,7 +477,7 @@ var _ = Describe("Poll cycle: listing, diffing, resync", func() {
 	// New treats a non-positive ResyncEvery as 1 (every cycle resyncs)
 	// instead of panicking on a modulo-by-zero.
 	It("treats a non-positive ResyncEvery as 1, resyncing every cycle", func() {
-		p := New(clusters, computeInstances, publisher, config.StatusConfig{PollInterval: time.Hour, ResyncEvery: 0}, discardLogger)
+		p := New(clusters, computeInstances, publisher, "osac-sp-cluster", "osac-sp-vm", config.StatusConfig{PollInterval: time.Hour, ResyncEvery: 0}, discardLogger)
 		clusters.SetItems([]*publicv1.Cluster{readyCluster("c-1")})
 
 		p.runCycle(ctx)

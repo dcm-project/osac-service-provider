@@ -210,8 +210,10 @@ two milestones land on `main` — see DD-075.
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-POLL-010 | A new `StatusConfig` (`envPrefix:"SP_STATUS_"`) MUST provide `PollInterval time.Duration` (`env:"POLL_INTERVAL"`, default `30s`) and `ResyncEvery int` (`env:"RESYNC_EVERY"`, default `10`) | MUST | |
-| REQ-POLL-020 | Each tick MUST list all Clusters (`publicv1.ClustersClient.List`) and all ComputeInstances (`publicv1.ComputeInstancesClient.List`) using the ownership CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm"` (identical string to `internal/cluster/list.go`'s/`internal/vm/list.go`'s `ownershipFilter`), paging via `offset`/`limit` until every page (`total`) has been retrieved — not just the first page | MUST | |
+| REQ-POLL-010 | A new `StatusConfig` (`envPrefix:"SP_STATUS_"`) MUST provide `PollInterval time.Duration` (`env:"POLL_INTERVAL"`, default `30s`), `ResyncEvery int` (`env:"RESYNC_EVERY"`, default `10`), and `ListTimeout time.Duration` (`env:"LIST_TIMEOUT"`, default `10s`) | MUST | |
+| REQ-POLL-015 | `New` MUST accept the cluster/VM provider names this SP actually registered under (`ProviderConfig.ClusterName`/`VMName`) and use them to build each `ServiceType.Source` as `dcm/providers/{name}` (REQ-PUBLISH-030) — never a hardcoded literal independent of that config, so a renamed provider's reported status source always matches its registered identity | MUST | this package is the "caller" REQ-PUBLISH-030 defers the `source` value to |
+| REQ-POLL-020 | Each tick MUST list all Clusters (`publicv1.ClustersClient.List`) and all ComputeInstances (`publicv1.ComputeInstancesClient.List`) using the ownership CEL filter `this.metadata.labels["dcm.io/managed-by"] == "dcm"` (identical string to `internal/cluster/list.go`'s/`internal/vm/list.go`'s `ownershipFilter`), paging via `offset`/`limit` until every page (`total`) has been retrieved — not just the first page. `offset` MUST advance by the number of items actually received (`len(items)`), not by the server-reported page-size field, and the page loop MUST terminate outright once a page returns zero items, regardless of what `total` claims | MUST | DD-076; a page-size/total mismatch must never be able to stall offset and loop forever |
+| REQ-POLL-025 | Each individual `List` call MUST be bounded by `StatusConfig.ListTimeout`; a call that exceeds it MUST be treated identically to any other `List` failure (REQ-POLL-090: log and skip only that service type for the current cycle) | MUST | DD-076; a hung backend must never wedge the poll loop indefinitely — same principle as DD-091's readiness self-probe fix |
 | REQ-POLL-030 | For each listed Cluster/ComputeInstance, the Poller MUST compute its status via `cluster.MapStatus(nil, item.GetStatus())` / `vm.MapStatus(nil, item.GetStatus())` and a message via REQ-POLL-060/REQ-POLL-070 | MUST | |
 | REQ-POLL-040 | The Poller MUST maintain an in-memory cache of the last-known `(status, message)` per resource id, scoped independently per service type; for any listed item whose current `(status, message)` differs from the cache (or that is absent from the cache), it MUST call `Publisher.Publish(...)` immediately and then update the cache to the new value | MUST | |
 | REQ-POLL-050 | For any resource id present in the cache but absent from the current cycle's listing, the Poller MUST call `Publisher.Publish(...)` exactly once with status `DELETED` and a synthesized "resource no longer found" message, then remove that id from the cache | MUST | no live gRPC error exists for this case — DELETED is constructed directly, not derived via `MapStatus` |
@@ -227,6 +229,7 @@ two milestones land on `main` — see DD-075.
 |---------|-------|---------|-------|
 | `SP_STATUS_POLL_INTERVAL` | `StatusConfig.PollInterval` | `30s` | |
 | `SP_STATUS_RESYNC_EVERY` | `StatusConfig.ResyncEvery` | `10` | ~5 min at the default interval |
+| `SP_STATUS_LIST_TIMEOUT` | `StatusConfig.ListTimeout` | `10s` | per-call deadline (REQ-POLL-025), not a whole-cycle budget |
 
 #### Acceptance Criteria
 
@@ -236,6 +239,14 @@ two milestones land on `main` — see DD-075.
 - **Given** a fake `ClustersClient`/`ComputeInstancesClient` (hand-written, bufconn-free per this repo's unit-tier convention) serving 3 pages of results (`limit=2`, `total=5`)
 - **When** one poll cycle runs
 - **Then** the fake MUST have received exactly 3 `List` calls, each with `Filter == "this.metadata.labels[\"dcm.io/managed-by\"] == \"dcm\""`, and the Poller MUST have observed all 5 items
+- **And given** a page response reporting `Size=0` while `Total>0` (a buggy/inconsistent server response), the page loop MUST terminate after that page rather than looping indefinitely
+
+##### AC-POLL-015: `Source` matches the caller-supplied provider names, not a hardcoded default
+
+- **Validates:** REQ-POLL-015
+- **Given** a Poller constructed with non-default provider names (e.g. `"custom-cluster"`, `"custom-vm"`)
+- **When** a poll cycle publishes a Cluster and a VM update
+- **Then** the fake `Publisher` MUST observe `ServiceType.Source == "dcm/providers/custom-cluster"` for the Cluster update and `"dcm/providers/custom-vm"` for the VM update
 
 ##### AC-POLL-020: A changed status is published immediately; an unchanged one is not
 
@@ -285,6 +296,13 @@ two milestones land on `main` — see DD-075.
 - **When** cycles 1 and 2 run
 - **Then** VM processing MUST still occur (and publish as appropriate) on cycle 1
 - **And** cycle 2 MUST run normally for both service types (the loop was not stopped)
+
+##### AC-POLL-080: A hung `List` call is bounded by `ListTimeout` and treated as a failure
+
+- **Validates:** REQ-POLL-025
+- **Given** a fake `ClustersClient.List` that never returns (blocks past `StatusConfig.ListTimeout`), while `ComputeInstancesClient.List` succeeds
+- **When** a poll cycle runs
+- **Then** the cluster `List` call MUST be cancelled once `ListTimeout` elapses, cluster processing MUST be skipped for that cycle (REQ-POLL-090), and VM processing MUST still complete normally
 
 #### Dependencies
 
