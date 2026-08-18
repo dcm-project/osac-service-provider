@@ -56,10 +56,8 @@ func clusterMessage(status v1alpha1.ClusterStatus, conditions []*publicv1.Cluste
 // conditions (asymmetric with Cluster by design, not a gap).
 func vmMessage(status v1alpha1.VMStatus, conditions []*publicv1.ComputeInstanceCondition) string {
 	for _, c := range conditions {
-		if c.GetType() != publicv1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_FAILED {
-			continue
-		}
-		if c.GetStatus() != publicv1.ConditionStatus_CONDITION_STATUS_TRUE {
+		if c.GetType() != publicv1.ComputeInstanceConditionType_COMPUTE_INSTANCE_CONDITION_TYPE_RESTART_FAILED ||
+			c.GetStatus() != publicv1.ConditionStatus_CONDITION_STATUS_TRUE {
 			continue
 		}
 		if msg := c.GetMessage(); msg != "" {

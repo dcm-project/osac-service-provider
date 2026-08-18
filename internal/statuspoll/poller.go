@@ -56,6 +56,10 @@ const (
 	vmSubject      = "dcm.vm"
 )
 
+// providerSourcePrefix namespaces each ServiceType's Source under the
+// registered provider name (REQ-PUBLISH-030) — see New.
+const providerSourcePrefix = "dcm/providers/"
+
 // clustersClient is the subset of publicv1.ClustersClient this package
 // depends on, narrowed for testability with a hand-written fake (CLAUDE.md:
 // no mocking framework).
@@ -135,8 +139,8 @@ func New(clusters clustersClient, computeInstances computeInstancesClient, pub p
 		clusters:           clusters,
 		computeInstances:   computeInstances,
 		publisher:          pub,
-		clusterServiceType: statuspublisher.ServiceType{Subject: clusterSubject, Type: "dcm.status.cluster", Source: "dcm/providers/" + clusterProviderName},
-		vmServiceType:      statuspublisher.ServiceType{Subject: vmSubject, Type: "dcm.status.vm", Source: "dcm/providers/" + vmProviderName},
+		clusterServiceType: statuspublisher.ServiceType{Subject: clusterSubject, Type: "dcm.status.cluster", Source: providerSourcePrefix + clusterProviderName},
+		vmServiceType:      statuspublisher.ServiceType{Subject: vmSubject, Type: "dcm.status.vm", Source: providerSourcePrefix + vmProviderName},
 		interval:           cfg.PollInterval,
 		resyncEvery:        resyncEvery,
 		listTimeout:        listTimeout,
