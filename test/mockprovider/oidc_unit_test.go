@@ -13,7 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/dcm-project/osac-service-provider/internal/mockprovider"
+	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
 
 // failingResponseWriter wraps an httptest.ResponseRecorder but fails every

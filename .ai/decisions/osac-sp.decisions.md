@@ -1060,16 +1060,16 @@ repo's own convention, not that sibling's.
 
 ---
 
-## DD-130: Single `internal/mockprovider` package, not one sub-package per service
+## DD-130: Single `test/mockprovider` package, not one sub-package per service
 
 **Decision:** `cmd/osac-mock-provider`'s five fake gRPC services
 (`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`,
 `VirtualNetworks`) and its OIDC discovery+token stub all live directly in
-one flat package, `internal/mockprovider` — one Go file per
+one flat package, `test/mockprovider` — one Go file per
 service/concern (`clusters.go`, `computeinstances.go`, `subnets.go`,
 `virtualnetworks.go`, `capabilities.go`, `oidc.go`, `store.go`,
-`config.go`), not `internal/mockprovider/clusters/`,
-`internal/mockprovider/oidc/`, etc.
+`config.go`), not `test/mockprovider/clusters/`,
+`test/mockprovider/oidc/`, etc.
 
 **Rationale:** every file in this package shares one concern — faking
 OSAC's backend surface for `osac-sp`'s own client code to dial — and all
@@ -1098,7 +1098,7 @@ DD-080..129 — clear of this range, so no renumbering was needed.
 
 **Decision:** All four CRUD-capable fake services (`Clusters`,
 `ComputeInstances`, `Subnets`, `VirtualNetworks`) share one generic
-`resourceStore[T]` type (`internal/mockprovider/store.go`) — a
+`resourceStore[T]` type (`test/mockprovider/store.go`) — a
 `sync.Mutex`-protected, `map[string]T`-backed, insertion-ordered store with
 `create`/`insert`/`get`/`list`/`delete` methods — rather than each service
 hand-rolling its own map/mutex pair. `create` performs the duplicate-`id`
@@ -1132,13 +1132,13 @@ REQ-MOCK-040, REQ-MOCK-050, REQ-MOCK-060
 
 ## DD-132: No real JWT signing for the OIDC token stub
 
-**Decision:** `internal/mockprovider.OIDCHandler`'s `/token` endpoint issues
+**Decision:** `test/mockprovider.OIDCHandler`'s `/token` endpoint issues
 a static, opaque bearer token string (not a real, cryptographically signed
 JWT) for a valid `client_credentials` grant, and never validates the
 `client_id`/`client_secret` credentials presented against anything.
 
 **Rationale:** the mock's own gRPC server (the thing that token is actually
-*for*) doesn't enforce auth either — `internal/mockprovider`'s five gRPC
+*for*) doesn't enforce auth either — `test/mockprovider`'s five gRPC
 services accept every request unconditionally, regardless of what (if any)
 bearer metadata is attached — so a real, verifiable JWT would be signing a
 promise nothing on either side of this mock ever checks. The only real
@@ -1156,7 +1156,7 @@ which takes the identical shortcut for the same reason.
 
 ## DD-133: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
 
-**Decision:** `internal/mockprovider.Config` is a flat, two-field struct
+**Decision:** `test/mockprovider.Config` is a flat, two-field struct
 (`GRPCAddress`, `OIDCAddress`, both required/fail-fast) read via
 `MOCK_GRPC_ADDRESS`/`MOCK_OIDC_ADDRESS` — a new, independent env-var
 namespace, not a reuse of `internal/config.Config`'s shape or any of its
