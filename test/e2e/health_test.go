@@ -119,6 +119,12 @@ func getHealth(path string) health {
 	body, err := io.ReadAll(resp.Body)
 	Expect(err).NotTo(HaveOccurred())
 
+	// osac-sp always returns 200 here regardless of health status (DD-010:
+	// status lives in the body, not the HTTP code) — assert that explicitly
+	// so a future change to that contract fails here with a clear message,
+	// not as a confusing json.Unmarshal error on an unexpected body shape.
+	Expect(resp.StatusCode).To(Equal(http.StatusOK), "response body: %s", string(body))
+
 	var h health
 	Expect(json.Unmarshal(body, &h)).To(Succeed(), "response body: %s", string(body))
 	return h
