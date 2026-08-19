@@ -91,12 +91,12 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
         +--------------------------------------------------------+
         |                 cmd/osac-mock-provider                  |
         |                                                          |
-        |  internal/mockprovider/oidc.go (HTTP)                    |
+        |  test/mockprovider/oidc.go (HTTP)                    |
         |    GET  /.well-known/oauth-authorization-server          |
         |    GET  /.well-known/openid-configuration                |
         |    POST /token                                           |
         |                                                          |
-        |  internal/mockprovider/{clusters,computeinstances,       |
+        |  test/mockprovider/{clusters,computeinstances,       |
         |    subnets,virtualnetworks,capabilities}.go (gRPC)       |
         |    each backed by a resourceStore[T] (store.go) —        |
         |    thread-safe, insertion-ordered, ID-keyed map          |
@@ -110,7 +110,7 @@ OIDC `http.Server`. Both addresses are configured independently
 requires `SP_OSAC_OIDC_ISSUER_URL` and `SP_OSAC_FULFILLMENT_ADDRESS` to be
 distinct URLs/addresses.
 
-### New package: `internal/mockprovider`
+### New package: `test/mockprovider`
 
 - `store.go` — `resourceStore[T]`, a generic, mutex-protected, ID-keyed,
   insertion-ordered map. Shared by all four CRUD-shaped services so the
@@ -129,7 +129,7 @@ distinct URLs/addresses.
 
 ### New binary: `cmd/osac-mock-provider`
 
-Config (`internal/mockprovider/config.go` or inlined in `main.go` — decided
+Config (`test/mockprovider/config.go` or inlined in `main.go` — decided
 at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 -driven graceful shutdown — same shape as
 [`cmd/osac-service-provider/main.go`](../../cmd/osac-service-provider/main.go).
@@ -250,7 +250,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 ##### AC-MOCK-120: A real `osac.Bootstrap` fetches a token and probes successfully against the real mock binary
 
 - **Validates:** REQ-MOCK-010, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-070, REQ-MOCK-110
-- **Given** the real `cmd/osac-mock-provider` binary's `internal/mockprovider`
+- **Given** the real `cmd/osac-mock-provider` binary's `test/mockprovider`
   gRPC server and OIDC HTTP server both running on real, ephemeral
   `net.Listen` ports (in-process, not `bufconn`)
 - **When** a real `osac.Bootstrap`, constructed via the production `osac.New()`

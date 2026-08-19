@@ -24,6 +24,7 @@ import (
 	vmhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/vm"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/util"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 	"github.com/dcm-project/osac-service-provider/internal/vm"
 )
 
@@ -42,6 +43,7 @@ func setValidEnv(serverAddr string) {
 	t.Setenv("SP_OSAC_TLS_ENABLED", "false")
 	t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
 	t.Setenv("DCM_REGISTRATION_URL", "https://control-plane.example.com/api/v1alpha1")
+	t.Setenv("DCM_NATS_URL", "nats://127.0.0.1:4222")
 	t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 	t.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster")
 	t.Setenv("SP_PROVIDER_VM_NAME", "osac-sp-vm")
@@ -63,6 +65,26 @@ var _ = Describe("run's top-level error wrapping (unit)", func() {
 		err := run(context.Background(), slog.New(slog.DiscardHandler))
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("initializing"))
+	})
+
+	// TC-U-550 (REQ-VERSION-090, AC-VERSION-090): a version-matrix load
+	// failure is wrapped and returned, before any listener is bound —
+	// same in-process technique and assertion style as TC-U-094's
+	// config-load failure.
+	It("wraps and returns a version-matrix load failure, before binding a listener (TC-U-550)", func() {
+		addr := reserveLoopbackAddr()
+		setValidEnv(addr)
+		t := GinkgoT()
+		t.Setenv("SP_VERSION_MATRIX_PATH", "/nonexistent/path/version-matrix.json")
+
+		runErr := run(context.Background(), slog.New(slog.DiscardHandler))
+		Expect(runErr).To(HaveOccurred())
+		Expect(runErr.Error()).To(ContainSubstring("version matrix"))
+
+		// No listener was bound: addr is still free to claim.
+		ln, err := net.Listen("tcp", addr)
+		Expect(err).NotTo(HaveOccurred())
+		_ = ln.Close()
 	})
 
 	// TC-U-095: a listener-bind failure (address already in use) is
@@ -91,6 +113,22 @@ var _ = Describe("run's top-level error wrapping (unit)", func() {
 		runErr := run(context.Background(), slog.New(slog.DiscardHandler))
 		Expect(runErr).To(HaveOccurred())
 		Expect(runErr.Error()).To(ContainSubstring("creating OSAC client bootstrap"))
+	})
+
+	// TC-U-114 (Milestone 5): a status-publisher construction failure
+	// (malformed NATS URL, same value as internal/statuspublisher's own
+	// TC-U-417) is wrapped and returned, before the poll loop or HTTP
+	// handlers are wired. Numbered TC-U-114 (not 098/099) to avoid
+	// colliding with Milestone 3/4's own apiHandler CRUD-forwarding
+	// wiring tests in this same file — see the test plan's note.
+	It("wraps and returns a status-publisher construction failure (TC-U-114)", func() {
+		setValidEnv(reserveLoopbackAddr())
+		t := GinkgoT()
+		t.Setenv("DCM_NATS_URL", "://not-a-valid-url")
+
+		runErr := run(context.Background(), slog.New(slog.DiscardHandler))
+		Expect(runErr).To(HaveOccurred())
+		Expect(runErr.Error()).To(ContainSubstring("creating status publisher"))
 	})
 })
 
@@ -162,7 +200,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = conn.Close() }()
 
-		svc := cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn))
+		svc := cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), versionmatrix.DefaultMatrix)
 		h := &apiHandler{cluster: clusterhandlers.NewHandler(svc, slog.New(slog.DiscardHandler))}
 		ctx := context.Background()
 

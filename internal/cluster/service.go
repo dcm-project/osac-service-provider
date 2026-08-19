@@ -13,6 +13,7 @@ import (
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // Service implements Cluster Create/Get/List/Delete against OSAC's
@@ -22,12 +23,25 @@ import (
 type Service struct {
 	client    publicv1.ClustersClient
 	templates publicv1.ClusterTemplatesClient
+	matrix    versionmatrix.Matrix
 }
 
 // New constructs a Service wrapping the given Clusters/ClusterTemplates
-// clients.
-func New(client publicv1.ClustersClient, templates publicv1.ClusterTemplatesClient) *Service {
-	return &Service{client: client, templates: templates}
+// clients. matrix is consulted by Create's release_image translation
+// (REQ-VERSION-060) and by SupportsVersion (REQ-VERSION-070) — the same
+// instance main.go loads once at startup and also injects into
+// internal/registration, so the two can never drift apart.
+func New(client publicv1.ClustersClient, templates publicv1.ClusterTemplatesClient, matrix versionmatrix.Matrix) *Service {
+	return &Service{client: client, templates: templates, matrix: matrix}
+}
+
+// SupportsVersion reports whether version has an entry in s's injected
+// matrix, for internal/handlers/cluster's pre-flight validation
+// (REQ-VERSION-070/080) to query without duplicating or directly importing
+// the matrix.
+func (s *Service) SupportsVersion(version string) bool {
+	_, ok := s.matrix.Lookup(version)
+	return ok
 }
 
 // Create translates spec into OSAC's ClusterSpec and calls Clusters/Create
@@ -41,7 +55,7 @@ func (s *Service) Create(ctx context.Context, id string, spec v1alpha1.ClusterSp
 		return v1alpha1.Cluster{}, err
 	}
 
-	obj := toOSACCluster(id, spec, nodeSetKey)
+	obj := s.toOSACCluster(id, spec, nodeSetKey)
 	version := spec.Version
 
 	resp, err := s.client.Create(ctx, &publicv1.ClustersCreateRequest{Object: obj})
