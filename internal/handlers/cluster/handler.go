@@ -24,6 +24,11 @@ type service interface {
 	Get(ctx context.Context, id string) (v1alpha1.Cluster, error)
 	List(ctx context.Context, params v1alpha1.ListClustersParams) (v1alpha1.ClusterList, error)
 	Delete(ctx context.Context, id string) error
+	// SupportsVersion reports whether version has an entry in the
+	// service's injected version-translation matrix (REQ-VERSION-070),
+	// queried by validateCreateRequest's unsupported-version rejection
+	// (REQ-VERSION-080).
+	SupportsVersion(version string) bool
 }
 
 // Handler implements oapigen.StrictServerInterface's 4 Cluster CRUD
