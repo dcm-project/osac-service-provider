@@ -2053,3 +2053,30 @@ This is exactly the class of gap this M3/M4 e2e validation work exists to
 catch before it reaches a real deployment.
 
 **Related requirements:** REQ-MOCK-120, REQ-GET-020 (M3)
+
+---
+
+## DD-144: `test/e2e/manifests/osac-service-provider.yaml` gains `DCM_NATS_URL`, required now that M5 has merged
+
+**Decision:** the e2e Deployment manifest now sets
+`DCM_NATS_URL=nats://dcm-nats:4222`, pointing at the `dcm-nats` StatefulSet
+this workflow's own `helm install dcm control-plane/deploy/helm/dcm` step
+already deploys and waits on (`.github/workflows/e2e.yaml`'s
+`kubectl rollout status statefulset/dcm-nats`).
+
+**Rationale:** Milestone 5 (REQ-PUBLISH-010, now merged to `main` via #25)
+made `DCM_NATS_URL` a required, fail-fast `DCMConfig` field —
+`internal/config.Load()` errors out before any subsystem starts if it's
+empty. With `main` now merged into this branch (bringing M5/M6 in), the
+mock e2e's `osac-service-provider` Deployment would crash-loop on startup
+without this, since no manifest here previously set it (this pod had
+nothing to gate on before M5 existed). Caught by this branch's own `e2e`
+CI job going red (`kubectl wait --for=condition=Available` timing out on
+both `osac-service-provider`/`osac-mock-provider` Deployments) immediately
+after the M5/M6 merge — not from a design review. The exact value was
+already known and pre-validated on a separate, ahead-of-time branch (see
+`e2e/crud-coverage`'s own `DD-146`, which added this same fix proactively
+before M5 had even landed, anticipating exactly this gap) — reused
+verbatim here since this branch is the one that actually now needs it.
+
+**Related requirements:** REQ-PUBLISH-010 (M5)
