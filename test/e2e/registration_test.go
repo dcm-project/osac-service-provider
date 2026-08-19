@@ -37,13 +37,18 @@ var _ = Describe("osac-sp registration with real control-plane", func() {
 		Expect(provider.Endpoint).To(Equal(osacSPEndpoint("vms")))
 	})
 
-	// TC-E2E-040 / AC-E2E-020
-	It("does not duplicate registrations across a re-registration cycle", func() {
-		Consistently(func() int {
-			return countProvidersOfType(client, "cluster")
-		}, 90*time.Second, 10*time.Second).Should(Equal(1),
-			"internal/registration.Registrar's periodic re-registration must stay idempotent on name, not create duplicates")
-	})
+	// TC-E2E-040 / AC-E2E-020 — the test plan calls for *both* registrations
+	// to stay duplicate-free; check cluster and vm identically so a
+	// duplicate introduced by either of Registrar's two independent
+	// re-registration loops is caught, not just cluster's.
+	for _, serviceType := range []string{"cluster", "vm"} {
+		It(fmt.Sprintf("does not duplicate the %s registration across a re-registration cycle", serviceType), func() {
+			Consistently(func() int {
+				return countProvidersOfType(client, serviceType)
+			}, 90*time.Second, 10*time.Second).Should(Equal(1),
+				"internal/registration.Registrar's periodic re-registration must stay idempotent on name, not create duplicates")
+		})
+	}
 })
 
 // osacSPEndpoint returns the endpoint value osac-sp registers itself with
