@@ -17,6 +17,7 @@ import (
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/registration"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 var discardLogger = slog.New(slog.DiscardHandler)
@@ -103,13 +104,20 @@ func testConfig() *config.Config {
 }
 
 func newTestRegistrar(transport http.RoundTripper, opts ...registration.Option) *registration.Registrar {
+	return newTestRegistrarWithMatrix(transport, versionmatrix.DefaultMatrix, opts...)
+}
+
+// newTestRegistrarWithMatrix is newTestRegistrar with an explicit matrix,
+// for TC-U-510 (proving kubernetes_supported_versions is derived from
+// whatever matrix is injected, not DefaultMatrix specifically).
+func newTestRegistrarWithMatrix(transport http.RoundTripper, matrix versionmatrix.Matrix, opts ...registration.Option) *registration.Registrar {
 	allOpts := append([]registration.Option{
 		registration.WithHTTPClient(&http.Client{Transport: transport}),
 		registration.WithInitialBackoff(2 * time.Millisecond),
 		registration.WithMaxBackoff(10 * time.Millisecond),
 		registration.WithReRegistrationInterval(20 * time.Millisecond),
 	}, opts...)
-	r, err := registration.NewRegistrar(testConfig(), discardLogger, allOpts...)
+	r, err := registration.NewRegistrar(testConfig(), discardLogger, matrix, allOpts...)
 	Expect(err).NotTo(HaveOccurred())
 	return r
 }
@@ -147,6 +155,31 @@ var _ = Describe("Registrar", func() {
 		// kubernetesSupportedVersions in registration.go.
 		Expect(versions).To(ContainElement("1.31"))
 		Expect(versions).NotTo(ContainElement("4.18"))
+	})
+
+	// TC-U-510 (REQ-VERSION-050, AC-VERSION-050): kubernetes_supported_versions
+	// is derived from whatever Matrix is injected, not a hardcoded list —
+	// a 3-entry test matrix, distinct from DefaultMatrix, proves this.
+	It("derives kubernetes_supported_versions from the injected matrix, not DefaultMatrix (TC-U-510)", func() {
+		testMatrix := versionmatrix.Matrix{
+			"9.01": "quay.io/example/release:9.01",
+			"9.02": "quay.io/example/release:9.02",
+			"9.03": "quay.io/example/release:9.03",
+		}
+		transport := &fakeProviderTransport{responder: alwaysCreated}
+		r := newTestRegistrarWithMatrix(transport, testMatrix)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		r.Start(ctx)
+
+		Eventually(func() []capturedRequest { return transport.requestsFor("cluster") }, "200ms", "5ms").ShouldNot(BeEmpty())
+
+		req := transport.requestsFor("cluster")[0]
+		versions, ok := req.provider.Metadata.Get("kubernetes_supported_versions")
+		Expect(ok).To(BeTrue())
+		Expect(versions).To(ConsistOf(testMatrix.SupportedVersions()))
+		Expect(versions).NotTo(ContainElement("1.29"))
 	})
 
 	// TC-U-051: vm registration payload

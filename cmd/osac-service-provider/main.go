@@ -23,6 +23,7 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/registration"
 	"github.com/dcm-project/osac-service-provider/internal/statuspoll"
 	"github.com/dcm-project/osac-service-provider/internal/statuspublisher"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 	"github.com/dcm-project/osac-service-provider/internal/vm"
 )
 
@@ -113,6 +114,14 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("initializing: %w", err)
 	}
 
+	// REQ-VERSION-090: loaded once, before any subsystem starts, so a
+	// misconfigured SP_VERSION_MATRIX_PATH fails the process fast rather
+	// than surfacing later as a confusing registration/Create-time error.
+	matrix, err := versionmatrix.Load(cfg.VersionMatrix.Path)
+	if err != nil {
+		return fmt.Errorf("loading version matrix: %w", err)
+	}
+
 	ln, err := net.Listen("tcp", cfg.Server.Address)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", cfg.Server.Address, err)
@@ -130,7 +139,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	// transitively unreachable for the same reason as its callee,
 	// registration.NewRegistrar's own error branch — see the comment
 	// there (internal/registration/registration.go).
-	registrar, err := registration.NewRegistrar(cfg, logger)
+	registrar, err := registration.NewRegistrar(cfg, logger, matrix)
 	if err != nil {
 		return fmt.Errorf("creating registrar: %w", err)
 	}
@@ -150,7 +159,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	poller.Start(ctx)
 
 	healthHandler := health.NewHandler(osacBootstrap, time.Now(), version)
-	clusterSvc := cluster.New(publicv1.NewClustersClient(osacBootstrap.Conn()), publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()))
+	clusterSvc := cluster.New(publicv1.NewClustersClient(osacBootstrap.Conn()), publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()), matrix)
 	clusterHandler := clusterhandlers.NewHandler(clusterSvc, logger)
 	vmSvc := vm.New(
 		publicv1.NewComputeInstancesClient(osacBootstrap.Conn()),

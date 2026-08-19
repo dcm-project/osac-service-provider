@@ -26,8 +26,10 @@ var allEnvVars = []string{
 	"SP_ENDPOINT",
 	"SP_PROVIDER_CLUSTER_NAME",
 	"SP_PROVIDER_VM_NAME",
+	"SP_VERSION_MATRIX_PATH",
 	"SP_STATUS_POLL_INTERVAL",
 	"SP_STATUS_RESYNC_EVERY",
+	"SP_STATUS_LIST_TIMEOUT",
 }
 
 func clearEnv() {
@@ -64,6 +66,7 @@ var _ = Describe("Configuration", func() {
 		_ = os.Setenv("SP_PROVIDER_VM_NAME", "osac-sp-vm-custom")
 		_ = os.Setenv("SP_STATUS_POLL_INTERVAL", "45s")
 		_ = os.Setenv("SP_STATUS_RESYNC_EVERY", "20")
+		_ = os.Setenv("SP_STATUS_LIST_TIMEOUT", "15s")
 
 		cfg, err := config.Load()
 		Expect(err).NotTo(HaveOccurred())
@@ -90,6 +93,18 @@ var _ = Describe("Configuration", func() {
 
 		Expect(cfg.Status.PollInterval).To(Equal(45 * time.Second))
 		Expect(cfg.Status.ResyncEvery).To(Equal(20))
+		Expect(cfg.Status.ListTimeout).To(Equal(15 * time.Second))
+	})
+
+	// TC-U-540 (REQ-VERSION-090): SP_VERSION_MATRIX_PATH loads exactly
+	// when set.
+	It("loads SP_VERSION_MATRIX_PATH exactly when set (TC-U-540)", func() {
+		setRequiredEnv()
+		_ = os.Setenv("SP_VERSION_MATRIX_PATH", "/etc/osac-sp/version-matrix.json")
+
+		cfg, err := config.Load()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.VersionMatrix.Path).To(Equal("/etc/osac-sp/version-matrix.json"))
 	})
 
 	// TC-U-002: Applies documented defaults when optional vars are unset
@@ -107,8 +122,20 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(5 * time.Second))
 		Expect(cfg.Provider.ClusterName).To(Equal("osac-sp-cluster"))
 		Expect(cfg.Provider.VMName).To(Equal("osac-sp-vm"))
+		Expect(cfg.VersionMatrix.Path).To(Equal(""))
 		Expect(cfg.Status.PollInterval).To(Equal(30 * time.Second))
 		Expect(cfg.Status.ResyncEvery).To(Equal(10))
+		Expect(cfg.Status.ListTimeout).To(Equal(10 * time.Second))
+	})
+
+	// TC-U-541 (REQ-VERSION-090): SP_VERSION_MATRIX_PATH defaults to the
+	// empty string when unset.
+	It("defaults SP_VERSION_MATRIX_PATH to the empty string when unset (TC-U-541)", func() {
+		setRequiredEnv()
+
+		cfg, err := config.Load()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.VersionMatrix.Path).To(Equal(""))
 	})
 
 	// TC-U-003: Fails fast when a required field is missing (table-driven)

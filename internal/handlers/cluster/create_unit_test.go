@@ -14,6 +14,7 @@ import (
 	oapigen "github.com/dcm-project/osac-service-provider/internal/api/server"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/util"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // validCreateBody is a fully-populated, valid CreateClusterJSONRequestBody
@@ -79,6 +80,57 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 		Expect(resp.VisitCreateClusterResponse(rec)).To(Succeed())
 		Expect(rec.Code).To(Equal(http.StatusBadRequest))
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// TC-U-530 (REQ-VERSION-080, AC-VERSION-080): an unsupported version
+	// with no release_image override is rejected before calling OSAC.
+	It("rejects an unsupported version with no override before calling OSAC (TC-U-530)", func() {
+		testMatrix := versionmatrix.Matrix{"1.29": "quay.io/example/release:1.29"}
+		f = newFixtureWithMatrix(testMatrix)
+		DeferCleanup(f.Close)
+
+		body := validCreateBody()
+		body.Spec.Version = "9.99" // absent from testMatrix
+
+		req := oapigen.CreateClusterRequestObject{
+			Params: v1alpha1.CreateClusterParams{Id: util.Ptr("X")},
+			Body:   ptrBody(body),
+		}
+
+		resp, err := f.handler.CreateCluster(context.Background(), req)
+		Expect(err).NotTo(HaveOccurred())
+
+		rec := httptest.NewRecorder()
+		Expect(resp.VisitCreateClusterResponse(rec)).To(Succeed())
+		Expect(rec.Code).To(Equal(http.StatusBadRequest))
+		Expect(decodeError(rec).Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	// TC-U-531 (REQ-VERSION-080, AC-VERSION-070): an explicit
+	// release_image override bypasses the unsupported-version rejection.
+	It("does not reject an unsupported version when an explicit release_image override is given (TC-U-531)", func() {
+		testMatrix := versionmatrix.Matrix{"1.29": "quay.io/example/release:1.29"}
+		f = newFixtureWithMatrix(testMatrix)
+		DeferCleanup(f.Close)
+
+		body := validCreateBody()
+		body.Spec.Version = "9.99" // absent from testMatrix
+		body.Spec.ProviderHints.Osac.ReleaseImage = util.Ptr("custom-image")
+
+		req := oapigen.CreateClusterRequestObject{
+			Params: v1alpha1.CreateClusterParams{Id: util.Ptr("X")},
+			Body:   ptrBody(body),
+		}
+
+		resp, err := f.handler.CreateCluster(context.Background(), req)
+		Expect(err).NotTo(HaveOccurred())
+
+		rec := httptest.NewRecorder()
+		Expect(resp.VisitCreateClusterResponse(rec)).To(Succeed())
+		Expect(rec.Code).To(Equal(http.StatusCreated))
+		Expect(f.fake.CreateCallCount()).To(Equal(1))
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-image"))
 	})
 
 	// Supplementary to TC-U-206: a wholly-absent spec (nil — also newly

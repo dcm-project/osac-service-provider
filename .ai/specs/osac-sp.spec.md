@@ -754,6 +754,13 @@ available cluster templates at implementation time) — it does not need to be
 sourced from the full matrix yet, since no cluster-create endpoint consumes
 it in this milestone.
 
+**Superseded by Milestone 6** (`internal/versionmatrix` —
+see `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-050): once that
+milestone lands, `kubernetes_supported_versions` is derived directly from
+the shared matrix's own keys (`matrix.SupportedVersions()`), not a
+separately hand-maintained list — this SC's placeholder-list allowance no
+longer applies from that point forward.
+
 ### SC-002: Unhealthy status is never an HTTP error
 
 **Related requirements:** REQ-HLT-010, REQ-HLT-030

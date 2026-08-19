@@ -56,6 +56,16 @@ type ProviderConfig struct {
 	VMName      string `env:"PROVIDER_VM_NAME"      envDefault:"osac-sp-vm"`
 }
 
+// VersionMatrixConfig holds the optional override path for the
+// version-translation compatibility matrix (Milestone 6).
+//
+// Implements REQ-VERSION-090. Path empty/unset is valid and means "use
+// internal/versionmatrix.DefaultMatrix" — only a non-empty Path pointing
+// at a missing/malformed file is a fail-fast condition.
+type VersionMatrixConfig struct {
+	Path string `env:"VERSION_MATRIX_PATH"`
+}
+
 // StatusConfig holds settings for the async status-reporting poll loop.
 //
 // Implements REQ-POLL-010.
@@ -67,11 +77,12 @@ type StatusConfig struct {
 
 // Config is the root configuration for the service provider.
 type Config struct {
-	Server   ServerConfig   `envPrefix:"SP_SERVER_"`
-	OSAC     OSACConfig     `envPrefix:"SP_OSAC_"`
-	DCM      DCMConfig      `envPrefix:"DCM_"`
-	Provider ProviderConfig `envPrefix:"SP_"`
-	Status   StatusConfig   `envPrefix:"SP_STATUS_"`
+	Server        ServerConfig        `envPrefix:"SP_SERVER_"`
+	OSAC          OSACConfig          `envPrefix:"SP_OSAC_"`
+	DCM           DCMConfig           `envPrefix:"DCM_"`
+	Provider      ProviderConfig      `envPrefix:"SP_"`
+	VersionMatrix VersionMatrixConfig `envPrefix:"SP_"`
+	Status        StatusConfig        `envPrefix:"SP_STATUS_"`
 }
 
 // Load reads configuration from environment variables. It fails fast
