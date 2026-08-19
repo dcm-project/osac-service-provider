@@ -2093,7 +2093,14 @@ Phase 2 is now mandatory, not optional — but is deliberately deferred
 until the in-flight PR stack (#29, #22, #24, #27, #32) lands, to keep it a
 clean refactor rather than mid-flight scope creep. `.github/workflows/e2e.yaml`'s
 `CONTROL_PLANE_REF` is pinned to the last commit before #51 as a stopgap
-in the meantime. Full RCA, maturity evidence, and known implementation
+in the meantime. Pinning the chart ref alone was not sufficient — the
+chart's `values.yaml` hardcodes `global.imageTag: main` as its own default
+regardless of which chart commit is checked out, so Helm kept pulling the
+floating (already-broken) `:main` image. `CONTROL_PLANE_IMAGE_TAG` pins the
+actual deployed image to the matching short-SHA tag
+(`shared-workflows`' `build-push-quay.yaml` publishes both `main` and
+`${GITHUB_SHA:0:7}` on every push), verified present on quay.io before use.
+Full RCA, maturity evidence, and known implementation
 deltas are tracked in
 [#33](https://github.com/dcm-project/osac-service-provider/issues/33);
 DD-050 will be formally superseded once that work actually starts.

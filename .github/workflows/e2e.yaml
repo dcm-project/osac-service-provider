@@ -38,7 +38,19 @@ env:
   # control-plane directly) is deliberately deferred until the current PR
   # stack lands (see #33) rather than done mid-flight — revert to `main`
   # once that migration lands.
+  #
+  # Pinning CONTROL_PLANE_REF alone is *not* sufficient: the chart's own
+  # values.yaml hardcodes `global.imageTag: main` as its default regardless
+  # of which chart commit is checked out, so Helm would still pull
+  # quay.io/dcm-project/control-plane:main — a floating tag that already
+  # points at the post-#51 image today. CONTROL_PLANE_IMAGE_TAG below pins
+  # the actual deployed image to the short-SHA tag
+  # (dcm-project/shared-workflows' build-push-quay.yaml pushes `main` +
+  # `${GITHUB_SHA:0:7}` on every push to main) that control-plane's own CI
+  # built and pushed for this exact commit — verified via that commit's
+  # `build-push / build-push` check run before relying on it.
   CONTROL_PLANE_REF: c04802d05ecc4fd11e070f3bc604ef9e8671a09b
+  CONTROL_PLANE_IMAGE_TAG: c04802d
 
 jobs:
   e2e:
@@ -86,6 +98,7 @@ jobs:
       - name: Install control-plane (+ Postgres, NATS) via its own chart
         run: |
           helm install dcm control-plane/deploy/helm/dcm \
+            --set global.imageTag="${{ env.CONTROL_PLANE_IMAGE_TAG }}" \
             --set dcmUi.enabled=false \
             --set controlPlane.route.enabled=false \
             --set controlPlane.ingress.enabled=false
