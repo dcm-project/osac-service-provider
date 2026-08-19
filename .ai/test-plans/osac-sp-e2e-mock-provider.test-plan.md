@@ -40,6 +40,7 @@ test, no further fake/mock layer needed underneath it.
 | TC-U-123 | `ComputeInstances.List` honors `offset`/`limit` in creation order | REQ-MOCK-050, AC-MOCK-060 | Same as TC-U-122 for `ComputeInstances`. |
 | TC-U-124 | `Clusters.Delete` removes a known `id`; a second `Delete` is `NotFound` | REQ-MOCK-060, AC-MOCK-050 | `Create` with `id="x"`; call `Delete("x")` — assert no error and `List` no longer contains `"x"`; call `Delete("x")` again — assert error code `NOT_FOUND`. |
 | TC-U-125 | `ComputeInstances.Delete` removes a known `id`; a second `Delete` is `NotFound` | REQ-MOCK-060, AC-MOCK-050 | Same as TC-U-124 for `ComputeInstances`. |
+| TC-U-155 | `Clusters.GetKubeconfig` round-trips a non-empty, base64-encoded stub for a known `id`; unknown `id` is `NotFound` | REQ-MOCK-120, AC-MOCK-130 | Regression test for a real gap found while building M3/M4 e2e coverage (DD-143): `Create` a cluster with `id="x"`; call `GetKubeconfig("x")`; assert the response's `kubeconfig` is non-empty and `base64.StdEncoding.DecodeString` succeeds on it; call `GetKubeconfig("missing")`; assert error code `NOT_FOUND`. |
 
 ---
 

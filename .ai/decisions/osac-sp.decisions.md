@@ -2022,3 +2022,34 @@ osac-sp-e2e-suite.test-plan.md`'s TC-E2E-050/060 descriptions were updated
 to document the polling discipline explicitly.
 
 **Related requirements:** REQ-E2E-060
+
+---
+
+## DD-143: `osac-mock-provider`'s `Clusters/GetKubeconfig` is implemented, correcting Phase 1's original out-of-scope call
+
+**Decision:** `test/mockprovider/clusters.go`'s `ClustersServer` now
+implements `GetKubeconfig` (REQ-MOCK-120): for a known `id` it returns a
+deterministic, non-functional stub kubeconfig (base64-encoded YAML with the
+cluster `id` as its context name); for an unknown `id` it returns gRPC
+`NOT_FOUND`, mirroring the other four CRUD-shaped services' `Get` semantics
+(REQ-MOCK-040). `GetKubeconfigViaHttp`/`GetPassword(ViaHttp)` remain
+unimplemented (still genuinely uncalled by `osac-sp`).
+
+**Rationale:** found while building M3/M4 CRUD e2e coverage on top of this
+mock, not from re-reading the original architecture diagrams. Phase 1's
+spec (`.ai/specs/osac-sp-e2e-mock-provider.spec.md` §1) had explicitly
+scoped plain `GetKubeconfig` out, reasoning "none of these are called by
+`osac-sp` today (Milestone 3/4's architecture diagrams only ever invoke
+Create/Get/List/Delete)" — true of the diagrams, false of the actual M3
+implementation: `internal/cluster.Service.Get` calls
+`Clusters/GetKubeconfig` whenever the mapped status is `ACTIVE`
+(`osac-sp-m3-cluster-crud.spec.md` REQ-GET-020). Since `Clusters/Create`
+sets a terminal `CLUSTER_STATE_READY` immediately (REQ-MOCK-030, no
+simulated `PROGRESSING` delay), *every* `Get` of a mock-created cluster
+maps to `ACTIVE` and hits this path — so leaving `GetKubeconfig`
+`UNIMPLEMENTED` would have made the very first `cluster_crud_test.go` e2e
+spec's `Get` call fail with a mapped `500`, not the `200` it exercises.
+This is exactly the class of gap this M3/M4 e2e validation work exists to
+catch before it reaches a real deployment.
+
+**Related requirements:** REQ-MOCK-120, REQ-GET-020 (M3)
