@@ -62,11 +62,14 @@ func (m Matrix) SupportedVersions() []string {
 // it reads path as a JSON object and returns that file's content alone as
 // the resulting Matrix — fully replacing, not merging with, DefaultMatrix.
 // It returns a non-nil error (and a nil Matrix) if path is set and the
-// file is missing, unreadable, not valid JSON, or decodes to zero entries
-// (REQ-VERSION-040) — an override that resolves to zero supported
-// versions is treated as a misconfiguration, not a legal (if useless) one,
-// since it would silently reject every future Create call with no
-// diagnostic pointing at the cause (see DD-131).
+// file is missing, unreadable, not valid JSON, decodes to zero entries, or
+// contains any entry with an empty version key or an empty release_image
+// value (REQ-VERSION-040) — a zero-entry map and a map holding only
+// blank-key/blank-value entries are both, in effect, zero *usable*
+// versions, and are rejected for the same reason: an override that
+// resolves to zero supported versions is a misconfiguration, not a legal
+// (if useless) one, since it would silently reject every future Create
+// call with no diagnostic pointing at the cause (see DD-131).
 func Load(path string) (Matrix, error) {
 	if path == "" {
 		return DefaultMatrix, nil
@@ -83,6 +86,14 @@ func Load(path string) (Matrix, error) {
 	}
 	if len(m) == 0 {
 		return nil, fmt.Errorf("version matrix file %q contains no entries", path)
+	}
+	for version, image := range m {
+		if version == "" {
+			return nil, fmt.Errorf("version matrix file %q contains an entry with an empty version key", path)
+		}
+		if image == "" {
+			return nil, fmt.Errorf("version matrix file %q contains an empty release_image for version %q", path, version)
+		}
 	}
 
 	return m, nil

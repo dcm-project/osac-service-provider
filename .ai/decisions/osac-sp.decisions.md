@@ -1182,6 +1182,17 @@ fail-fast-over-silently-degrading philosophy REQ-XC-CFG-020 already applies
 to missing required env vars is extended here to a malformed *optional*
 one's referenced file, once that variable is actually set.
 
+**Amendment (review finding on PR #26):** the original "decodes to zero
+entries" check (`len(m)==0`) only catches a wholly empty `{}`; a file like
+`{"1.29":""}` or `{"":"<image>"}` has exactly one key and passed the check
+unchanged, silently loading a matrix with one *unusable* entry (an empty
+version can never match a `Lookup` call; an empty `release_image` would be
+wired straight into an OSAC `Create` call). `Load` now additionally rejects
+any entry whose version key or `release_image` value is the empty string,
+for the same brick-every-future-Create-call rationale above — a matrix
+whose only entries are blank is functionally the zero-entries case with
+extra steps.
+
 **Rationale:** Mirrors the sibling `acm-cluster-service-provider`'s
 established, already-reviewed pattern for the identical problem (translating
 a DCM-facing Kubernetes version into a platform-specific release artifact) —

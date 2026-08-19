@@ -87,7 +87,14 @@ var _ = Describe("Load (Topic 4.1 Version Matrix Package)", func() {
 	// TC-U-504 (REQ-VERSION-040, AC-VERSION-040): Load fails fast on a
 	// missing, malformed, or empty override file. contents == nil means
 	// "nonexistent path" (no file is written at all).
-	DescribeTable("fails fast on an invalid override file (TC-U-504)",
+	//
+	// TC-U-505 (REQ-VERSION-040, AC-VERSION-040, regression): an override
+	// file with an empty version key or an empty release_image value is
+	// rejected too — len(m)==0 alone only catches a wholly empty {}; a
+	// file like {"1.29":""} or {"":"img"} has one key and would otherwise
+	// load successfully as a matrix with zero *usable* versions (found in
+	// review: https://github.com/dcm-project/osac-service-provider/pull/26).
+	DescribeTable("fails fast on an invalid override file (TC-U-504, TC-U-505)",
 		func(contents *string) {
 			var path string
 			if contents == nil {
@@ -103,5 +110,7 @@ var _ = Describe("Load (Topic 4.1 Version Matrix Package)", func() {
 		Entry("nonexistent path", nil),
 		Entry("malformed JSON", strPtr("not json")),
 		Entry("empty object", strPtr("{}")),
+		Entry("empty version key", strPtr(`{"":"quay.io/openshift-release-dev/ocp-release:4.16.0-multi"}`)),
+		Entry("empty release_image value", strPtr(`{"1.29":""}`)),
 	)
 })

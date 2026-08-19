@@ -77,6 +77,7 @@ Binding, not advisory — same 4 rules Milestone 3 established:
 | TC-U-502 | `Load("")` returns `DefaultMatrix` unchanged | REQ-VERSION-040 | Call `Load("")`; assert the returned `Matrix` equals `DefaultMatrix` field-for-field (`Equal(versionmatrix.DefaultMatrix)`). |
 | TC-U-503 | `Load(path)` with a valid override file fully replaces, not merges with, the default | REQ-VERSION-040, AC-VERSION-030 | Write a temp file containing `{"1.34":"quay.io/openshift-release-dev/ocp-release:4.21.0-multi"}`; call `Load(path)`; assert `Lookup("1.34")` returns that exact image with `ok==true`, and `Lookup("1.29")` (a `DefaultMatrix`-only entry) returns `ok==false`. |
 | TC-U-504 | `Load(path)` fails fast on a missing, malformed, or empty override file (table-driven) | REQ-VERSION-040, AC-VERSION-040 | Table over: (a) a path that does not exist, (b) a temp file containing `not json`, (c) a temp file containing `{}`; for each, call `Load(path)`; assert a non-nil error and a nil `Matrix` in every case. |
+| TC-U-505 | `Load(path)` fails fast on an override file with an empty version key or an empty `release_image` value (table-driven, regression) | REQ-VERSION-040, AC-VERSION-040 | Table over: (a) a temp file containing `{"":"quay.io/openshift-release-dev/ocp-release:4.16.0-multi"}`, (b) a temp file containing `{"1.29":""}`; for each, call `Load(path)`; assert a non-nil error and a nil `Matrix` in every case. Regression for a review finding on PR #26: `len(m)==0` alone only rejects a wholly empty `{}`, not a one-entry map with a blank key or blank value. |
 
 ---
 

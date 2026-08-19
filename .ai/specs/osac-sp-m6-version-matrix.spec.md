@@ -154,7 +154,7 @@ JSON file.
 | REQ-VERSION-010 | The package MUST expose a `Matrix` type mapping a Kubernetes minor version string (e.g. `"1.29"`) to an OSAC `release_image` string, with a `Lookup(version string) (string, bool)` method returning the mapped image and whether `version` is present | MUST | |
 | REQ-VERSION-020 | The package MUST expose a hardcoded `DefaultMatrix` value containing exactly the same 5 entries as Milestone 3's `releaseImageByVersion` (`"1.29"`-`"1.33"` -> the OpenShift `4.16.0`-`4.20.0` `-multi` release images) — this milestone carries the data forward unchanged, it does not add or remove entries | MUST | Data continuity with M1 SC-001 / M3 REQ-CREATE-025 |
 | REQ-VERSION-030 | `Matrix` MUST expose a `SupportedVersions() []string` method returning the matrix's keys sorted in ascending lexical order, for deterministic consumption by registration payloads and tests | MUST | |
-| REQ-VERSION-040 | The package MUST expose `Load(path string) (Matrix, error)`: when `path == ""`, it MUST return `DefaultMatrix` unchanged; when `path != ""`, it MUST read `path` as a JSON object (`{"<k8s-version>": "<release_image>", ...}`) and, on success, return **that file's content alone** as the resulting `Matrix` — fully replacing, not merging with, `DefaultMatrix`. `Load` MUST return a non-nil error (and a nil `Matrix`) if `path != ""` and the file is missing, unreadable, not valid JSON, or decodes to zero entries | MUST | Full-replace (not merge) and fail-fast-on-empty are both deliberate — see DD-131 |
+| REQ-VERSION-040 | The package MUST expose `Load(path string) (Matrix, error)`: when `path == ""`, it MUST return `DefaultMatrix` unchanged; when `path != ""`, it MUST read `path` as a JSON object (`{"<k8s-version>": "<release_image>", ...}`) and, on success, return **that file's content alone** as the resulting `Matrix` — fully replacing, not merging with, `DefaultMatrix`. `Load` MUST return a non-nil error (and a nil `Matrix`) if `path != ""` and the file is missing, unreadable, not valid JSON, decodes to zero entries, or contains any entry with an empty version key or an empty `release_image` value | MUST | Full-replace (not merge) and fail-fast-on-empty (including blank-key/blank-value entries) are both deliberate — see DD-131 |
 
 #### Configuration Introduced
 
@@ -188,7 +188,7 @@ package's).
 ##### AC-VERSION-040: A missing, malformed, or empty override file fails fast
 
 - **Validates:** REQ-VERSION-040
-- **Given**, in turn: (a) a `path` pointing to a nonexistent file, (b) a `path` pointing to a file containing invalid JSON, (c) a `path` pointing to a file containing valid JSON that decodes to an empty object `{}`
+- **Given**, in turn: (a) a `path` pointing to a nonexistent file, (b) a `path` pointing to a file containing invalid JSON, (c) a `path` pointing to a file containing valid JSON that decodes to an empty object `{}`, (d) a file with an empty version key (e.g. `{"": "quay.io/openshift-release-dev/ocp-release:4.16.0-multi"}`), (e) a file with an empty `release_image` value (e.g. `{"1.29": ""}`)
 - **When** `Load(path)` is called for each case
 - **Then** each call MUST return a non-nil error and a nil `Matrix`
 
