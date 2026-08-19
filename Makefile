@@ -1,4 +1,5 @@
 BINARY_NAME := osac-service-provider
+MOCK_BINARY_NAME := osac-mock-provider
 
 # CONTAINER_ENGINE: container runtime command. Set to override; otherwise auto-detect podman or docker.
 CONTAINER_ENGINE ?= $(shell \
@@ -11,14 +12,25 @@ CONTAINER_ENGINE ?= $(shell \
 # CONTAINER_IMAGE_NAME: FQDN (without tag) of the container image. Set to override
 CONTAINER_IMAGE_NAME ?= quay.io/dcm-project/${BINARY_NAME}
 
+# MOCK_CONTAINER_IMAGE_NAME: FQDN (without tag) of the mock provider's own
+# container image (Phase 1 of osac-service-provider#17 / FLPATH-4759). Set
+# to override.
+MOCK_CONTAINER_IMAGE_NAME ?= quay.io/dcm-project/${MOCK_BINARY_NAME}
+
 # CONTAINER_IMAGE_TAG: Container image tag. Set to override; otherwise git short hash is used
 CONTAINER_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
 build:
 	go build -o bin/$(BINARY_NAME) ./cmd/$(BINARY_NAME)
 
+build-mock-provider:
+	go build -o bin/$(MOCK_BINARY_NAME) ./cmd/$(MOCK_BINARY_NAME)
+
 run:
 	go run ./cmd/$(BINARY_NAME)
+
+run-mock-provider:
+	go run ./cmd/$(MOCK_BINARY_NAME)
 
 clean:
 	rm -rf bin/
@@ -100,4 +112,7 @@ check-container-engine:
 image-build: check-container-engine
 	$(CONTAINER_ENGINE) build -t $(CONTAINER_IMAGE_NAME):$(CONTAINER_IMAGE_TAG) .
 
-.PHONY: build run clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-container-engine image-build
+image-build-mock-provider: check-container-engine
+	$(CONTAINER_ENGINE) build -f Containerfile.osac-mock-provider -t $(MOCK_CONTAINER_IMAGE_NAME):$(CONTAINER_IMAGE_TAG) .
+
+.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-container-engine image-build image-build-mock-provider
