@@ -20,6 +20,7 @@ import (
 	cpclient "github.com/dcm-project/control-plane/pkg/sp/client/provider"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 const (
@@ -32,22 +33,6 @@ const (
 	clusterEndpointSuffix = "/api/v1alpha1/clusters"
 	vmEndpointSuffix      = "/api/v1alpha1/vms"
 )
-
-// kubernetesSupportedVersions is a hardcoded placeholder list for Milestone
-// 1, per SC-001 — the full DCM-to-OSAC version compatibility matrix is
-// Milestone 6 scope.
-//
-// These MUST be Kubernetes version numbers, not OpenShift release versions:
-// per the osac-sp enhancement's "Version Translation" section (and the
-// acm-cluster-sp enhancement's identical field, which spells this out
-// explicitly: "advertise the Kubernetes versions it supports, not the
-// platform-specific versions (e.g., OpenShift versions)"), DCM users select
-// a Kubernetes version and the SP translates it internally to an OSAC
-// `release_image`. The range below (Kubernetes 1.29-1.33) corresponds to
-// OpenShift 4.16-4.20 — the newest of which OSAC's own fulfillment-service
-// already has catalog item templates for as of implementation time (e.g.
-// "osac.templates.ocp_4_20_small_nico" in its docs/CATALOG_ITEMS.md).
-var kubernetesSupportedVersions = []string{"1.29", "1.30", "1.31", "1.32", "1.33"}
 
 // Option configures a Registrar.
 type Option func(*Registrar)
@@ -85,6 +70,7 @@ type Registrar struct {
 	cfg    *config.Config
 	logger *slog.Logger
 	client *cpclient.ClientWithResponses
+	matrix versionmatrix.Matrix
 
 	initialBackoff         time.Duration
 	maxBackoff             time.Duration
@@ -96,10 +82,15 @@ type Registrar struct {
 }
 
 // NewRegistrar creates a Registrar targeting cfg.DCM.RegistrationURL.
-func NewRegistrar(cfg *config.Config, logger *slog.Logger, opts ...Option) (*Registrar, error) {
+// matrix's SupportedVersions() becomes the cluster registration payload's
+// kubernetes_supported_versions (REQ-VERSION-050) — the single source of
+// truth also consulted by internal/cluster for release_image translation,
+// eliminating the drift risk of two independently hand-maintained lists.
+func NewRegistrar(cfg *config.Config, logger *slog.Logger, matrix versionmatrix.Matrix, opts ...Option) (*Registrar, error) {
 	r := &Registrar{
 		cfg:                    cfg,
 		logger:                 logger,
+		matrix:                 matrix,
 		initialBackoff:         1 * time.Second,
 		maxBackoff:             60 * time.Second,
 		reRegistrationInterval: 60 * time.Second,
@@ -164,7 +155,7 @@ func (r *Registrar) registerCluster(ctx context.Context) (int, error) {
 	metadata := map[string]interface{}{
 		"supported_platforms":           []string{"baremetal"},
 		"supported_provisioning_types":  []string{"hypershift"},
-		"kubernetes_supported_versions": kubernetesSupportedVersions,
+		"kubernetes_supported_versions": r.matrix.SupportedVersions(),
 	}
 	return r.registerOnce(ctx, r.cfg.Provider.ClusterName, clusterServiceType, endpoint, metadata)
 }
