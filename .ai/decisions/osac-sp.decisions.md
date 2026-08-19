@@ -2080,3 +2080,23 @@ before M5 had even landed, anticipating exactly this gap) — reused
 verbatim here since this branch is the one that actually now needs it.
 
 **Related requirements:** REQ-PUBLISH-010 (M5)
+
+---
+
+## DD-147: `control-plane`#51 forces Phase 2 (`environment-agent`) migration — deferred until current PR stack lands
+
+**Decision:** `control-plane`'s `main` deleted `api/sp/v1alpha1/provider`
+([control-plane#51](https://github.com/dcm-project/control-plane/pull/51),
+2026-08-19), permanently invalidating DD-050's Phase 1 target.
+`environment-agent` has matured past the stub state DD-050 cited, so
+Phase 2 is now mandatory, not optional — but is deliberately deferred
+until the in-flight PR stack (#29, #22, #24, #27, #32) lands, to keep it a
+clean refactor rather than mid-flight scope creep. `.github/workflows/e2e.yaml`'s
+`CONTROL_PLANE_REF` is pinned to the last commit before #51 as a stopgap
+in the meantime. Full RCA, maturity evidence, and known implementation
+deltas are tracked in
+[#33](https://github.com/dcm-project/osac-service-provider/issues/33);
+DD-050 will be formally superseded once that work actually starts.
+
+**Related requirements:** REQ-REG-010, REQ-REG-090, REQ-REG-100 (all to be
+revised when Phase 2 starts — see #33)

@@ -18,11 +18,27 @@ on:
 
 env:
   KIND_CLUSTER_NAME: osac-sp-e2e
-  # control-plane's chart + image both track the same moving "main" tag
-  # deliberately (issue #17's "Ownership & artifact sourcing": we consume
-  # control-plane purely as a published upstream artifact, not a pin we
-  # manage independently of it).
-  CONTROL_PLANE_REF: main
+  # control-plane's chart + image are *intended* to track the same moving
+  # "main" tag deliberately (issue #17's "Ownership & artifact sourcing": we
+  # consume control-plane purely as a published upstream artifact, not a pin
+  # we manage independently of it) — but temporarily pinned below, see TODO.
+  #
+  # TODO(DD-147, dcm-project/osac-service-provider#33): control-plane@35c0e8f
+  # (PR https://github.com/dcm-project/control-plane/pull/51, merged
+  # 2026-08-19) deleted api/sp/v1alpha1/provider (the direct
+  # POST /api/v1alpha1/providers registration API this SP's
+  # internal/registration and test/e2e/registration_test.go depend on via
+  # pkg/sp/client/provider) in favor of a new agent-routed
+  # api/agent/v1alpha1 model. This is not a bug upstream — it's control-plane
+  # completing the pivot back to the environment-agent-style registration
+  # model that DD-050 deferred as "Phase 2", now that environment-agent has
+  # matured past the stub state DD-050 was written against. Pinning to the
+  # last commit before that removal so e2e stays green; the Phase 2
+  # migration itself (registering via environment-agent instead of
+  # control-plane directly) is deliberately deferred until the current PR
+  # stack lands (see #33) rather than done mid-flight — revert to `main`
+  # once that migration lands.
+  CONTROL_PLANE_REF: c04802d05ecc4fd11e070f3bc604ef9e8671a09b
 
 jobs:
   e2e:
