@@ -48,7 +48,11 @@ func (m Matrix) Lookup(version string) (string, bool) {
 
 // SupportedVersions returns m's keys, sorted in ascending lexical order,
 // for deterministic consumption by registration payloads and tests
-// (REQ-VERSION-030).
+// (REQ-VERSION-030). Lexical order is a deliberate, spec'd choice, not an
+// oversight — versions are opaque strings here, with no assumed numeric
+// structure. Note the resulting caveat for callers: it can misorder
+// multi-digit segments once they appear (e.g. "1.10" would sort before
+// "1.9"); revisit if a future consumer needs true version-aware ordering.
 func (m Matrix) SupportedVersions() []string {
 	versions := make([]string, 0, len(m))
 	for v := range m {

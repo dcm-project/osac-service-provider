@@ -344,6 +344,52 @@ var _ = Describe("Publish lifecycle", func() {
 		Expect(statuses).To(ConsistOf("vm-1:RUNNING", "vm-2:STOPPED"))
 	})
 
+	// TC-U-419: regression test for a real head-of-line-blocking bug found
+	// in review (DD-077) — with the single background worker (REQ-PUBLISH-060)
+	// retrying one key to exhaustion before ever looking at another, a
+	// persistently failing resource could starve every *other* resource's
+	// delivery indefinitely. Publishes vm-1 (which always fails) then vm-2
+	// (which always succeeds) and asserts vm-2 is delivered promptly, well
+	// before vm-1's backoff would ever let the old exhaustive-retry
+	// implementation get around to it.
+	It("does not let a persistently failing key block delivery of an unrelated key (TC-U-419)", func() {
+		fake := &fakeJS{
+			publishFunc: func(_ int, subject string, _ []byte) error {
+				if subject == "dcm.vm" {
+					return context.DeadlineExceeded
+				}
+				return nil
+			},
+		}
+		initialBackoff := 2 * time.Second
+		p := newPublisher(fake, func() {}, discardLogger, WithInitialBackoff(initialBackoff), WithMaxBackoff(time.Minute))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		p.Publish(vmType, "vm-1", "RUNNING", "always fails")
+		p.Start(ctx)
+		Eventually(fake.Attempts, time.Second).Should(HaveLen(1), "vm-1's first attempt must fail and enter its own backoff")
+
+		p.Publish(clusterType, "c-1", "ACTIVE", "should not be blocked by vm-1's backoff")
+
+		attemptsForSubject := func(subject string) func() int {
+			return func() int {
+				n := 0
+				for _, a := range fake.Attempts() {
+					if a.subject == subject {
+						n++
+					}
+				}
+				return n
+			}
+		}
+		// initialBackoff (2s) comfortably exceeds this Eventually's window,
+		// so cluster delivery only passes here if it was attempted on a
+		// round independent of vm-1's cooldown, not after waiting it out.
+		Eventually(attemptsForSubject("dcm.cluster"), 500*time.Millisecond).Should(Equal(1),
+			"an unrelated key must be delivered promptly, not blocked behind vm-1's in-progress backoff")
+	})
+
 	// TC-U-415: Start/Done are idempotent and mirror Registrar's lifecycle shape
 	It("runs exactly one worker regardless of repeated Start calls, and closes Done once (TC-U-415)", func() {
 		fake := &fakeJS{}
