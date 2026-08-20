@@ -30,6 +30,11 @@ import (
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
 
+// nonexistentCAFile is a path no test ever creates, used to exercise the
+// "configured TLS CA file cannot be read" error path (TC-U-013 and its
+// siblings).
+const nonexistentCAFile = "/nonexistent/osac-sp-test-ca.pem"
+
 // generateTestCACert creates a minimal self-signed CA certificate for
 // TC-U-013, returning its PEM encoding and the path to a temp file
 // containing it. The temp file is removed via DeferCleanup.
@@ -457,7 +462,7 @@ var _ = Describe("Bootstrap", func() {
 		It("fails when the configured TLS CA file cannot be read", func() {
 			cfg := testCfg()
 			cfg.TLSEnabled = true
-			cfg.TLSCertFile = "/nonexistent/osac-sp-test-ca.pem"
+			cfg.TLSCertFile = nonexistentCAFile
 
 			_, err := transportCredentials(cfg)
 			Expect(err).To(MatchError(ContainSubstring("reading TLS CA file")))
@@ -634,7 +639,7 @@ var _ = Describe("Bootstrap", func() {
 		It("propagates a TLS credential construction failure (TC-U-110)", func() {
 			cfg := testCfg()
 			cfg.TLSEnabled = true
-			cfg.TLSCertFile = "/nonexistent/osac-sp-test-ca.pem"
+			cfg.TLSCertFile = nonexistentCAFile
 
 			opts, err := dialOptions(cfg, &bearerCreds{})
 			Expect(err).To(HaveOccurred())
@@ -646,7 +651,7 @@ var _ = Describe("Bootstrap", func() {
 		It("surfaces a dial-options construction failure (TC-U-111)", func() {
 			cfg := testCfg()
 			cfg.TLSEnabled = true
-			cfg.TLSCertFile = "/nonexistent/osac-sp-test-ca.pem"
+			cfg.TLSCertFile = nonexistentCAFile
 
 			b, err := New(cfg, discardLogger)
 			Expect(err).To(MatchError(ContainSubstring("building gRPC dial options")))
