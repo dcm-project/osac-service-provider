@@ -60,6 +60,10 @@ running code, and confirms the identical convention directly:
 `{registered endpoint}/health` construction, appended per-`Provider`-row.
 This decision needed no change for the Phase 1 pivot (DD-050); if anything,
 it is now verified against running code rather than an unimplemented spec.
+The three-state (Ready/Unhealthy/Unavailable) derivation this confirmation
+refers to — already documented here and in the enhancement doc's own "SP
+Health Check" section — got its first *live* (not just source-read)
+confirmation via the kind-based e2e infra; see DD-140.
 
 **Related requirements:** REQ-HTTP-020, REQ-HTTP-025, REQ-HLT-010, REQ-HLT-015
 
@@ -195,6 +199,21 @@ re-evaluate the Phase 2 migration trigger (maturity bar, above) if it
 remains unaddressed by the time this SP approaches a production rollout.
 Full writeup: [enhancements#96](https://github.com/dcm-project/enhancements/pull/96)
 ("Authentication" and "Risks and Mitigations" sections).
+
+**Second consumer of the same `AUTH_DISABLED=true` default, found via the
+kind-based e2e infra:** `test/e2e`'s registration/health test files
+(`osac-sp-e2e-suite`, DD-139/090) call `control-plane`'s real
+`GET /api/v1alpha1/providers` with no `Authorization` header at all and get
+`200`s — confirmed this is the *same* transitional default, not a separate
+gap: `control-plane`'s OpenAPI spec declares `bearerAuth` security on every
+path (including these GETs) via a single global `auth.Middleware`
+(`internal/auth/middleware.go`), but that middleware is a no-op whenever
+`AUTH_DISABLED=true`. If `control-plane`'s chart/deployment ever flips that
+default (e.g. by setting `AUTH_ISSUER_URL`), this e2e suite's unauthenticated
+`cpclient` calls will start failing with `401`s alongside `osac-sp`'s own
+registration POSTs — one fix (giving this SP a real bearer credential to
+send) would need to cover both call sites, not just the registration path
+this decision originally scoped.
 
 **This is not just a client-library swap — `control-plane`'s CRUD-dispatch
 model differs materially from `environment-agent`'s, which matters for
@@ -1672,7 +1691,423 @@ once Phase 2 wires them together.
 
 ---
 
-## DD-135: `.golangci.yml` hardened with 10 additional linters, evidence-tested before adoption
+## DD-134: `osac-sp`/`osac-mock-provider` as this repo's own plain manifests, not a `control-plane` chart contribution
+
+**Decision:** Phase 2's `kind` cluster deploys `osac-service-provider` and
+`osac-mock-provider` via plain `Deployment`+`Service` YAML owned by this
+repo (`test/e2e/manifests/`), applied with `kubectl apply` alongside a
+`helm install` of `control-plane`'s own unmodified
+[`deploy/helm/dcm/`](https://github.com/dcm-project/control-plane/tree/main/deploy/helm/dcm)
+chart — not a PR adding `osacServiceProvider`/`osacMockProvider` sections to
+that chart's `values.yaml`/`templates/` (the pattern its 4 existing
+`*ServiceProvider` sections use for `kubevirt`/`k8s-container`/`acm-cluster`/
+`three-tier-demo`).
+
+**Rationale:** issue #17 ("Ownership & artifact sourcing") explicitly scopes
+this: each SP team owns its own mock-provider binary *and* its own e2e
+workflow in its own repo, consuming `control-plane` purely as a published
+upstream artifact (image + chart directory), not by forking or PRing into
+it. Contributing an `osac-sp` chart section would (a) require a
+`control-plane` PR and review cycle before this repo's own e2e could ever
+go green, directly conflicting with "ready to run asap," and (b) couple
+this repo's CI to `control-plane`'s release cadence for a resource this
+repo already fully owns and controls the shape of. Upstreaming a chart
+section remains a reasonable follow-up once this pattern is proven (issue
+#17's "Generalization for other SP teams"), but is explicitly not a
+blocker for it.
+
+**Related requirements:** REQ-E2E-030
+
+---
+
+## DD-135: Route/Ingress/`dcmUi` disabled when installing `control-plane`'s chart into `kind`
+
+**Decision:** `helm install` overrides `dcmUi.enabled=false`,
+`controlPlane.route.enabled=false`, `controlPlane.ingress.enabled=false`
+against `control-plane`'s chart defaults (`dcmUi.enabled: true`,
+`controlPlane.route.enabled: true`).
+
+**Rationale:** `controlPlane.route.enabled`'s `Route` resource is an
+OpenShift-only CRD (`route.openshift.io/v1`) that plain `kind` doesn't
+install — leaving it enabled would fail the `helm install --wait` step
+outright. `dcmUi` has no bearing on any REQ-E2E-* assertion (this tier
+asserts the REST/gRPC contract, not a browser-driven UI journey) and adds a
+pod + image pull for no verification value, so disabling it keeps the job
+closer to its `NFR-E2E-010` time budget.
+
+**Related requirements:** REQ-E2E-020
+
+---
+
+## DD-136: `kubectl port-forward` (not `NodePort`/`Ingress`) for the e2e suite's cluster access
+
+**Decision:** `.github/workflows/e2e.yaml` reaches `dcm-control-plane` and
+`osac-service-provider` from the GitHub Actions runner host via two
+background `kubectl port-forward` processes (`18080`→`control-plane:8080`,
+`18081`→`osac-service-provider:8080`), not `NodePort` Services or an
+`Ingress`/`Route`.
+
+**Rationale:** the e2e suite (`test/e2e`) runs as a plain `go run` process
+on the runner host, outside the `kind` cluster's pod network, so it needs
+*some* host-reachable path in. `NodePort` would require picking/coordinating
+fixed ports across both this repo's manifests and `kind-config.yaml`'s
+`extraPortMappings`; `Ingress`/`Route` needs an ingress controller neither
+chart installs here. `port-forward` needs zero manifest/kind-config changes
+beyond the `Service`s Phase 1/this phase already create, at the cost of two
+background processes the workflow must remember to stop (`if: always()`) —
+an acceptable, purely-CI-internal tradeoff with no bearing on the
+assertions themselves.
+
+**Related requirements:** REQ-E2E-050, REQ-E2E-060
+
+---
+
+## DD-137: `test/e2e` imports `control-plane`'s own generated REST types directly, not a hand-rolled JSON struct
+
+**Decision:** `test/e2e`'s registration assertions (TC-E2E-020..040)
+import `github.com/dcm-project/control-plane/api/sp/v1alpha1/provider` and
+`.../pkg/sp/client/provider` directly — the exact generated
+OpenAPI client/types `internal/registration/registration.go` itself uses to
+*write* — rather than decoding `GET /providers` responses into a
+locally-defined struct.
+
+**Rationale:** unlike the `osac-sp` health response (where `test/e2e`
+deliberately hand-decodes into its own minimal struct — see the test plan's
+"What's real here" note — to avoid a `replace`-directive dependency on the
+parent module from this nested one), `control-plane`'s provider-types
+package is an independent, already-external, already-pinned dependency
+(`go.mod`'s existing `v0.0.0-20260629133201-6c16c0654018`) with a
+deliberately minimal transitive footprint (confirmed empirically: `go mod
+tidy` in `test/e2e` pulled in only `oapi-codegen/runtime` and small
+`go-openapi`/testify-adjacent packages, no `k8s.io/client-go` or similar) —
+so it carries none of the "heavy transitive deps" risk REQ-E2E-080 exists to
+avoid, while giving exact field-name fidelity (`health_status`,
+`service_type`, etc.) for free instead of risking drift from a hand-copied
+struct.
+
+**Related requirements:** REQ-E2E-050, REQ-E2E-060, REQ-E2E-080
+
+---
+
+## DD-138: Patch around control-plane#42 instead of forking the chart or blocking on it
+
+**Decision:** the workflow installs `control-plane`'s chart with
+`helm install` (no `--wait`), then `kubectl rollout status`-waits on
+Postgres/NATS, then `kubectl patch`es `dcm-control-plane`'s
+`wait-for-postgres` init container's `securityContext.runAsNonRoot` to
+`false` (strategic merge, only that one field), then `kubectl
+rollout status`-waits on `dcm-control-plane` itself.
+
+**Rationale:** empirically, `control-plane`'s own chart's
+`dcm.waitForPostgres` helper sets `runAsNonRoot: true` with no `runAsUser`
+against the official `postgres:16-alpine` image (root-by-default), which the
+kubelet permanently refuses to start on plain Kubernetes (`kind` has no
+OpenShift-SCC-style automatic non-root UID injection) —
+`CreateContainerConfigError`, confirmed via a real run of this workflow
+(first real evidence anyone in DCM has produced that this chart doesn't
+install on non-OpenShift Kubernetes at all). Filed upstream as
+[control-plane#42](https://github.com/dcm-project/control-plane/issues/42)
+per this project's standing practice of flagging cross-repo inconsistencies
+to their owning team rather than silently working around them. Forking the
+chart was rejected for the same reason as DD-134 (this repo consumes
+`control-plane` as a published artifact, not a fork); blocking this PR on
+`control-plane#42` landing and releasing was rejected as directly
+contradicting "ready to run asap." The patch touches only the one field
+actually causing the failure, leaving the chart's other hardening
+(`allowPrivilegeEscalation`, `capabilities.drop`, `seccompProfile`) intact.
+**This step should be deleted once control-plane#42 is fixed and released**
+— it is not a permanent feature of this workflow.
+
+**Related requirements:** REQ-E2E-020
+
+## DD-139: `osac-mock-provider`'s OIDC discovery documents derive `token_endpoint` from the request's `Host` header, not the listener's bind address
+
+**Decision:** `test/mockprovider.OIDCHandler`'s discovery-document
+handler builds `token_endpoint` as `"http://" + r.Host + "/token"` per
+request, computed at request time from the incoming `http.Request`'s own
+`Host` field. `NewOIDCHandler` no longer takes a `tokenURL` parameter;
+`cmd/osac-mock-provider/main.go` no longer computes one from
+`oidcLn.Addr().String()`.
+
+**Rationale:** the first real run of the kind-based e2e infra
+(`osac-sp-e2e-suite`, [#20](https://github.com/dcm-project/osac-service-provider/pull/20))
+caught a genuine bug the mock's own unit/integration tests couldn't: TC-E2E-050
+and TC-E2E-070 failed because `osac-sp`'s OIDC token fetch got
+`dial tcp [::]:9091: connect: connection refused`. Root cause — the pre-fix
+`NewOIDCHandler(tokenURL, logger)` baked `tokenURL` from
+`oidcLn.Addr().String()` once at startup in `main.go`. That's correct for a
+loopback-bound listener (`127.0.0.1:0`, what TC-I-031's integration test and
+all prior unit tests used) but wrong for a wildcard bind (`:9091`, what
+`test/e2e/manifests/osac-mock-provider.yaml`'s `MOCK_OIDC_ADDRESS` uses so the
+Service can reach the pod at all): `net.Listener.Addr().String()` on a
+wildcard bind reports `[::]:9091`, which is the local kernel's own unspecified
+-address representation, not a routable address any other pod can dial. No
+existing test exercised a wildcard bind's discovery document, so this shipped
+undetected until a real cross-pod network call in CI exposed it — exactly the
+class of bug this e2e tier exists to catch (spec's §1 "closes the specific gap
+control-plane#40 identified").
+
+The fix (deriving `token_endpoint` from each request's `Host` header instead)
+is the standard technique real OIDC providers use to self-reference correctly
+regardless of how a client reached them (a wildcard-bound server has no way to
+know an externally-reachable address for itself in advance; the request that
+just arrived does). It requires no new configuration and is not a special
+case for e2e/Kubernetes: it also transparently keeps working for
+TC-I-031's loopback-address integration test (`r.Host` there is whatever
+`127.0.0.1:<port>` the test's own client dialed) and for the unit suite's
+`httptest.Server`-backed tests (`r.Host` is `httptest.Server`'s own
+`127.0.0.1:<port>`).
+
+Added TC-U-152 as the regression test: two requests carrying different `Host`
+headers to the same handler instance must get back two different
+`token_endpoint` values matching each request's own `Host` — this is what the
+pre-fix, construction-time-fixed `doc` value could never satisfy.
+
+**Related requirements:** REQ-MOCK-080
+
+## DD-140: `test/e2e`'s TC-E2E-070 asserts `control-plane`'s real `"ready"` vocabulary, not `osac-sp`'s `"healthy"`
+
+**Decision:** TC-E2E-070's assertion on `control-plane`'s `ListProviders`
+`health_status` field checks for the literal string `"ready"`
+(`healthStatusReady`, a local constant mirroring `control-plane`'s own
+unexported `internal/sp/store/model.HealthStatusReady`), not `"healthy"`.
+
+**Rationale:** the test-plan's original TC-E2E-070 description assumed
+`control-plane` would echo whatever status string the polled provider's own
+`/health` endpoint returns. The first real e2e run proved that assumption
+wrong: `control-plane`'s `healthcheck.Monitor.performHealthCheck` reads the
+polled provider's `status` field and translates it into its **own**
+three-value vocabulary (`model.HealthStatusReady = "ready"` /
+`HealthStatusUnhealthy = "unhealthy"` / `HealthStatusUnavailable =
+"unavailable"`, confirmed directly against `control-plane`'s source in the
+Go module cache) — it does not pass the polled string through verbatim.
+`osac-sp`'s own `/health` reporting `"healthy"` and `control-plane` recording
+`"ready"` for that same provider are therefore both correct, independent
+statements at two different layers, not a contract mismatch. This is exactly
+the class of cross-repo wire-contract fact this e2e tier exists to pin down
+empirically rather than assume (spec's `AC-E2E-030` note: "confirmed against
+the real API at implementation time").
+
+**Related requirements:** REQ-E2E-060
+
+## DD-141: `Server.Run`'s internal readiness self-probe retries indefinitely (gated only by ctx cancellation), not just once per a fixed timeout
+
+**Decision:** `internal/apiserver.Server.Run` now gates its `onReady`
+callback (which starts registration, REQ-REG-050) on a new
+`waitForReadyUntilCancelled` method, not a single call to `waitForReady`.
+`waitForReadyUntilCancelled` repeatedly runs `waitForReady`'s existing
+bounded polling window (unchanged: still `readinessProbeTimeout` = 5s,
+`readinessProbeInterval` = 50ms, still fully covered by TC-U-077/078/079/089
+exactly as before) and, whenever one window elapses without success, retries
+a fresh window — paced by `readinessInterval` between attempts — instead of
+giving up. The **only** way `waitForReadyUntilCancelled` ever returns an
+error (and thus permanently skips `onReady`) is if the server's shutdown
+context is cancelled before a window ever succeeds.
+
+**Rationale:** a real run of the kind-based e2e infra
+(`osac-sp-e2e-suite`, [#20](https://github.com/dcm-project/osac-service-provider/pull/20),
+[failed CI run](https://github.com/dcm-project/osac-service-provider/actions/runs/30958037842/job/92155524084))
+caught a genuine production reliability bug in `osac-sp` itself — not the
+mock or the e2e infra — that no unit or integration test had exercised: the
+`kind` node was running Postgres, NATS, `control-plane`, `osac-sp`, and
+`osac-mock-provider` simultaneously, and under that real CPU contention the
+pod's own `/health` responses slowed to ~1s each (visible in
+`osac-service-provider`'s logs). The pre-fix `Run` called `waitForReady`
+exactly once with its single 5-second window; that window elapsed with zero
+successful responses, so `Run` logged `"readiness probe failed, skipping
+onReady callback"` and **never called `onReady` again for the rest of the
+process's life** — `internal/registration.Registrar` never started, so
+`osac-sp` never registered with `control-plane` at all. The pod otherwise
+ran fine: `/health` kept returning 200 OK moments later once contention
+eased, and the pod's own Kubernetes readinessProbe (a separate, external,
+repeatedly-retried check — unaffected by this bug) considered it `Ready`
+throughout. Only the one-shot internal self-probe's single window mattered,
+and it had already permanently given up before the node settled down. All
+four e2e specs downstream of registration (TC-E2E-020/030/040/070) then
+correctly failed with "expected 1 provider, got 0" / "control-plane never
+recorded ready" after their own 60s polling windows — the e2e assertions
+were right; `osac-sp`'s own startup resilience was the actual bug.
+
+This directly contradicts this codebase's own stated resilience philosophy
+(CLAUDE.md's "Non-blocking bootstrap": OIDC token fetch and the OSAC gRPC
+dial both "retry indefinitely with backoff" and never permanently give up)
+— the readiness self-probe was the one bootstrap step that *did* permanently
+give up, and no REQ/AC ever specified that one-shot behavior; it was purely
+an implementation artifact never deliberately specified (TC-U-078's mapped
+REQ-HTTP-030 is actually about SIGTERM graceful shutdown, reused loosely for
+lack of a dedicated readiness REQ at the time). A pod that is merely slow to
+start — not permanently broken — should not be permanently prevented from
+ever registering; requiring a full pod restart to recover from a transient
+startup hiccup is a worse outcome than simply retrying, since retrying costs
+nothing (the probe target is the process's own loopback listener, not a
+remote/rate-limited service, so no backoff is needed the way the OIDC/gRPC
+loops need one against a real remote server).
+
+The fix deliberately leaves `waitForReady` itself, and its three existing
+unit tests (TC-U-078's timeout-error contract, TC-U-079's
+context-cancellation contract, TC-U-089's malformed-address contract), fully
+unchanged — the bug was in `Run`'s one-shot *use* of `waitForReady`'s
+result, not in `waitForReady`'s own per-window behavior. Added REQ-REG-052 /
+AC-REG-031 to codify the required resilient-gating behavior, and TC-U-153
+(retries past one elapsed window and still succeeds) / TC-U-154 (context
+cancellation, not an elapsed window, is what actually stops retrying) as
+regression coverage — see `.ai/test-plans/osac-sp-unit.test-plan.md`.
+
+**Related requirements:** REQ-REG-052
+
+## DD-142: TC-E2E-050/060 poll (`Eventually`) for `osac-sp`'s health status instead of asserting it in a single request
+
+**Decision:** `test/e2e/health_test.go`'s `eventuallyHealthy` helper wraps
+`GET /api/v1alpha1/{clusters,vms}/health` in `Eventually(..., 30*time.Second,
+500*time.Millisecond).Should(Equal("healthy"))`, returning the converged
+response for further field assertions. TC-E2E-050 and TC-E2E-060 now both
+call it independently, rather than each calling the prior single-shot
+`getHealth` directly.
+
+**Rationale:** prompted directly by the user questioning a suspiciously fast
+(~1.8s) `kubectl wait --for=condition=Available` in a
+[passing run](https://github.com/dcm-project/osac-service-provider/actions/runs/30959010814/job/92158554429)
+right after DD-141 landed — "are you sure osac was deployed?" Investigating
+that question surfaced a real, separate latent flakiness risk (not the
+question's literal premise: the deployment *was* genuine — image already
+`kind load`-ed, `Deployment`/`Service` objects created, pod scheduled — but
+the reasoning for *why* "Available" in ~1.8s is unsurprising, and *not*
+strong evidence of full OSAC connectivity, exposed the actual bug below).
+
+`kubectl wait --for=condition=Available` and Kubernetes' own `readinessProbe`
+both only check the HTTP status code (2xx) of `GET
+/api/v1alpha1/clusters/health`. Per `internal/health.Handler.checkHealth`
+(and CLAUDE.md's documented API design, DD-010), that endpoint **always**
+returns HTTP `200` — the real health verdict is only in the JSON body's
+`status` field (`"healthy"`/`"unhealthy"`), which is deliberately invisible
+to a plain `httpGet` probe. So "Available" in ~1.8s only proves the
+container started and its HTTP server bound — not that `osac-sp`'s
+`internal/osac.Bootstrap` had actually finished its real OIDC token fetch +
+gRPC probe against `osac-mock-provider` yet.
+
+Auditing what *does* prove that led to the actual finding: TC-E2E-050/060
+(pre-fix) called `getHealth` exactly once and asserted `status ==
+"healthy"` directly, with no retry. In the run under discussion, this
+"worked" only because Ginkgo v2 by default randomizes the order of
+*top-level containers* between runs (a fresh, printed "Random Seed" each
+run — confirmed non-deterministic), and this run happened to schedule the
+"registration" `Describe` block — whose TC-E2E-040 spec unconditionally
+`Consistently`-waits a fixed 90 seconds — before the "health" `Describe`
+block, incidentally giving `Bootstrap` 90+ seconds of real wall-clock time
+to converge before the health assertions ever ran. Nothing guarantees that
+ordering: a run whose seed schedules "health" first could hit the
+single-shot check within ~1-2s of pod start, before `Bootstrap`'s
+async OIDC/gRPC handshake against `osac-mock-provider` (itself racing
+against `osac-mock-provider`'s own pod becoming `Ready` and its Service
+gaining endpoints) necessarily completes — the exact same class of
+startup-timing race DD-141 fixed in `Server.Run`'s own internal readiness
+gate, just on this suite's side instead of `osac-sp`'s.
+
+The fix makes each `It` self-sufficient rather than implicitly depending on
+another, unrelated `Describe` block's incidental duration — matching the
+polling discipline TC-E2E-070 already used for exactly the same class of
+async-convergence reason. Priority given to per-spec independence (each
+`It` converges on its own) over relying on Ginkgo's within-container
+declaration-order guarantee (which does hold, but is a more fragile,
+implicit inter-spec dependency to lean on than making every spec correct in
+isolation, including under `--focus`/individual execution).
+
+No REQ/AC change: `.ai/specs/osac-sp-e2e-suite.spec.md`'s AC-E2E-030 already
+just requires the body to report healthy, not a specific
+single-shot-vs-polling implementation strategy. `.ai/test-plans/
+osac-sp-e2e-suite.test-plan.md`'s TC-E2E-050/060 descriptions were updated
+to document the polling discipline explicitly.
+
+**Related requirements:** REQ-E2E-060
+
+---
+
+## DD-143: `osac-mock-provider`'s `Clusters/GetKubeconfig` is implemented, correcting Phase 1's original out-of-scope call
+
+**Decision:** `test/mockprovider/clusters.go`'s `ClustersServer` now
+implements `GetKubeconfig` (REQ-MOCK-120): for a known `id` it returns a
+deterministic, non-functional stub kubeconfig (base64-encoded YAML with the
+cluster `id` as its context name); for an unknown `id` it returns gRPC
+`NOT_FOUND`, mirroring the other four CRUD-shaped services' `Get` semantics
+(REQ-MOCK-040). `GetKubeconfigViaHttp`/`GetPassword(ViaHttp)` remain
+unimplemented (still genuinely uncalled by `osac-sp`).
+
+**Rationale:** found while building M3/M4 CRUD e2e coverage on top of this
+mock, not from re-reading the original architecture diagrams. Phase 1's
+spec (`.ai/specs/osac-sp-e2e-mock-provider.spec.md` §1) had explicitly
+scoped plain `GetKubeconfig` out, reasoning "none of these are called by
+`osac-sp` today (Milestone 3/4's architecture diagrams only ever invoke
+Create/Get/List/Delete)" — true of the diagrams, false of the actual M3
+implementation: `internal/cluster.Service.Get` calls
+`Clusters/GetKubeconfig` whenever the mapped status is `ACTIVE`
+(`osac-sp-m3-cluster-crud.spec.md` REQ-GET-020). Since `Clusters/Create`
+sets a terminal `CLUSTER_STATE_READY` immediately (REQ-MOCK-030, no
+simulated `PROGRESSING` delay), *every* `Get` of a mock-created cluster
+maps to `ACTIVE` and hits this path — so leaving `GetKubeconfig`
+`UNIMPLEMENTED` would have made the very first `cluster_crud_test.go` e2e
+spec's `Get` call fail with a mapped `500`, not the `200` it exercises.
+This is exactly the class of gap this M3/M4 e2e validation work exists to
+catch before it reaches a real deployment.
+
+**Related requirements:** REQ-MOCK-120, REQ-GET-020 (M3)
+
+---
+
+## DD-144: `test/e2e/manifests/osac-service-provider.yaml` gains `DCM_NATS_URL`, required now that M5 has merged
+
+**Decision:** the e2e Deployment manifest now sets
+`DCM_NATS_URL=nats://dcm-nats:4222`, pointing at the `dcm-nats` StatefulSet
+this workflow's own `helm install dcm control-plane/deploy/helm/dcm` step
+already deploys and waits on (`.github/workflows/e2e.yaml`'s
+`kubectl rollout status statefulset/dcm-nats`).
+
+**Rationale:** Milestone 5 (REQ-PUBLISH-010, now merged to `main` via #25)
+made `DCM_NATS_URL` a required, fail-fast `DCMConfig` field —
+`internal/config.Load()` errors out before any subsystem starts if it's
+empty. With `main` now merged into this branch (bringing M5/M6 in), the
+mock e2e's `osac-service-provider` Deployment would crash-loop on startup
+without this, since no manifest here previously set it (this pod had
+nothing to gate on before M5 existed). Caught by this branch's own `e2e`
+CI job going red (`kubectl wait --for=condition=Available` timing out on
+both `osac-service-provider`/`osac-mock-provider` Deployments) immediately
+after the M5/M6 merge — not from a design review. The exact value was
+already known and pre-validated on a separate, ahead-of-time branch (see
+`e2e/crud-coverage`'s own `DD-146`, which added this same fix proactively
+before M5 had even landed, anticipating exactly this gap) — reused
+verbatim here since this branch is the one that actually now needs it.
+
+**Related requirements:** REQ-PUBLISH-010 (M5)
+
+---
+
+## DD-147: `control-plane`#51 forces Phase 2 (`environment-agent`) migration — deferred until current PR stack lands
+
+**Decision:** `control-plane`'s `main` deleted `api/sp/v1alpha1/provider`
+([control-plane#51](https://github.com/dcm-project/control-plane/pull/51),
+2026-08-19), permanently invalidating DD-050's Phase 1 target.
+`environment-agent` has matured past the stub state DD-050 cited, so
+Phase 2 is now mandatory, not optional — but is deliberately deferred
+until the in-flight PR stack (#29, #22, #24, #27, #32) lands, to keep it a
+clean refactor rather than mid-flight scope creep. `.github/workflows/e2e.yaml`'s
+`CONTROL_PLANE_REF` is pinned to the last commit before #51 as a stopgap
+in the meantime. Pinning the chart ref alone was not sufficient — the
+chart's `values.yaml` hardcodes `global.imageTag: main` as its own default
+regardless of which chart commit is checked out, so Helm kept pulling the
+floating (already-broken) `:main` image. `CONTROL_PLANE_IMAGE_TAG` pins the
+actual deployed image to the matching short-SHA tag
+(`shared-workflows`' `build-push-quay.yaml` publishes both `main` and
+`${GITHUB_SHA:0:7}` on every push), verified present on quay.io before use.
+Full RCA, maturity evidence, and known implementation
+deltas are tracked in
+[#33](https://github.com/dcm-project/osac-service-provider/issues/33);
+DD-050 will be formally superseded once that work actually starts.
+
+**Related requirements:** REQ-REG-010, REQ-REG-090, REQ-REG-100 (all to be
+revised when Phase 2 starts — see #33)
+
+---
+
+## DD-148: `.golangci.yml` hardened with 10 additional linters, evidence-tested before adoption
 
 **Decision:** added `nestif`, `errorlint`, `forcetypeassert`, `predeclared`,
 `perfsprint`, `intrange`, `gocyclo` (`min-complexity: 15`), `funlen`
