@@ -2130,3 +2130,28 @@ Each candidate was run against this repo's actual code before being adopted, not
 Deliberately scoped to this repo first, not simultaneously rolled out to sibling SPs — this repo's `.golangci.yml` already functions as the de facto shared template (byte-identical across 4 other repos), so validating the change here first, then propagating, is lower-risk than a coordinated multi-repo change.
 
 **Related requirements:** none (tooling/process decision, no REQ/AC).
+
+---
+
+## DD-149: `osac-mock-provider`'s `ClusterTemplates/Get` is implemented, correcting Phase 1's original out-of-scope call
+
+**Decision:** `test/mockprovider/clustertemplates.go` adds a trivial,
+stateless `ClusterTemplatesServer` recognizing exactly one well-known
+template id (`default-hcp`, matching the e2e suite's own
+`validClusterCreateBody`), registered on `cmd/osac-mock-provider`'s
+`grpc.Server` alongside the other five fakes (REQ-MOCK-130).
+
+**Rationale:** same category of gap as DD-143's `Clusters/GetKubeconfig`
+correction, found the same way — while building this suite's own Cluster/VM
+CRUD coverage (Milestone 3/4, REQ-E2E-090..102) against a combined branch
+before either milestone's PR merged. `osac-mock-provider` (Phase 1 of the
+e2e infra) was built before Milestone 3 existed, so it had no way to
+anticipate that `internal/cluster.Service.Create`'s `resolveNodeSetKey`
+(M3 REQ-CREATE-080) would call `ClusterTemplates/Get` on every real Cluster
+Create. Without this fix, every real e2e Cluster Create against the mock
+fails gRPC `UNIMPLEMENTED`, surfaced by `osac-sp` as a generic
+500/`INTERNAL` — invisible from `internal/cluster`'s own bufconn-backed
+unit/integration tests, which fake `ClusterTemplates` directly and so never
+exercise the mock binary's actual (missing) implementation.
+
+**Related requirements:** REQ-MOCK-130, REQ-E2E-090, REQ-E2E-100
