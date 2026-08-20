@@ -348,10 +348,10 @@ var _ = Describe("Publish lifecycle", func() {
 	// in review (DD-077) — with the single background worker (REQ-PUBLISH-060)
 	// retrying one key to exhaustion before ever looking at another, a
 	// persistently failing resource could starve every *other* resource's
-	// delivery indefinitely. Publishes vm-1 (which always fails) then vm-2
-	// (which always succeeds) and asserts vm-2 is delivered promptly, well
-	// before vm-1's backoff would ever let the old exhaustive-retry
-	// implementation get around to it.
+	// delivery indefinitely. Publishes vm-1 (which always fails) then c-1 on
+	// a different subject (which always succeeds) and asserts c-1 is
+	// delivered promptly, well before vm-1's backoff would ever let the old
+	// exhaustive-retry implementation get around to it.
 	It("does not let a persistently failing key block delivery of an unrelated key (TC-U-419)", func() {
 		fake := &fakeJS{
 			publishFunc: func(_ int, subject string, _ []byte) error {
