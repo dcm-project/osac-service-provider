@@ -40,7 +40,11 @@ func MapStatus(err error, status *publicv1.ClusterStatus) v1alpha1.ClusterStatus
 		return v1alpha1.ClusterStatusPROGRESSING
 	}
 
-	switch status.GetState() {
+	// Intentionally partial: only the terminal-ish states short-circuit
+	// here. UNSPECIFIED is already handled above; PROGRESSING/READY (and
+	// any future state) fall through by design to the DEGRADED condition
+	// check below, then the final switch.
+	switch status.GetState() { //nolint:exhaustive // see comment above
 	case publicv1.ClusterState_CLUSTER_STATE_FAILED:
 		return v1alpha1.ClusterStatusFAILED
 	case publicv1.ClusterState_CLUSTER_STATE_DELETING:

@@ -22,6 +22,15 @@ import (
 
 var discardLogger = slog.New(slog.DiscardHandler)
 
+// Fixture-local mirrors of the fake control-plane's response shapes and
+// registration.go's own (unexported) service-type strings — this is an
+// external (_test) package, so it cannot import those constants directly.
+const (
+	clusterServiceType     = "cluster"
+	contentTypeJSON        = "application/json"
+	contentTypeProblemJSON = "application/problem+json"
+)
+
 // capturedRequest is one decoded POST /providers request seen by
 // fakeProviderTransport.
 type capturedRequest struct {
@@ -89,7 +98,7 @@ func (f *fakeProviderTransport) requestsFor(serviceType string) []capturedReques
 }
 
 func alwaysCreated(p cpv1alpha1.Provider) (int, any, string) {
-	return http.StatusCreated, p, "application/json"
+	return http.StatusCreated, p, contentTypeJSON
 }
 
 func testConfig() *config.Config {
@@ -132,9 +141,9 @@ var _ = Describe("Registrar", func() {
 		defer cancel()
 		r.Start(ctx)
 
-		Eventually(func() []capturedRequest { return transport.requestsFor("cluster") }, "200ms", "5ms").ShouldNot(BeEmpty())
+		Eventually(func() []capturedRequest { return transport.requestsFor(clusterServiceType) }, "200ms", "5ms").ShouldNot(BeEmpty())
 
-		req := transport.requestsFor("cluster")[0]
+		req := transport.requestsFor(clusterServiceType)[0]
 		Expect(req.provider.Name).To(Equal("osac-sp-cluster"))
 		Expect(req.provider.Endpoint).To(Equal("https://osac-sp.example.com/api/v1alpha1/clusters"))
 		Expect(req.provider.SchemaVersion).To(Equal("v1alpha1"))
@@ -247,7 +256,7 @@ var _ = Describe("Registrar", func() {
 		defer cancel()
 		r.Start(ctx)
 
-		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "500ms", "5ms").Should(BeNumerically(">=", 3))
+		Eventually(func() int { return len(transport.requestsFor(clusterServiceType)) }, "500ms", "5ms").Should(BeNumerically(">=", 3))
 	})
 
 	// TC-U-055: retryable failures (5xx) use exponential backoff and
@@ -260,9 +269,9 @@ var _ = Describe("Registrar", func() {
 			defer mu.Unlock()
 			if failuresLeft > 0 {
 				failuresLeft--
-				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, "application/problem+json"
+				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
 			}
-			return http.StatusCreated, p, "application/json"
+			return http.StatusCreated, p, contentTypeJSON
 		}}
 		r := newTestRegistrar(transport)
 
@@ -270,13 +279,13 @@ var _ = Describe("Registrar", func() {
 		defer cancel()
 		r.Start(ctx)
 
-		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "500ms", "5ms").Should(BeNumerically(">=", 4))
+		Eventually(func() int { return len(transport.requestsFor(clusterServiceType)) }, "500ms", "5ms").Should(BeNumerically(">=", 4))
 	})
 
 	// TC-U-054: a non-retryable 4xx stops retrying for that registration.
 	It("stops retrying after a non-retryable 4xx response (TC-U-054)", func() {
 		transport := &fakeProviderTransport{responder: func(_ cpv1alpha1.Provider) (int, any, string) {
-			return http.StatusUnprocessableEntity, cpv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, "application/problem+json"
+			return http.StatusUnprocessableEntity, cpv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, contentTypeProblemJSON
 		}}
 		r := newTestRegistrar(transport)
 
@@ -288,11 +297,11 @@ var _ = Describe("Registrar", func() {
 		// status, so Done() closes without needing context cancellation.
 		Eventually(r.Done(), "200ms", "5ms").Should(BeClosed())
 
-		clusterCount := len(transport.requestsFor("cluster"))
+		clusterCount := len(transport.requestsFor(clusterServiceType))
 		vmCount := len(transport.requestsFor("vm"))
 
 		// No further attempts after Done() closes.
-		Consistently(func() int { return len(transport.requestsFor("cluster")) }, "50ms", "5ms").Should(Equal(clusterCount))
+		Consistently(func() int { return len(transport.requestsFor(clusterServiceType)) }, "50ms", "5ms").Should(Equal(clusterCount))
 		Consistently(func() int { return len(transport.requestsFor("vm")) }, "50ms", "5ms").Should(Equal(vmCount))
 	})
 
@@ -303,7 +312,7 @@ var _ = Describe("Registrar", func() {
 		release := make(chan struct{})
 		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
 			<-release // blocks until explicitly released below — proves Start() didn't wait for this
-			return http.StatusCreated, p, "application/json"
+			return http.StatusCreated, p, contentTypeJSON
 		}}
 		r := newTestRegistrar(transport)
 
@@ -332,10 +341,10 @@ var _ = Describe("Registrar", func() {
 	// vm is unaffected).
 	It("registers vm successfully regardless of cluster's ongoing retries (TC-U-057)", func() {
 		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
-			if p.ServiceType == "cluster" {
-				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, "application/problem+json"
+			if p.ServiceType == clusterServiceType {
+				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
 			}
-			return http.StatusCreated, p, "application/json"
+			return http.StatusCreated, p, contentTypeJSON
 		}}
 		r := newTestRegistrar(transport)
 
@@ -347,7 +356,7 @@ var _ = Describe("Registrar", func() {
 		Expect(transport.requestsFor("vm")[0].provider.ServiceType).To(Equal("vm"))
 
 		// cluster keeps retrying in the background, unaffected by vm's success.
-		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "300ms", "5ms").Should(BeNumerically(">=", 2))
+		Eventually(func() int { return len(transport.requestsFor(clusterServiceType)) }, "300ms", "5ms").Should(BeNumerically(">=", 2))
 	})
 
 	// TC-U-060: backoff growth is capped at maxBackoff, not left to grow
@@ -361,20 +370,20 @@ var _ = Describe("Registrar", func() {
 		var mu sync.Mutex
 		failuresLeft := 8
 		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
-			if p.ServiceType != "cluster" {
+			if p.ServiceType != clusterServiceType {
 				// vm registers immediately; only cluster's own retry
 				// sequence is under test here, kept independent of the
 				// concurrently-running vm loop per this suite's
 				// independence convention (TC-U-057).
-				return http.StatusCreated, p, "application/json"
+				return http.StatusCreated, p, contentTypeJSON
 			}
 			mu.Lock()
 			defer mu.Unlock()
 			if failuresLeft > 0 {
 				failuresLeft--
-				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, "application/problem+json"
+				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
 			}
-			return http.StatusCreated, p, "application/json"
+			return http.StatusCreated, p, contentTypeJSON
 		}}
 		r := newTestRegistrar(transport,
 			registration.WithInitialBackoff(5*time.Millisecond),
@@ -386,7 +395,7 @@ var _ = Describe("Registrar", func() {
 		defer cancel()
 		r.Start(ctx)
 
-		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "700ms", "5ms").Should(BeNumerically(">=", 9))
+		Eventually(func() int { return len(transport.requestsFor(clusterServiceType)) }, "700ms", "5ms").Should(BeNumerically(">=", 9))
 	})
 
 	// TC-U-053: a 409 Conflict is non-retryable, exactly like any other 4xx
@@ -397,9 +406,9 @@ var _ = Describe("Registrar", func() {
 	It("treats a vm 409 conflict as non-retryable, same as other 4xx (TC-U-053)", func() {
 		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
 			if p.ServiceType == "vm" {
-				return http.StatusConflict, cpv1alpha1.Error{Title: "already registered", Type: "ALREADY_EXISTS"}, "application/problem+json"
+				return http.StatusConflict, cpv1alpha1.Error{Title: "already registered", Type: "ALREADY_EXISTS"}, contentTypeProblemJSON
 			}
-			return http.StatusCreated, p, "application/json"
+			return http.StatusCreated, p, contentTypeJSON
 		}}
 		r := newTestRegistrar(transport, registration.WithReRegistrationInterval(10*time.Millisecond))
 
@@ -412,6 +421,6 @@ var _ = Describe("Registrar", func() {
 		Consistently(func() int { return len(transport.requestsFor("vm")) }, "50ms", "5ms").Should(Equal(1))
 
 		// cluster is unaffected: it keeps succeeding/renewing independently.
-		Eventually(func() int { return len(transport.requestsFor("cluster")) }, "300ms", "5ms").Should(BeNumerically(">=", 2))
+		Eventually(func() int { return len(transport.requestsFor(clusterServiceType)) }, "300ms", "5ms").Should(BeNumerically(">=", 2))
 	})
 })
