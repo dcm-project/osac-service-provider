@@ -1,7 +1,6 @@
 package statuspoll
 
 import (
-	"fmt"
 	"strings"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
@@ -46,7 +45,7 @@ func clusterMessage(status v1alpha1.ClusterStatus, conditions []*publicv1.Cluste
 			break
 		}
 	}
-	return fmt.Sprintf("cluster is %s", strings.ToLower(string(status)))
+	return "cluster is " + strings.ToLower(string(status))
 }
 
 // vmMessage derives a VM status update's human-readable message
@@ -67,5 +66,5 @@ func vmMessage(status v1alpha1.VMStatus, conditions []*publicv1.ComputeInstanceC
 			return reason
 		}
 	}
-	return fmt.Sprintf("vm is %s", strings.ToLower(string(status)))
+	return "vm is " + strings.ToLower(string(status))
 }
