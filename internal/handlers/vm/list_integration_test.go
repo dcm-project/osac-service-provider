@@ -2,6 +2,7 @@ package vm_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -63,9 +64,20 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 	// across two real, sequential HTTP requests.
 	It("round-trips page_token through OSAC's offset across two real HTTP requests (TC-I-321)", func() {
 		var recordedOffsets []int32
+		// Items are keyed off the requested offset so the two pages are
+		// distinguishable by content, not just by the offsets the SP
+		// happened to request — otherwise a bug that returned page 1's
+		// items again for page 2 would go undetected.
 		f.fake.listFunc = func(req *publicv1.ComputeInstancesListRequest) (*publicv1.ComputeInstancesListResponse, error) {
 			recordedOffsets = append(recordedOffsets, req.GetOffset())
-			return &publicv1.ComputeInstancesListResponse{Size: 50, Total: 100}, nil
+			items := make([]*publicv1.ComputeInstance, 50)
+			for i := range items {
+				items[i] = &publicv1.ComputeInstance{
+					Id:     fmt.Sprintf("v%d", req.GetOffset()+int32(i)),
+					Status: &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING},
+				}
+			}
+			return &publicv1.ComputeInstancesListResponse{Size: 50, Total: 100, Items: items}, nil
 		}
 
 		first := listVMs(f, "")
@@ -78,8 +90,12 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 		second := listVMs(f, "?page_token="+*firstList.NextPageToken)
 		defer func() { _ = second.Body.Close() }()
 		Expect(second.StatusCode).To(Equal(http.StatusOK))
+		var secondList v1alpha1.VirtualMachineList
+		Expect(json.NewDecoder(second.Body).Decode(&secondList)).To(Succeed())
 
 		Expect(recordedOffsets).To(Equal([]int32{0, 50}))
+		Expect(*firstList.Results[0].Id).To(Equal("v0"))
+		Expect(*secondList.Results[0].Id).To(Equal("v50"))
 	})
 
 	// TC-I-322 (REQ-VMLIST-020, REQ-VMERR-010, AC-VMLIST-030): a

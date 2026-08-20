@@ -1718,6 +1718,20 @@ keeps this binary's env vars unambiguously distinct from the real SP's own,
 since both binaries may run side by side in the same `kind` pod/namespace
 once Phase 2 wires them together.
 
+---
+
+## DD-134: `List` pagination advances by `len(results)` actually received, not the server-reported `Size` field
+
+**Decision:** `internal/cluster.List` and `internal/vm.List` compute the next
+`page_token`'s offset from `len(results)` (the number of items this SP
+actually received and mapped), not from OSAC's `resp.GetSize()` field. An
+empty page (`len(results) == 0`) never emits a `next_page_token`, regardless
+of what `resp.GetTotal()` reports.
+
+**Rationale:** found during review of [PR #25](https://github.com/dcm-project/osac-service-provider/pull/25) (`internal/statuspoll`, which copied this exact pagination shape from these two functions' own doc comments — "mirroring `internal/cluster/list.go`'s own offset/limit pagination math exactly"). The original `nextOffset := offset + resp.GetSize()` trusts OSAC's self-reported `Size` field for computing forward progress; if `Size` and `Total` are ever inconsistent (e.g. `Size=0` while `Total>offset` — a malformed/buggy upstream response), `nextOffset` never advances past the current `offset`, so `List` would keep reissuing the *exact same* `page_token` it just consumed. Unlike `internal/statuspoll`'s own internal pagination loop (which could spin forever inside this SP's process), this doesn't hang *this* SP — each `List` call is one bounded HTTP request — but it pushes the same failure onto whichever caller (`control-plane`) faithfully follows `next_page_token`: that caller would loop forever refetching an empty page it already has. `len(results)` is what this SP actually received and can prove happened; it cannot be inconsistent with itself the way a separate self-reported counter can be with `Total`.
+
+**Related requirements:** REQ-LIST-040, REQ-VMLIST-040
+
 **Related requirements:** REQ-MOCK-110
 
 ---

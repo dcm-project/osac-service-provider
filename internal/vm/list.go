@@ -56,10 +56,15 @@ func (s *Service) List(ctx context.Context, params v1alpha1.ListVMsParams) (v1al
 	list := v1alpha1.VirtualMachineList{Results: results}
 
 	// REQ-VMLIST-040: next_page_token is present exactly when there are
-	// further results beyond this page, not merely when this page is short.
-	nextOffset := offset + resp.GetSize()
-	if nextOffset < resp.GetTotal() {
-		list.NextPageToken = util.Ptr(encodePageToken(nextOffset))
+	// further results beyond this page, not merely when this page is
+	// short. Advances using len(results) actually received, not the
+	// server-reported resp.GetSize() (DD-134) — see internal/cluster's
+	// List (same fix, same rationale).
+	if len(results) > 0 {
+		nextOffset := offset + int32(len(results))
+		if nextOffset < resp.GetTotal() {
+			list.NextPageToken = util.Ptr(encodePageToken(nextOffset))
+		}
 	}
 	return list, nil
 }
