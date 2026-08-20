@@ -2,6 +2,7 @@ package cluster_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -59,13 +60,20 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 	// TC-I-221 (REQ-LIST-020/040, AC-LIST-020): pagination round-trips
 	// across two real, sequential HTTP requests.
 	It("round-trips page_token through OSAC's offset across two real HTTP requests (TC-I-221)", func() {
-		items := make([]*publicv1.Cluster, 50)
-		for i := range items {
-			items[i] = &publicv1.Cluster{Id: "c1", Status: &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY}}
-		}
 		var recordedOffsets []int32
+		// Items are keyed off the requested offset so the two pages are
+		// distinguishable by content, not just by the offsets the SP
+		// happened to request — otherwise a bug that returned page 1's
+		// items again for page 2 would go undetected.
 		f.fake.listFunc = func(req *publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
 			recordedOffsets = append(recordedOffsets, req.GetOffset())
+			items := make([]*publicv1.Cluster, 50)
+			for i := range items {
+				items[i] = &publicv1.Cluster{
+					Id:     fmt.Sprintf("c%d", req.GetOffset()+int32(i)),
+					Status: &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY},
+				}
+			}
 			return &publicv1.ClustersListResponse{Size: 50, Total: 100, Items: items}, nil
 		}
 
@@ -79,8 +87,12 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 		second := listClusters(f, "?page_token="+*firstList.NextPageToken)
 		defer func() { _ = second.Body.Close() }()
 		Expect(second.StatusCode).To(Equal(http.StatusOK))
+		var secondList v1alpha1.ClusterList
+		Expect(json.NewDecoder(second.Body).Decode(&secondList)).To(Succeed())
 
 		Expect(recordedOffsets).To(Equal([]int32{0, 50}))
+		Expect(*firstList.Results[0].Id).To(Equal("c0"))
+		Expect(*secondList.Results[0].Id).To(Equal("c50"))
 	})
 
 	// TC-I-222 (REQ-LIST-030, AC-LIST-030): List responses never include
