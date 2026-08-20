@@ -1432,6 +1432,56 @@ REQ-PUBLISH-030, REQ-PUBLISH-080
 
 ---
 
+## DD-077: `Publisher`'s single worker delivers in per-round sweeps, not one key retried to exhaustion, to prevent head-of-line blocking
+
+**Decision:** `Publisher.run`'s single background worker (REQ-PUBLISH-060) no
+longer picks one pending key and retries it with backoff until it succeeds
+before ever looking at another key. Instead, each round
+(`attemptRound`) makes exactly one delivery attempt for *every* pending key
+that isn't currently cooling down from a prior failure, then sleeps only
+until the next key becomes ready (or a fresh `Publish` wakes it early via
+the existing `wake` channel). Per-key backoff state (`retryState`: current
+backoff, next-eligible-attempt time) is tracked in a new `Publisher.retry`
+map, populated on failure (`bumpRetry`) and cleared on success or a
+malformed-envelope drop (`clearRetry`). `deliverLatest` (the old
+retry-to-exhaustion loop) is replaced by `attemptOnce`, a single-shot
+version of the same re-read-current-value-before-every-attempt logic
+(DD-072/DD-076 item 1) — that guarantee is unchanged, just now evaluated
+once per round instead of once per backoff sleep.
+
+**Problem:** found while reassessing merged M5 PRs (#25) for latent issues
+before opening further work — not from a bug report. With exactly one
+worker (REQ-PUBLISH-060, a deliberate constraint so no two deliveries for
+different keys could ever race) previously bound to the *old* exhaustive
+retry-one-key loop, a single persistently-failing resource (e.g. a bad
+provider ID, or a subject the broker permanently rejects) could occupy the
+worker for its entire backoff sequence — indefinitely, per REQ-PUBLISH-070's
+"retry indefinitely" requirement — starving every *other* resource's status
+updates for as long as that one key kept failing. Two updates racing at the
+JetStream/NATS layer was never the concern (JetStream's own per-subject
+ordering already handles that); the concern was purely one Go-level worker
+loop's scheduling starving unrelated work it had no reason to block on.
+
+**Why per-round sweeps, not multiple workers:** REQ-PUBLISH-060 fixes
+"exactly one worker goroutine" as a MUST, so running one worker per subject
+(or per key) was not an option without a spec change. Round-robin
+scheduling within the single worker satisfies the same requirement
+unchanged while still eliminating the head-of-line block: a key's backoff
+now only delays *that key's* next attempt, never the worker's ability to
+service other keys in between.
+
+**Regression test:** TC-U-419 publishes a permanently-failing key (`vm-1`)
+followed by an unrelated always-succeeding key (`c-1` on a different
+subject), and asserts `c-1` is delivered within a window far shorter than
+`vm-1`'s configured initial backoff — confirmed to fail against the
+pre-fix code (times out waiting for `c-1`, which the old loop could not
+reach until `vm-1`'s retry loop happened to succeed or `vm-1`'s backoff
+between attempts left a gap) and pass against the fix.
+
+**Related requirements:** REQ-PUBLISH-060, REQ-PUBLISH-070, REQ-PUBLISH-080
+
+---
+
 ## Validation evidence: M3+M4+M5 merged worktree (DD-075)
 
 Per DD-075, the full stack was validated on a throwaway worktree merging all

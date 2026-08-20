@@ -89,6 +89,14 @@ type pendingValue struct {
 	message     string
 }
 
+// retryState tracks a single key's exponential backoff across delivery
+// rounds. Only keys that have failed at least once carry an entry — a key
+// with no history is always ready on the very next round (DD-077).
+type retryState struct {
+	backoff     time.Duration
+	nextAttempt time.Time
+}
+
 // Publisher builds and delivers status CloudEvents over NATS JetStream. The
 // zero value is not usable; construct via NewPublisher.
 //
@@ -103,6 +111,7 @@ type Publisher struct {
 
 	mu      sync.Mutex
 	pending map[pendingKey]pendingValue
+	retry   map[pendingKey]retryState
 
 	wake      chan struct{}
 	startOnce sync.Once
@@ -149,6 +158,7 @@ func newPublisher(js jsPublisher, closeFn func(), logger *slog.Logger, opts ...O
 		initialBackoff: o.initialBackoff,
 		maxBackoff:     o.maxBackoff,
 		pending:        make(map[pendingKey]pendingValue),
+		retry:          make(map[pendingKey]retryState),
 		wake:           make(chan struct{}, 1),
 		done:           make(chan struct{}),
 	}
@@ -194,16 +204,31 @@ func (p *Publisher) Close() error {
 	return nil
 }
 
+// run drives delivery in rounds: each round attempts every pending key
+// that isn't currently cooling down from a prior failure, then sleeps
+// until the next key becomes ready (or a fresh Publish wakes it early).
+// Attempting all ready keys per round — rather than retrying one key to
+// exhaustion before ever looking at another — is what guarantees a
+// persistently failing key can never head-of-line-block delivery of an
+// unrelated one (DD-077; see also REQ-PUBLISH-070/080, which this
+// preserves unchanged: still-indefinite retry, still no dropped updates,
+// still exactly one worker goroutine per REQ-PUBLISH-060).
 func (p *Publisher) run(ctx context.Context) {
 	defer close(p.done)
 	for {
-		key, ok := p.peekPendingKey()
-		if ok {
-			p.deliverLatest(ctx, key)
+		attempted, wait := p.attemptRound(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if attempted {
+			continue
+		}
+
+		if wait <= 0 {
 			select {
 			case <-ctx.Done():
 				return
-			default:
+			case <-p.wake:
 			}
 			continue
 		}
@@ -212,23 +237,40 @@ func (p *Publisher) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-p.wake:
+		case <-time.After(wait):
 		}
 	}
 }
 
-// peekPendingKey returns an arbitrary pending key without removing it.
-// Unlike a pop, this lets deliverLatest keep re-reading the map for the
-// current value of this key across retries (see deliverLatest) instead of
-// working from a value fixed at the moment the key was selected. Only one
-// entry per key ever exists at a time, so selection order across distinct
-// keys does not affect the per-key delivery guarantees in REQ-PUBLISH-080.
-func (p *Publisher) peekPendingKey() (pendingKey, bool) {
+// attemptRound makes one delivery attempt for every pending key whose
+// backoff has already elapsed (or which has never failed), skipping keys
+// still cooling down from a prior failure. It returns whether at least one
+// attempt was made, and — only when none was — how long until the
+// soonest cooling-down key becomes ready again (<= 0 if there is none,
+// meaning run should simply block until woken).
+func (p *Publisher) attemptRound(ctx context.Context) (attempted bool, wait time.Duration) {
+	now := time.Now()
+
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	for k := range p.pending {
-		return k, true
+	ready := make([]pendingKey, 0, len(p.pending))
+	wait = -1
+	for key := range p.pending {
+		if rs, ok := p.retry[key]; ok {
+			if d := rs.nextAttempt.Sub(now); d > 0 {
+				if wait < 0 || d < wait {
+					wait = d
+				}
+				continue
+			}
+		}
+		ready = append(ready, key)
 	}
-	return pendingKey{}, false
+	p.mu.Unlock()
+
+	for _, key := range ready {
+		p.attemptOnce(ctx, key)
+	}
+	return len(ready) > 0, wait
 }
 
 // currentValue returns key's current value in the pending map, if any.
@@ -242,7 +284,7 @@ func (p *Publisher) currentValue(key pendingKey) (pendingValue, bool) {
 // removeIfUnchanged deletes key from the pending map only if it still maps
 // to delivered — i.e. no newer Publish call raced in between this value
 // being read for delivery and its send completing. If a newer value has
-// since been recorded, it is left in place for the next deliverLatest call
+// since been recorded, it is left in place for the next attemptOnce call
 // to pick up, rather than being incorrectly discarded as "already sent".
 func (p *Publisher) removeIfUnchanged(key pendingKey, delivered pendingValue) {
 	p.mu.Lock()
@@ -252,60 +294,80 @@ func (p *Publisher) removeIfUnchanged(key pendingKey, delivered pendingValue) {
 	}
 }
 
-// deliverLatest retries key's delivery with exponential backoff until it
-// succeeds or ctx is cancelled, re-reading the *current* pending value for
-// key before every single attempt (DD-072) — never a value captured once
-// at the start. This guarantees a status update that arrives while an
-// earlier delivery for the same resource is still retrying is what
-// actually gets sent on the next attempt, instead of the worker blindly
-// resending an already-superseded value until it happens to succeed
-// (REQ-PUBLISH-080). No enqueued update is ever silently dropped
-// (REQ-PUBLISH-070).
-func (p *Publisher) deliverLatest(ctx context.Context, key pendingKey) {
-	backoff := p.initialBackoff
-	for {
-		// Coverage exception (documented, not tested): key can only be
-		// removed from p.pending by removeIfUnchanged, which this same
-		// call's own loop only reaches on its return path — run's single
-		// background worker is the only writer, so no other goroutine can
-		// race a removal in between. Kept as a defensive guard against a
-		// future second worker or removal path rather than fabricated to
-		// hit it.
-		val, ok := p.currentValue(key)
-		if !ok {
-			return
+// bumpRetry records a failed attempt for key, doubling its backoff (capped
+// at maxBackoff) and setting nextAttempt accordingly so future rounds skip
+// it until then.
+func (p *Publisher) bumpRetry(key pendingKey) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	rs, ok := p.retry[key]
+	if !ok {
+		rs.backoff = p.initialBackoff
+	} else {
+		rs.backoff *= 2
+		if rs.backoff > p.maxBackoff {
+			rs.backoff = p.maxBackoff
 		}
+	}
+	rs.nextAttempt = time.Now().Add(rs.backoff)
+	p.retry[key] = rs
+}
 
-		// Coverage exception (documented, not tested): buildEnvelope cannot
-		// fail for any input reachable from this codebase today (see its
-		// own coverage-exception comments); this branch guards against a
-		// future change there rather than being fabricated to hit it.
-		raw, err := buildEnvelope(val.serviceType, key.resourceID, val.status, val.message)
-		if err != nil {
-			p.logger.Error("failed to build status envelope; dropping malformed update",
-				"error", err, "resource_id", key.resourceID, "subject", key.subject)
-			p.removeIfUnchanged(key, val)
-			return
-		}
+// clearRetry drops key's backoff history, e.g. once it has delivered
+// successfully, so a future failure starts again from initialBackoff
+// rather than resuming an unrelated earlier streak.
+func (p *Publisher) clearRetry(key pendingKey) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.retry, key)
+}
 
-		if _, err := p.js.Publish(ctx, val.serviceType.Subject, raw); err == nil {
-			p.removeIfUnchanged(key, val)
-			return
-		} else {
-			p.logger.Warn("status publish failed, retrying",
-				"error", err, "resource_id", key.resourceID, "subject", key.subject, "backoff", backoff)
-		}
+// attemptOnce makes a single delivery attempt for key's *current* pending
+// value (DD-072) — never a value captured earlier — recording the outcome
+// via bumpRetry/clearRetry so the next round's attemptRound knows whether
+// and when to retry it. No enqueued update is ever silently dropped
+// (REQ-PUBLISH-070); a status update that arrives while an earlier one for
+// the same resource is still retrying is what actually gets sent on the
+// next attempt (REQ-PUBLISH-080).
+func (p *Publisher) attemptOnce(ctx context.Context, key pendingKey) {
+	// Coverage exception (documented, not tested): key can only be removed
+	// from p.pending by removeIfUnchanged, which this same call's own
+	// return path reaches — run's single background worker is the only
+	// writer, so no other goroutine can race a removal in between. Kept as
+	// a defensive guard against a future second worker or removal path
+	// rather than fabricated to hit it.
+	val, ok := p.currentValue(key)
+	if !ok {
+		p.clearRetry(key)
+		return
+	}
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
-		}
+	// Coverage exception (documented, not tested): buildEnvelope cannot
+	// fail for any input reachable from this codebase today (see its own
+	// coverage-exception comments); this branch guards against a future
+	// change there rather than being fabricated to hit it.
+	raw, err := buildEnvelope(val.serviceType, key.resourceID, val.status, val.message)
+	if err != nil {
+		p.logger.Error("failed to build status envelope; dropping malformed update",
+			"error", err, "resource_id", key.resourceID, "subject", key.subject)
+		p.removeIfUnchanged(key, val)
+		p.clearRetry(key)
+		return
+	}
 
-		backoff *= 2
-		if backoff > p.maxBackoff {
-			backoff = p.maxBackoff
-		}
+	// ctx here carries no per-call deadline (it's run's own, cancelled only
+	// on shutdown), but this cannot hang indefinitely: jetstream.Publish
+	// applies its own internal 5s default timeout whenever the passed ctx
+	// has none, so a single attempt is always bounded even before
+	// bumpRetry's backoff comes into play.
+	if _, err := p.js.Publish(ctx, val.serviceType.Subject, raw); err == nil {
+		p.removeIfUnchanged(key, val)
+		p.clearRetry(key)
+		return
+	} else {
+		p.logger.Warn("status publish failed, retrying",
+			"error", err, "resource_id", key.resourceID, "subject", key.subject)
+		p.bumpRetry(key)
 	}
 }
 
