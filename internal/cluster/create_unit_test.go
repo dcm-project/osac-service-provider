@@ -11,6 +11,7 @@ import (
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/util"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // baseSpec returns a fully-populated, valid ClusterSpec satisfying every
@@ -216,6 +217,62 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-registry.example.com/custom-image:latest"))
+	})
+
+	// TC-U-520 (REQ-VERSION-060, AC-VERSION-060): Create dispatches the
+	// injected matrix's release_image, per version — proven against a
+	// test matrix whose values differ from DefaultMatrix.
+	DescribeTable("dispatches the injected matrix's release_image, per version (TC-U-520)",
+		func(version, wantReleaseImage string) {
+			testMatrix := versionmatrix.Matrix{
+				"9.01": "quay.io/example/release:9.01",
+				"9.02": "quay.io/example/release:9.02",
+			}
+			f := newFixtureWithMatrix(testMatrix)
+			defer f.Close()
+
+			spec := baseSpec()
+			spec.Version = version
+
+			_, err := f.svc.Create(context.Background(), "X", spec)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal(wantReleaseImage))
+		},
+		Entry("9.01 -> injected matrix's own image", "9.01", "quay.io/example/release:9.01"),
+		Entry("9.02 -> injected matrix's own image", "9.02", "quay.io/example/release:9.02"),
+	)
+
+	// TC-U-521 (REQ-VERSION-060, AC-VERSION-070): an explicit
+	// release_image override bypasses the injected matrix entirely,
+	// even for a version absent from it.
+	It("uses an explicit release_image override verbatim even when the injected matrix has no entry for the version (TC-U-521)", func() {
+		testMatrix := versionmatrix.Matrix{"9.01": "quay.io/example/release:9.01"}
+		f := newFixtureWithMatrix(testMatrix)
+		defer f.Close()
+
+		spec := baseSpec()
+		spec.Version = "9.99" // absent from testMatrix
+		spec.ProviderHints.Osac.ReleaseImage = util.Ptr("custom-image")
+
+		_, err := f.svc.Create(context.Background(), "X", spec)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-image"))
+	})
+
+	// TC-U-522 (REQ-VERSION-070): SupportsVersion reports injected-matrix
+	// membership exactly.
+	It("reports matrix membership exactly via SupportsVersion (TC-U-522)", func() {
+		testMatrix := versionmatrix.Matrix{
+			"9.01": "quay.io/example/release:9.01",
+			"9.02": "quay.io/example/release:9.02",
+		}
+		f := newFixtureWithMatrix(testMatrix)
+		defer f.Close()
+
+		Expect(f.svc.SupportsVersion("9.01")).To(BeTrue())
+		Expect(f.svc.SupportsVersion("9.99")).To(BeFalse())
 	})
 
 	// Supplementary (REQ-ERR-010/030 precondition): a Create failure other

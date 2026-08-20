@@ -15,20 +15,6 @@ const (
 	serviceTypeValue = "cluster"
 )
 
-// releaseImageByVersion is a hardcoded placeholder table (REQ-CREATE-025)
-// translating DCM's Kubernetes minor version to an OSAC release_image —
-// the same Kubernetes versions as registration.go's
-// kubernetesSupportedVersions (SC-001), paired with the OpenShift 4.16-4.20
-// releases that variable's own comment documents as backing them. The full
-// compatibility matrix is Milestone 6.
-var releaseImageByVersion = map[string]string{
-	"1.29": "quay.io/openshift-release-dev/ocp-release:4.16.0-multi",
-	"1.30": "quay.io/openshift-release-dev/ocp-release:4.17.0-multi",
-	"1.31": "quay.io/openshift-release-dev/ocp-release:4.18.0-multi",
-	"1.32": "quay.io/openshift-release-dev/ocp-release:4.19.0-multi",
-	"1.33": "quay.io/openshift-release-dev/ocp-release:4.20.0-multi",
-}
-
 // ownershipLabels returns the three dcm.io/* labels this SP always sets on
 // every Create call (REQ-CREATE-030).
 func ownershipLabels(id string) map[string]string {
@@ -55,15 +41,20 @@ func mergeLabels(caller *map[string]string, id string) map[string]string {
 }
 
 // releaseImage resolves spec's release_image: an explicit
-// provider_hints.osac.release_image override always wins (REQ-CREATE-025);
-// otherwise the placeholder table is consulted by spec.version. Returns nil
-// if neither yields a value, leaving OSAC's template default release image
-// in effect.
-func releaseImage(spec v1alpha1.ClusterSpec) *string {
+// provider_hints.osac.release_image override always wins (REQ-VERSION-060);
+// otherwise s's injected version-translation matrix is consulted by
+// spec.version. Returns nil if neither yields a value, leaving OSAC's
+// template default release image in effect. Reaching that "leaves it
+// unset" fallback for a matrix miss with no override is only possible when
+// internal/handlers/cluster's pre-flight validation is bypassed (e.g.
+// direct package-level calls, as in this package's own unit tests) — over
+// the real HTTP path, REQ-VERSION-080 rejects that case before Create is
+// ever called.
+func (s *Service) releaseImage(spec v1alpha1.ClusterSpec) *string {
 	if override := spec.ProviderHints.Osac.ReleaseImage; override != nil && *override != "" {
 		return override
 	}
-	if img, ok := releaseImageByVersion[spec.Version]; ok {
+	if img, ok := s.matrix.Lookup(spec.Version); ok {
 		return util.Ptr(img)
 	}
 	return nil
@@ -81,7 +72,7 @@ func releaseImage(spec v1alpha1.ClusterSpec) *string {
 // ClusterNetwork message (pod_cidr/service_cidr only) — so it is accepted
 // but not translated, the same "informational, no OSAC field" treatment as
 // the worker cpu/memory/storage hints.
-func toOSACCluster(id string, spec v1alpha1.ClusterSpec, nodeSetKey string) *publicv1.Cluster {
+func (s *Service) toOSACCluster(id string, spec v1alpha1.ClusterSpec, nodeSetKey string) *publicv1.Cluster {
 	templateID := spec.ProviderHints.Osac.TemplateId
 
 	osacSpec := &publicv1.ClusterSpec{
@@ -89,7 +80,7 @@ func toOSACCluster(id string, spec v1alpha1.ClusterSpec, nodeSetKey string) *pub
 		NodeSets: map[string]*publicv1.ClusterNodeSet{
 			nodeSetKey: {Size: int32(spec.Nodes.Worker.Count)},
 		},
-		ReleaseImage: releaseImage(spec),
+		ReleaseImage: s.releaseImage(spec),
 		PullSecret:   spec.ProviderHints.Osac.PullSecret,
 		SshPublicKey: spec.ProviderHints.Osac.SshKey,
 	}

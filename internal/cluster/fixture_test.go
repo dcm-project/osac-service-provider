@@ -12,6 +12,7 @@ import (
 
 	"github.com/dcm-project/osac-service-provider/internal/cluster"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // fakeClustersServer is a real, wire-level fake implementing the generated
@@ -186,6 +187,13 @@ type fixture struct {
 }
 
 func newFixture() *fixture {
+	return newFixtureWithMatrix(versionmatrix.DefaultMatrix)
+}
+
+// newFixtureWithMatrix is newFixture with an explicit matrix, for
+// TC-U-520/521/522 (proving Service.Create/SupportsVersion consult
+// whatever matrix is injected, not DefaultMatrix specifically).
+func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
@@ -203,7 +211,7 @@ func newFixture() *fixture {
 	Expect(err).NotTo(HaveOccurred())
 
 	return &fixture{
-		svc:       cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn)),
+		svc:       cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix),
 		fake:      fake,
 		templates: templates,
 		conn:      conn,

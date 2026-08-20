@@ -41,6 +41,7 @@ import (
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/registration"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // fakeControlPlaneServer is a real httptest.Server implementing
@@ -147,6 +148,12 @@ func (f *fakeControlPlaneServer) Close() { f.server.Close() }
 // against srv, with fast backoff/re-registration intervals so tests
 // complete quickly.
 func newIntegrationRegistrar(srv *fakeControlPlaneServer) *registration.Registrar {
+	return newIntegrationRegistrarWithMatrix(srv, versionmatrix.DefaultMatrix)
+}
+
+// newIntegrationRegistrarWithMatrix is newIntegrationRegistrar with an
+// explicit matrix, for TC-I-510.
+func newIntegrationRegistrarWithMatrix(srv *fakeControlPlaneServer, matrix versionmatrix.Matrix) *registration.Registrar {
 	cfg := &config.Config{
 		DCM: config.DCMConfig{RegistrationURL: srv.URL()},
 		Provider: config.ProviderConfig{
@@ -155,7 +162,7 @@ func newIntegrationRegistrar(srv *fakeControlPlaneServer) *registration.Registra
 			VMName:      "osac-sp-vm",
 		},
 	}
-	r, err := registration.NewRegistrar(cfg, discardLogger,
+	r, err := registration.NewRegistrar(cfg, discardLogger, matrix,
 		registration.WithHTTPClient(&http.Client{Timeout: 5 * time.Second}),
 		registration.WithInitialBackoff(20*time.Millisecond),
 		registration.WithMaxBackoff(100*time.Millisecond),
@@ -226,6 +233,30 @@ var _ = Describe("Registrar against a real fake control-plane server (integratio
 		Expect(ok).To(BeTrue())
 		Expect(versions).To(ContainElement("1.31"))
 		Expect(versions).NotTo(ContainElement("4.18"))
+	})
+
+	// TC-I-510 (REQ-VERSION-050, AC-VERSION-020, AC-VERSION-050): the
+	// cluster registration payload's advertised versions, as actually
+	// sent over a real HTTP round trip, equal the injected matrix's
+	// SupportedVersions() exactly.
+	It("advertises the injected matrix's SupportedVersions() over a real HTTP round trip (TC-I-510)", func() {
+		testMatrix := versionmatrix.Matrix{
+			"9.01": "quay.io/example/release:9.01",
+			"9.02": "quay.io/example/release:9.02",
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		r := newIntegrationRegistrarWithMatrix(srv, testMatrix)
+		r.Start(ctx)
+
+		Eventually(func() []capturedRequest { return srv.requestsFor("cluster") }, "2s", "10ms").ShouldNot(BeEmpty())
+
+		req := srv.requestsFor("cluster")[0]
+		versions, ok := req.provider.Metadata.Get("kubernetes_supported_versions")
+		Expect(ok).To(BeTrue())
+		Expect(versions).To(ConsistOf(testMatrix.SupportedVersions()))
 	})
 
 	// TC-I-023: a vm 409 Conflict is non-retryable; cluster registration
