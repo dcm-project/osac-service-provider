@@ -1,7 +1,7 @@
 # osac-mock-provider (REQ-E2E-030): this repo's own plain manifest, applied
 # alongside the sparse-checked-out control-plane chart — not part of that
 # chart (it doesn't know about osac-sp/its mock yet). Env vars per
-# internal/mockprovider/config.go's REQ-MOCK-110 contract.
+# test/mockprovider/config.go's REQ-MOCK-110 contract.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

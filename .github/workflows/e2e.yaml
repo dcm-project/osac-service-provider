@@ -18,11 +18,39 @@ on:
 
 env:
   KIND_CLUSTER_NAME: osac-sp-e2e
-  # control-plane's chart + image both track the same moving "main" tag
-  # deliberately (issue #17's "Ownership & artifact sourcing": we consume
-  # control-plane purely as a published upstream artifact, not a pin we
-  # manage independently of it).
-  CONTROL_PLANE_REF: main
+  # control-plane's chart + image are *intended* to track the same moving
+  # "main" tag deliberately (issue #17's "Ownership & artifact sourcing": we
+  # consume control-plane purely as a published upstream artifact, not a pin
+  # we manage independently of it) — but temporarily pinned below, see TODO.
+  #
+  # TODO(DD-147, dcm-project/osac-service-provider#33): control-plane@35c0e8f
+  # (PR https://github.com/dcm-project/control-plane/pull/51, merged
+  # 2026-08-19) deleted api/sp/v1alpha1/provider (the direct
+  # POST /api/v1alpha1/providers registration API this SP's
+  # internal/registration and test/e2e/registration_test.go depend on via
+  # pkg/sp/client/provider) in favor of a new agent-routed
+  # api/agent/v1alpha1 model. This is not a bug upstream — it's control-plane
+  # completing the pivot back to the environment-agent-style registration
+  # model that DD-050 deferred as "Phase 2", now that environment-agent has
+  # matured past the stub state DD-050 was written against. Pinning to the
+  # last commit before that removal so e2e stays green; the Phase 2
+  # migration itself (registering via environment-agent instead of
+  # control-plane directly) is deliberately deferred until the current PR
+  # stack lands (see #33) rather than done mid-flight — revert to `main`
+  # once that migration lands.
+  #
+  # Pinning CONTROL_PLANE_REF alone is *not* sufficient: the chart's own
+  # values.yaml hardcodes `global.imageTag: main` as its default regardless
+  # of which chart commit is checked out, so Helm would still pull
+  # quay.io/dcm-project/control-plane:main — a floating tag that already
+  # points at the post-#51 image today. CONTROL_PLANE_IMAGE_TAG below pins
+  # the actual deployed image to the short-SHA tag
+  # (dcm-project/shared-workflows' build-push-quay.yaml pushes `main` +
+  # `${GITHUB_SHA:0:7}` on every push to main) that control-plane's own CI
+  # built and pushed for this exact commit — verified via that commit's
+  # `build-push / build-push` check run before relying on it.
+  CONTROL_PLANE_REF: c04802d05ecc4fd11e070f3bc604ef9e8671a09b
+  CONTROL_PLANE_IMAGE_TAG: c04802d
 
 jobs:
   e2e:
@@ -70,6 +98,7 @@ jobs:
       - name: Install control-plane (+ Postgres, NATS) via its own chart
         run: |
           helm install dcm control-plane/deploy/helm/dcm \
+            --set global.imageTag="${{ env.CONTROL_PLANE_IMAGE_TAG }}" \
             --set dcmUi.enabled=false \
             --set controlPlane.route.enabled=false \
             --set controlPlane.ingress.enabled=false
@@ -124,8 +153,17 @@ jobs:
         run: |
           mkdir -p /tmp/e2e-diagnostics
           kubectl get pods -o wide > /tmp/e2e-diagnostics/pods.txt 2>&1 || true
+          # Full event list, not filtered per-object: at 5-component-cluster
+          # scale this is small enough (a handful of KB) that filtering to
+          # save noise isn't worth the risk of a filter expression hiding
+          # the one event that would've explained the failure.
           kubectl get events --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
           for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-mock-provider; do
+            # dcm-postgres/dcm-nats are StatefulSets, the rest are
+            # Deployments — describe whichever of deployment/statefulset/
+            # service actually exists under this name; kubectl reports (and
+            # this swallows) a "not found" for the types that don't apply.
+            kubectl describe deployment,statefulset,service "$d" > "/tmp/e2e-diagnostics/${d}.describe.txt" 2>&1 || true
             kubectl logs -l "app.kubernetes.io/name=${d#dcm-}" --all-containers --prefix --tail=-1 > "/tmp/e2e-diagnostics/${d}.log" 2>&1 || true
             kubectl logs -l "app.kubernetes.io/instance=dcm" --all-containers --prefix --tail=-1 > /tmp/e2e-diagnostics/dcm-chart-all.log 2>&1 || true
           done

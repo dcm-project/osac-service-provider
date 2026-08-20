@@ -59,8 +59,11 @@ var _ = BeforeSuite(func() {
 
 func waitUntilReachable(ctx context.Context, name, url string) {
 	client := &http.Client{Timeout: 5 * time.Second}
+	start := time.Now()
 	var lastErr error
+	attempts := 0
 	for {
+		attempts++
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err == nil {
 			resp, doErr := client.Do(req)
@@ -74,7 +77,8 @@ func waitUntilReachable(ctx context.Context, name, url string) {
 		}
 		select {
 		case <-ctx.Done():
-			Fail(fmt.Sprintf("%s (%s) never became reachable within the bounded wait: %v", name, url, lastErr))
+			Fail(fmt.Sprintf("%s (%s) never became reachable within the bounded wait: %v (%d attempts over %s)",
+				name, url, lastErr, attempts, time.Since(start).Round(time.Millisecond)))
 		case <-time.After(500 * time.Millisecond):
 		}
 	}

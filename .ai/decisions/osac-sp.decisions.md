@@ -7,7 +7,10 @@ them, so this file stays open across milestones rather than being tied to
 any single spec document's lifecycle.
 
 **Related Specs:** `.ai/specs/osac-sp.spec.md` (Milestone 1),
-`.ai/specs/osac-sp-m3-cluster-crud.spec.md` (Milestone 3)
+`.ai/specs/osac-sp-m3-cluster-crud.spec.md` (Milestone 3),
+`.ai/specs/osac-sp-m4-vm-crud.spec.md` (Milestone 4),
+`.ai/specs/osac-sp-m5-status-reporting.spec.md` (Milestone 5),
+`.ai/specs/osac-sp-m6-version-matrix.spec.md` (Milestone 6)
 
 ---
 
@@ -1014,6 +1017,155 @@ no criteria for which applies).
 
 ---
 
+# Milestone 6 (Version-Translation Compatibility Matrix)
+
+## DD-130: A new standalone `internal/versionmatrix` package, not a shared field on an existing type
+
+**Decision:** The version-translation compatibility matrix lives in a new,
+standalone top-level package, `internal/versionmatrix`, exposing a `Matrix`
+type, a `DefaultMatrix` value, and a `Load(path string) (Matrix, error)`
+function. It depends on nothing else in this repo (not even
+`api/v1alpha1`). `internal/registration.Registrar` and
+`internal/cluster.Service` each hold their own copy of the single `Matrix`
+value constructed once in `main.go` and passed to both.
+
+**Rationale:** Before this milestone, `internal/registration` and
+`internal/cluster` each maintained their own version list with no shared
+type between them, and — critically — **neither package currently imports
+the other**. Putting the shared `Matrix` type inside either package (e.g.
+exporting `cluster.ReleaseImageByVersion` for `registration` to import, or
+vice versa) would introduce a new, artificial coupling between two packages
+whose only real relationship is "both need to agree on the same set of
+supported Kubernetes versions" — not "one depends on the other's business
+logic." A new standalone package makes that shared dependency explicit and
+avoids having to pick an arbitrary "owning" side. `Matrix` is a plain
+`map[string]string`-backed value type (not a pointer, not a struct wrapping
+a mutex) specifically so both consumers can hold their own independent copy
+of the same immutable data with no shared-mutable-state/locking concern —
+the matrix is loaded exactly once at startup (`main.go`) and never mutated
+afterward by either consumer.
+
+**Related requirements:** REQ-VERSION-010, REQ-VERSION-020, REQ-VERSION-030
+
+---
+
+## DD-131: Hard rejection of unsupported versions, at the existing `validateCreateRequest` pre-flight layer — not a silent fallback, and not a new error type
+
+**Decision:** When `provider_hints.osac.release_image` is absent and
+`spec.version` has no matrix entry, Create MUST be rejected with `400 Bad
+Request` (`codes.InvalidArgument`) **before ever calling OSAC** —
+superseding the pre-Milestone-6 behavior of `releaseImage()` silently
+returning `nil` and letting OSAC's per-template default `release_image`
+take effect unannounced. The check itself is added as one more `case` in
+`internal/handlers/cluster.Handler.validateCreateRequest` (Milestone 3's
+existing pre-flight validation function, REQ-CREATE-060), querying a new
+`Service.SupportsVersion(version string) bool` method rather than the
+`Handler` importing/holding its own copy of the matrix directly. No new
+`v1alpha1.ErrorType` enum value or OpenAPI schema change was needed:
+`INVALIDARGUMENT` already exists and already means exactly this ("bad
+input, rejected before ever reaching OSAC") per REQ-CREATE-060's existing
+precedent for the four structural validation failures `validateCreateRequest`
+already checks.
+
+Separately, `internal/versionmatrix.Load` itself fails fast — rather than,
+say, silently ignoring a malformed override file and falling back to
+`DefaultMatrix` — on three conditions when `path != ""`: the file is
+missing, the file is not valid JSON, or the file parses to zero entries.
+The third condition (valid-but-empty) is deliberately treated as an error
+rather than a legal (if useless) configuration: an operator-supplied
+override file that resolves to zero supported versions would silently
+brick every future Create call (every version request would be rejected)
+with no diagnostic pointing at the actual cause — the same
+fail-fast-over-silently-degrading philosophy REQ-XC-CFG-020 already applies
+to missing required env vars is extended here to a malformed *optional*
+one's referenced file, once that variable is actually set.
+
+**Amendment (review finding on PR #26):** the original "decodes to zero
+entries" check (`len(m)==0`) only catches a wholly empty `{}`; a file like
+`{"1.29":""}` or `{"":"<image>"}` has exactly one key and passed the check
+unchanged, silently loading a matrix with one *unusable* entry (an empty
+version can never match a `Lookup` call; an empty `release_image` would be
+wired straight into an OSAC `Create` call). `Load` now additionally rejects
+any entry whose version key or `release_image` value is the empty string,
+for the same brick-every-future-Create-call rationale above — a matrix
+whose only entries are blank is functionally the zero-entries case with
+extra steps.
+
+**Rationale:** Mirrors the sibling `acm-cluster-service-provider`'s
+established, already-reviewed pattern for the identical problem (translating
+a DCM-facing Kubernetes version into a platform-specific release artifact) —
+hard rejection over silent fallback, and a full-replace (not merge) JSON
+override that itself fails fast on malformed input. Reusing
+`validateCreateRequest`/`mapError`/`internal/grpcerror` rather than
+inventing a new error path keeps this milestone's blast radius small: no
+`api/v1alpha1/openapi.yaml` change, no `make generate-api` diff, and every
+existing `TC-U-205`/`TC-U-206`/`AC-CREATE-040`/`AC-CREATE-050` test pattern
+for "reject before calling OSAC" is directly reusable as a template for
+this milestone's own `AC-VERSION-080`.
+
+**Related requirements:** REQ-VERSION-040, REQ-VERSION-070, REQ-VERSION-080
+
+---
+
+## DD-132: Optional `SP_VERSION_MATRIX_PATH` env var, full-replace JSON override semantics
+
+**Decision:** `internal/config.Config` gains one new optional field,
+`SP_VERSION_MATRIX_PATH` (empty/unset is valid — means "use
+`DefaultMatrix`"). When set, `versionmatrix.Load` reads it as a JSON object
+and that object **entirely replaces** `DefaultMatrix` — it is not merged
+key-by-key with the default table.
+
+**Rationale:** Full-replace (not merge) was chosen because a merge
+semantic's behavior on key collision is inherently ambiguous (does the
+override file's `"1.29"` win, or does an operator have to repeat every
+entry they *don't* want to change just to be sure?) and because a partial
+merge silently keeps hardcoded defaults in effect that an operator
+overriding the file most likely intended to fully take over — matching the
+sibling SP precedent this milestone's plan explicitly adopted (DD-131).
+Making the var optional (rather than required, or defaulting to a
+committed-to-the-repo file path) avoids forcing every deployment to ship
+and mount a JSON file just to reproduce the same 5 entries `DefaultMatrix`
+already hardcodes — the override exists specifically for operators who need
+to diverge from those 5 entries (e.g. a newer OSAC catalog template
+becoming available before a new osac-sp release ships), not for normal
+operation.
+
+**Related requirements:** REQ-VERSION-040, REQ-VERSION-090
+
+---
+
+## DD-133: Stack this milestone's branch/PR directly on `feat/milestone-3-cluster-crud`, not on `main`
+
+**Decision:** Unlike Milestone 5 (DD-075: a self-contained PR off `main`,
+validated against M3/M4 only in a throwaway merge worktree, since M5 only
+needed M3/M4's *types*), this milestone's branch was created directly from
+`feat/milestone-3-cluster-crud`'s tip and its PR originally targeted that
+branch, not `main`. It was retargeted to `main` (this merge commit) once
+`#13` (the M3 PR) merged, exactly like this repo's own existing e2e PR
+chain already does (`#24` on `#23` on `#20` on `#18`).
+
+**Rationale:** This milestone edits `internal/cluster/translate.go` and
+`internal/registration/registration.go` directly — both are Milestone 3
+files (the latter dating to Milestone 1, but modified during M3's
+development), not merely types M3 introduced. There was no self-contained
+way to implement this milestone against `main` alone at the time: `main`
+did not yet have Cluster CRUD at all, so "make this build standalone
+against `main`" would have been a fabricated constraint, not a real one —
+stacking directly said plainly that this milestone genuinely could not
+exist independently of M3, the same way the e2e PR chain already stacks
+for the same structural reason. Stacking also kept the PR diff small and
+reviewable (just this milestone's actual changes against M3's tip) with no
+throwaway-merge-worktree dance needed to validate it, unlike M5's
+situation. This milestone's own `DD-110`/`DD-111` (this branch's original,
+pre-merge numbering for what `main` already carries as `DD-113`/`DD-114`)
+were dropped as duplicates during the merge that retargeted this branch to
+`main` — same underlying decisions, same content, no independent
+substance to preserve twice under two numbers.
+
+**Related requirements:** none (process decision, not a REQ/AC).
+
+---
+
 # Milestone 5 (Status Reporting) — pre-resolved recommendations
 
 **Status: proposed, not yet ratified.** Milestone 5 has not started — no
@@ -1035,7 +1187,341 @@ decisions — they live in `.ai/exploration/m5-status-reporting-research.md`
 (local-only) instead, for whoever writes M5's actual spec to verify against
 current reality at that time.
 
+## DD-071: `DCM_NATS_URL` on `DCMConfig`; CloudEvents envelope via the SDK; `data` includes `id` for both Cluster and VM
+
+**Decision:** name the NATS broker URL config field `DCM_NATS_URL` (a new
+field on the existing `DCMConfig` struct), build the CloudEvents envelope
+with `github.com/cloudevents/sdk-go/v2` rather than a hand-rolled struct, and
+report `data` as `{"id": <resource id>, "status": <string>, "message":
+<string>}` for **both** Cluster and VM — not the two-field `{status,
+message}` the canonical spec's `VmStatus` type declaration literally shows.
+
+**Rationale (config placement):** `DCMConfig` already uses the unprefixed
+`DCM_` prefix specifically for backends that are DCM-wide, not
+provider-specific — `DCM_REGISTRATION_URL` is the same URL every SP and
+`control-plane` must agree on. The NATS broker is structurally identical
+(one shared, DCM-operated instance), so it belongs on `DCMConfig` under the
+same reasoning, not a provider-specific `SP_NATS_URL` (the two sibling SPs
+that already publish status disagree with each other on this exact point —
+`acm-cluster-service-provider` uses `SP_NATS_URL`, `kubevirt-service-provider`
+uses bare `NATS_URL` — so nose-counting sibling precedent doesn't resolve it;
+breaking the tie on `DCMConfig`'s own underlying placement principle does).
+
+**Rationale (SDK, not hand-rolled):** `github.com/cloudevents/sdk-go/v2`
+guarantees envelope-level spec compliance (correct `specversion`, attribute
+serialization) for free, and `control-plane` (the consumer) already depends
+on it for parsing — zero net-new dependency risk to the ecosystem. This only
+protects the envelope shape, not the `data` payload shape, which is a
+project-specific contract the SDK knows nothing about (see below and
+DD-073's contract-test requirement).
+
+**Rationale (`data` includes `id` for VM too — corrects a doc
+inconsistency):** the canonical spec's §3 defines `type VmStatus struct {
+Status string; Message string }` (no `id`) directly above a worked example
+that constructs a *different*, self-contradictory `VmStatus{Id, "123-123",
+Status: "Running", Message: "VM is running."}` literal (unparseable Go —
+appears to be a copy/paste artifact from the `ContainerStatus`/
+`StorageStatus`/`NetworkStatus` definitions immediately above it, all three
+of which do declare `Id`). Without an `id` in `data`, `control-plane` has no
+way to attribute a `dcm.vm` event to a specific instance — `subject`
+identifies only the *service type* (`dcm.vm`), never a resource. Confirmed
+directly against `control-plane`'s real, running consumer code
+(`internal/sp/consumer/consumer.go`'s `StatusEvent{Id, Status, Message,
+Timestamp}`), which requires `Id`. Per this repo's established precedent for
+resolving doc/code conflicts in favor of real running code over a doc's own
+internally-inconsistent prose (see DD-010's "Phase 1 confirmation" for the
+same class of resolution), this SP always includes `id` in `data`, for both
+service types.
+
+**Confirmed by spike** (2026-08-05): a throwaway module built the exact
+envelope this decision describes with `cloudevents-sdk-go v2.16.2`, published
+it to a real embedded JetStream stream/consumer configured identically to
+`control-plane`'s own (`consumer.go:90-121`), and round-tripped it through
+`control-plane`'s real `StatusEvent` struct end-to-end. Wire bytes:
+`{"specversion":"1.0","id":"evt-abc","source":"dcm/providers/osac-sp-vm","type":"dcm.status.vm","subject":"dcm.vm","datacontenttype":"application/json","time":"...","data":{"id":"vm-123","status":"RUNNING","message":"instance is running"}}`.
+
+**Related requirements:** REQ-PUBLISH-010, REQ-PUBLISH-030
+
+---
+
+## DD-072: JetStream (`js.Publish`) over core NATS, wrapped in an indefinite-retry, coalescing background worker
+
+**Decision:** publish status events via the JetStream API (`js.Publish`),
+never plain core NATS (`nc.Publish`), from a single background worker
+goroutine (`Publisher.Start(ctx)`) that retries indefinitely with
+exponential backoff on failure and always delivers the *latest* known value
+for a given resource — never a stale one superseded by a newer update still
+queued behind a slow/failing retry.
+
+**Rationale (JetStream over core):** `js.Publish` fails loudly (a retryable
+error) if the target stream isn't ready yet; `nc.Publish` silently drops the
+message with no error in that same case. Confirmed empirically (2026-08-05
+spike): `js.Publish` against a stream-less embedded `nats-server` returned a
+real error (`nats: no response from stream`) — not just inferred from
+`control-plane`/`kubevirt-service-provider` source. This repo already has an
+established, documented resilience convention for exactly this class of
+"dependency not ready yet" condition (`CLAUDE.md`'s "Non-blocking bootstrap"
+and "Independent registration loops": the OIDC token loop, gRPC dial, and
+both registration loops all retry indefinitely with backoff rather than
+silently dropping work) — `js.Publish` is the only one of the two transports
+that can participate in that convention at all.
+
+**Rationale (coalescing background worker, not a bounded per-call retry):**
+an earlier design considered a synchronous `Publish` method with a small
+bounded retry (matching `acm-cluster-service-provider`'s
+`SP_NATS_PUBLISH_RETRY_MAX`/`_INTERVAL` knobs), reasoning that indefinite
+*synchronous* retry would stall the poll loop's processing of every other
+resource behind one failing publish. Resolved by decoupling: `Publish`
+records the latest value for `(serviceType, resourceID)` in an in-memory map
+and returns immediately (never blocks the poll loop); a single background
+worker drains that map, retrying failed deliveries indefinitely. Because the
+worker always re-reads the *current* map value for a key before each
+attempt (not a value captured when first enqueued), a newer status arriving
+while an older delivery for the same resource is still retrying always wins
+— the worker can never deliver the older one after the newer one has been
+recorded. This is a coalescing work-queue pattern (conceptually the same
+technique `client-go`'s controller-runtime workqueue uses to deduplicate
+reconcile keys), not an original invention for this project — chosen because
+it satisfies "indefinite retry" and "never blocks the caller" and "never
+reorders/regresses a resource's reported status" simultaneously, which a
+simple bounded synchronous retry cannot.
+
+**Related requirements:** REQ-PUBLISH-040, REQ-PUBLISH-050, REQ-PUBLISH-060,
+REQ-PUBLISH-070, REQ-PUBLISH-080
+
+---
+
+## DD-073: Pin `nats.go`/`nats-server`/`cloudevents-sdk-go` to versions already used by `control-plane`
+
+**Decision:** pin `github.com/nats-io/nats.go` (+ its `jetstream`
+subpackage) to `v1.50.0`, `github.com/nats-io/nats-server/v2` to `v2.12.5`
+(test-only — the contract test's embedded broker, DD-074's cross-reference),
+and `github.com/cloudevents/sdk-go/v2` to `v2.16.2`.
+
+**Rationale:** `v1.50.0`/`v2.16.2` match `control-plane` (the consumer) and
+`acm-cluster-service-provider` exactly; `kubevirt-service-provider` is one
+minor version behind (`nats.go v1.49.0`) with no reason to match the stale
+one. `v2.12.5` matches `control-plane`'s own test-time `nats-server`
+version. Confirmed by two independent spikes (2026-08-05): a throwaway
+module using exactly these versions, and a second drop-in check directly
+against this repo's real `go.mod` (`go get` the three pins, then
+`go build ./...`, `go vet ./...`, and the full Ginkgo suite — 10 suites, 156
+specs, all green, zero transitive-dependency conflicts with the existing
+gRPC/protobuf/OIDC stack; the `go.mod`/`go.sum` change was reverted after,
+since it was purely a compatibility probe run ahead of this spec).
+
+**Related requirements:** REQ-PUBLISH-020
+
+---
+
+## DD-074: Periodic full resync mitigates `control-plane`'s dispatch-before-persist race (filed upstream, not fixed here)
+
+**Decision:** in addition to publishing immediately on a detected diff
+(REQ-POLL-040), the Poller unconditionally republishes every currently
+observed resource's status every `ResyncEvery` poll cycles (default 10,
+~5 minutes at the default 30s interval), regardless of whether the local
+cache thinks it changed.
+
+**Rationale:** tracing `control-plane`'s actual `UpdateStatus` SQL
+(`internal/sp/store/resource_manager/service_instance.go:160-175`, a plain
+`UPDATE ... WHERE id=?` checking `RowsAffected == 0` → `ErrInstanceNotFound`)
+confirms repeated identical status updates are safe/idempotent — so a
+resync costs nothing extra on the happy path. But the same trace surfaced a
+real gap a pure diff-only design does not handle: `control-plane`'s
+`CreateInstance`
+(`internal/sp/service/resource_manager/service_type_instance.go:86-105`)
+dispatches to the provider's REST endpoint **before** persisting its own
+`ServiceTypeInstance` DB row. If this SP's Poller observes and publishes a
+newly-created resource's status during that window, `control-plane`'s
+consumer receives it, calls `UpdateStatus`, gets `ErrInstanceNotFound`, and
+unconditionally `Ack()`s the message (dropped, no redelivery — confirmed no
+`MaxDeliver`/backoff is configured on their consumer) — while this SP's own
+local cache has already recorded that status as "delivered," so a pure
+diff-based design would never naturally retry it, permanently losing that
+update. This race is structurally present on every create, org-wide, not an
+osac-sp-specific edge case (confirmed via `control-plane`'s own test suite,
+where this exact path is untested beyond "doesn't panic":
+`internal/sp/consumer/consumer_test.go:153`).
+
+This is `control-plane`'s bug to fix, not something to fully absorb here —
+filed as
+[control-plane#44](https://github.com/dcm-project/control-plane/issues/44),
+presenting two remediation options (reorder persist-before-dispatch, or a
+bounded-retry `Nak` instead of unconditional `Ack` on `ErrInstanceNotFound`)
+without prescribing which. The periodic resync mitigation ships regardless
+of that issue's resolution, both because this SP cannot wait on their
+fix/timeline and because it is generic defense-in-depth against any class of
+transient consumer-side loss, not just this one race. It also subsumes the
+original cold-start design (first poll = empty cache = every resource looks
+new = already a de facto full resync) as cycle 0's natural case — no
+separate cold-start code path is needed.
+
+**Related requirements:** REQ-POLL-080
+
+---
+
+## DD-075: Deliver the publisher and poll loop as a single milestone/PR, not split across two phases
+
+**Decision:** `internal/statuspublisher` and `internal/statuspoll` are
+specified, implemented, and landed together in one PR, validated the same
+way as [PR #24](https://github.com/dcm-project/osac-service-provider/pull/24)
+(E2E CRUD coverage) — on a throwaway branch merging Milestone 3 + Milestone
+4 + this milestone's code, then as a single small draft PR off `main`,
+explicitly flagged blocked on Milestone 3/4 (#13/#14) merging first.
+
+**Rationale:** an earlier draft of this plan split delivery into an
+"unblocked" publisher-only phase (no import dependency on M3/M4) and a
+"blocked" poll-loop phase, reasoning the publisher could land and be
+reviewed independently. Reassessed and reversed for two reasons: (1) a
+standalone publisher with no caller delivers no working capability — nothing
+in this repo invokes `internal/statuspublisher` until the poll loop exists,
+making a publisher-only PR a "why does this exist yet" review smell rather
+than real progress; (2) it would introduce a *second*, different
+unblocked/blocked delivery shape when PR #24 already established and
+proved — via actual review — that the single-PR/draft/blocked-on-#13/#14
+pattern works and is reviewer-legible for exactly this class of "depends on
+an unmerged milestone" work. Introducing a new pattern here for no real
+unblocking benefit (the actual outcome — status gets reported — is blocked
+on M3/M4 either way) adds review overhead without upside.
+
+**Related requirements:** none (process decision, not a functional one)
+
+---
+
+## DD-076: Review-found fixes — coalescing worker re-reads latest value on retry, per-`List` timeout, `len(items)`-based pagination, caller-supplied `Source`
+
+**Decision:** four fixes made during review of [PR #25](https://github.com/dcm-project/osac-service-provider/pull/25), all in `internal/statuspoll`/`internal/statuspublisher`:
+
+1. `Publisher`'s delivery worker (`deliverLatest`, formerly `deliver`) now
+ re-reads the current pending value for its key from the map before
+ *every* retry attempt, instead of retrying a value captured once when
+ first popped. The entry is removed from the pending map only once
+ delivered, and only if unchanged since (`removeIfUnchanged`) — never
+ pre-emptively at pop time. This was a real correctness gap: the old
+ `deliver` already violated REQ-PUBLISH-080/DD-072's own documented
+ "worker always re-reads the current map value before each attempt"
+ guarantee for exactly the case that matters most — an update superseding
+ another one *while it is being retried* (as opposed to superseding one
+ still in its very first, not-yet-failed attempt, which the pre-existing
+ TC-U-413 did cover). TC-U-418 is the regression test; confirmed to fail
+ against the pre-fix code (3 delivery attempts, stale value resent) and
+ pass against the fix (2 attempts, latest value only).
+2. `listClusters`/`listComputeInstances` (`internal/statuspoll/poller.go`)
+ now advance pagination `offset` by `len(resp.GetItems())`, not
+ `resp.GetSize()`, and terminate the page loop outright once a page
+ returns zero items. The prior `Size`-based advancement could loop
+ forever if a response ever reported `Size=0` while `Total>0` (a
+ buggy/inconsistent server response) — trusting the peer's self-reported
+ size field for loop-termination progress is less robust than trusting
+ what was actually received.
+3. Each individual `List` call is now bounded by a new
+ `StatusConfig.ListTimeout` (`SP_STATUS_LIST_TIMEOUT`, default `10s`,
+ REQ-POLL-025), applied per-page (not once for the whole paginated
+ sequence, since a large listing needs one fresh deadline per page, not
+ one shared budget). A timeout is treated identically to any other
+ `List` error (REQ-POLL-090's existing "log and skip this service type"
+ path) — no new error-handling branch needed. Without this, a hung OSAC
+ backend could wedge the poll loop indefinitely, the same failure class
+ DD-091 already fixed for the registration self-probe elsewhere in this
+ codebase.
+4. `statuspoll.New` now takes `clusterProviderName`/`vmProviderName`
+ parameters (wired from `cfg.Provider.ClusterName`/`VMName` in
+ `cmd/osac-service-provider/main.go`) and builds each `ServiceType.Source`
+ from them, rather than two package-level `var`s hardcoding
+ `"osac-sp-cluster"`/`"osac-sp-vm"` regardless of config. Those literals
+ happened to match `ProviderConfig`'s own defaults, masking the gap until
+ someone actually overrides `SP_PROVIDER_CLUSTER_NAME`/`SP_PROVIDER_VM_NAME`
+ (already a supported, real config knob used by `internal/registration`) —
+ at which point the registered provider identity and the reported
+ CloudEvents `source` would silently diverge. REQ-PUBLISH-030 already
+ specified `source` as "caller-supplied per service type"; this package is
+ that caller, and REQ-POLL-015 makes the obligation explicit on this side
+ too.
+
+**Rationale:** none of these are new features — all four are the
+implementation catching up to guarantees already promised either by this
+milestone's own spec (REQ-PUBLISH-080, REQ-PUBLISH-030) or by an established
+codebase-wide resilience convention (DD-091's "no unbounded wait on a
+dependency"). Filed as one DD since all four were found in the same review
+pass and share the same theme: a documented guarantee that the first
+implementation didn't fully satisfy.
+
+**Related requirements:** REQ-POLL-015, REQ-POLL-020, REQ-POLL-025,
+REQ-PUBLISH-030, REQ-PUBLISH-080
+
+---
+
+## Validation evidence: M3+M4+M5 merged worktree (DD-075)
+
+Per DD-075, the full stack was validated on a throwaway worktree merging all
+three still-independent branches, at these SHAs:
+
+- `feat/milestone-3-cluster-crud` @ `640caaa`
+- `feat/milestone-4-vm-crud` @ `0afb49d`
+- `feat/milestone-5-status-reporting` @ `1adc5ec`
+
+merged (in that order) onto a scratch branch (`tmp/m5-validate-merge2`) in a
+disposable `git worktree`, discarded after this evidence was captured — no
+artifact of it is committed to any real branch. Conflicts were mechanical and
+expected for two independently-developed OpenAPI branches sharing a base:
+`openapi.yaml`/generated code needed a structural (not textual) merge,
+`oapi-codegen`'s collision-avoidance then prefixes overlapping enum names
+(e.g. `VMStatusDELETED`/`ClusterStatusDELETED` instead of bare `DELETED`)
+requiring a handful of call-site updates in M3/M4's own pre-existing code,
+and a few test fixtures needed the analogous stub method for the
+sibling milestone's now-larger `StrictServerInterface`. None of this touches
+M5's own logic.
+
+Results on the merged tree:
+
+- `go build ./...`, `go vet ./...`: clean
+- `gofmt -l`: no files
+- `golangci-lint run ./...`: 0 issues
+- `make generate-api` against the merged `openapi.yaml`: byte-identical
+  output to what was already merged (no generator drift)
+- `ginkgo -r --race --cover`: 15 suites, 338 specs, all green; composite
+  98.7%. The two suites below 100% are both pre-existing, in-code documented
+  coverage exceptions, not artifacts of the merge: `Registration` (98.4%,
+  predates M5) and `StatusPublisher` (88.4%, `buildEnvelope`'s
+  `SetData`/`json.Marshal` branches and `NewPublisher`'s `jetstream.New`
+  branch — see the M5 test plan's coverage notes).
+
+Conclusion: M5's own branch is merge-clean against M3+M4 as of the above
+SHAs. The M5 PR can be opened now per DD-075, with this note (and these
+SHAs) linked as evidence, flagged blocked on #13/#14 for actual merge.
+
+### Re-confirmation (2026-08-06): PR #25's own `ci/build`/`lint` failures are this same, expected DD-075 state, not a regression
+
+`ci/build` ([run 31049778266](https://github.com/dcm-project/osac-service-provider/actions/runs/31049778266))
+and `lint` ([run 31049776667](https://github.com/dcm-project/osac-service-provider/actions/runs/31049776667))
+both fail on this PR's own branch, exactly as DD-075 predicted:
+`internal/statuspoll/poller.go` directly imports `internal/cluster`/
+`internal/vm` (M3/M4 packages), which simply don't exist on `main` — this
+branch is deliberately *not* stacked on M3/M4 (DD-075's own rationale), so
+these two checks cannot go green until `#13`/`#14` merge, full stop. This
+is the identical failure mode already reasoned through above; it is not a
+new bug and no code change to M5 fixes it.
+
+Re-confirmed today, independently of the merge worktree above, by
+re-checking out this branch's exact evidence commit
+(`1169b82`, from the M6-adjacent throwaway validation branch
+`scratch/e2e-m6-all-prs`, which additionally layered M6 — `#26` — on top of
+this same M3+M4+M5 base): `make build`, `make vet`, and `make lint`
+(`golangci-lint run ./...`) all pass with **0 issues**, and
+`ginkgo -r --race` is green across all 19 non-e2e suites (only the `test/e2e`
+suite itself fails locally, and only because `CONTROL_PLANE_URL` isn't set
+outside a real `kind` run — not a code defect). This is the same
+`ci/build`/`lint` job definition PR #25 itself runs, just executed against
+the merged tree instead of the standalone branch — proving the failing
+checks are 100% attributable to merge order, not to any defect introduced
+by M5.
+
 ## DD-200: NATS broker URL env var — recommend `DCM_NATS_URL`, not `SP_NATS_URL`
+
+**Superseded by DD-071**, which ratifies this exact recommendation against
+what Milestone 5 actually built, rather than a pre-implementation proposal.
+Kept here for historical record per this project's DD-numbering
+discipline — do not re-litigate.
 
 **Decision (proposed):** name the NATS broker URL config field
 `DCM_NATS_URL` (a new field on the existing `DCMConfig` struct in
@@ -1060,6 +1546,12 @@ provider-specific `SP_` prefix.
 
 ## DD-201: NATS publish transport — recommend JetStream (`js.Publish`), not core (`nc.Publish`)
 
+**Superseded by DD-072**, which ratifies this exact recommendation against
+what Milestone 5 actually built (the coalescing indefinite-retry background
+worker), rather than a pre-implementation proposal. Kept here for
+historical record per this project's DD-numbering discipline — do not
+re-litigate.
+
 **Decision (proposed):** publish status events via the JetStream API
 (`js.Publish`), not plain core NATS (`nc.Publish`).
 
@@ -1079,16 +1571,16 @@ repo's own convention, not that sibling's.
 
 ---
 
-## DD-130: Single `internal/mockprovider` package, not one sub-package per service
+## DD-130: Single `test/mockprovider` package, not one sub-package per service
 
 **Decision:** `cmd/osac-mock-provider`'s five fake gRPC services
 (`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`,
 `VirtualNetworks`) and its OIDC discovery+token stub all live directly in
-one flat package, `internal/mockprovider` — one Go file per
+one flat package, `test/mockprovider` — one Go file per
 service/concern (`clusters.go`, `computeinstances.go`, `subnets.go`,
 `virtualnetworks.go`, `capabilities.go`, `oidc.go`, `store.go`,
-`config.go`), not `internal/mockprovider/clusters/`,
-`internal/mockprovider/oidc/`, etc.
+`config.go`), not `test/mockprovider/clusters/`,
+`test/mockprovider/oidc/`, etc.
 
 **Rationale:** every file in this package shares one concern — faking
 OSAC's backend surface for `osac-sp`'s own client code to dial — and all
@@ -1117,7 +1609,7 @@ DD-080..129 — clear of this range, so no renumbering was needed.
 
 **Decision:** All four CRUD-capable fake services (`Clusters`,
 `ComputeInstances`, `Subnets`, `VirtualNetworks`) share one generic
-`resourceStore[T]` type (`internal/mockprovider/store.go`) — a
+`resourceStore[T]` type (`test/mockprovider/store.go`) — a
 `sync.Mutex`-protected, `map[string]T`-backed, insertion-ordered store with
 `create`/`insert`/`get`/`list`/`delete` methods — rather than each service
 hand-rolling its own map/mutex pair. `create` performs the duplicate-`id`
@@ -1151,13 +1643,13 @@ REQ-MOCK-040, REQ-MOCK-050, REQ-MOCK-060
 
 ## DD-132: No real JWT signing for the OIDC token stub
 
-**Decision:** `internal/mockprovider.OIDCHandler`'s `/token` endpoint issues
+**Decision:** `test/mockprovider.OIDCHandler`'s `/token` endpoint issues
 a static, opaque bearer token string (not a real, cryptographically signed
 JWT) for a valid `client_credentials` grant, and never validates the
 `client_id`/`client_secret` credentials presented against anything.
 
 **Rationale:** the mock's own gRPC server (the thing that token is actually
-*for*) doesn't enforce auth either — `internal/mockprovider`'s five gRPC
+*for*) doesn't enforce auth either — `test/mockprovider`'s five gRPC
 services accept every request unconditionally, regardless of what (if any)
 bearer metadata is attached — so a real, verifiable JWT would be signing a
 promise nothing on either side of this mock ever checks. The only real
@@ -1175,7 +1667,7 @@ which takes the identical shortcut for the same reason.
 
 ## DD-133: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
 
-**Decision:** `internal/mockprovider.Config` is a flat, two-field struct
+**Decision:** `test/mockprovider.Config` is a flat, two-field struct
 (`GRPCAddress`, `OIDCAddress`, both required/fail-fast) read via
 `MOCK_GRPC_ADDRESS`/`MOCK_OIDC_ADDRESS` — a new, independent env-var
 namespace, not a reuse of `internal/config.Config`'s shape or any of its
@@ -1196,9 +1688,6 @@ since both binaries may run side by side in the same `kind` pod/namespace
 once Phase 2 wires them together.
 
 **Related requirements:** REQ-MOCK-110
-
----
-
 
 ---
 
@@ -1333,7 +1822,7 @@ actually causing the failure, leaving the chart's other hardening
 
 ## DD-139: `osac-mock-provider`'s OIDC discovery documents derive `token_endpoint` from the request's `Host` header, not the listener's bind address
 
-**Decision:** `internal/mockprovider.OIDCHandler`'s discovery-document
+**Decision:** `test/mockprovider.OIDCHandler`'s discovery-document
 handler builds `token_endpoint` as `"http://" + r.Host + "/token"` per
 request, computed at request time from the incoming `http.Request`'s own
 `Host` field. `NewOIDCHandler` no longer takes a `tokenURL` parameter;
@@ -1533,7 +2022,7 @@ to document the polling discipline explicitly.
 
 ---
 
-## DD-143: Tier B vendors specific OSAC config/artifacts rather than importing `fulfillment-service`'s `it` Go package
+## DD-149: Tier B vendors specific OSAC config/artifacts rather than importing `fulfillment-service`'s `it` Go package
 
 **Decision:** `.ai/specs/osac-sp-e2e-tier-b.spec.md` ("Tier B") deploys real
 Postgres, real Keycloak (official image + a vendored, static realm-config
@@ -1579,7 +2068,7 @@ both unaffected by the repo move.
 
 ---
 
-## DD-145: Vendored realm built from `INSTALL.md`'s authoritative `KeycloakRealmImport`, not the `it` package's test-fixture realm — corrects REQ-TB-020
+## DD-150: Vendored realm built from `INSTALL.md`'s authoritative `KeycloakRealmImport`, not the `it` package's test-fixture realm — corrects REQ-TB-020
 
 **Decision:** `test/e2e/tierb-config/realm.json` is a minimal Keycloak
 realm-export JSON assembled directly from
@@ -1587,7 +2076,7 @@ realm-export JSON assembled directly from
 `KeycloakRealmImport` example (the `spec.realm` field there is a
 `RealmRepresentation` — the same schema a plain `--import-realm` file uses,
 confirmed by inspecting the CR), not derived from
-`fulfillment-service/it/charts/keycloak/files/realm.json` as DD-143/REQ-TB-020
+`fulfillment-service/it/charts/keycloak/files/realm.json` as DD-149/REQ-TB-020
 originally assumed.
 
 **Correction to REQ-TB-020:** verified directly against the real
@@ -1647,7 +2136,7 @@ realm can issue.
 
 ---
 
-## DD-146: `fulfillment-service` is installed via its real, published OCI chart (`variant: kind`), not a hand-written manifest — and requires cert-manager
+## DD-151: `fulfillment-service` is installed via its real, published OCI chart (`variant: kind`), not a hand-written manifest — and requires cert-manager
 
 **Decision:** `ffs-fulfillment-service` is installed with
 `helm install ... oci://ghcr.io/osac-project/charts/fulfillment-service --version vX.Y.Z`
@@ -1733,7 +2222,7 @@ isn't part of its documented/stable contract.
 
 ---
 
-## DD-144: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
+## DD-152: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
 
 **Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)
 will introduce a new binary, `cmd/osac-aap-mock/`, implementing enough of
@@ -1774,3 +2263,114 @@ a config value pointing at our own component instead of a real AAP
 instance.
 
 **Related requirements:** REQ-TB-080
+
+---
+
+## DD-143: `osac-mock-provider`'s `Clusters/GetKubeconfig` is implemented, correcting Phase 1's original out-of-scope call
+
+**Decision:** `test/mockprovider/clusters.go`'s `ClustersServer` now
+implements `GetKubeconfig` (REQ-MOCK-120): for a known `id` it returns a
+deterministic, non-functional stub kubeconfig (base64-encoded YAML with the
+cluster `id` as its context name); for an unknown `id` it returns gRPC
+`NOT_FOUND`, mirroring the other four CRUD-shaped services' `Get` semantics
+(REQ-MOCK-040). `GetKubeconfigViaHttp`/`GetPassword(ViaHttp)` remain
+unimplemented (still genuinely uncalled by `osac-sp`).
+
+**Rationale:** found while building M3/M4 CRUD e2e coverage on top of this
+mock, not from re-reading the original architecture diagrams. Phase 1's
+spec (`.ai/specs/osac-sp-e2e-mock-provider.spec.md` §1) had explicitly
+scoped plain `GetKubeconfig` out, reasoning "none of these are called by
+`osac-sp` today (Milestone 3/4's architecture diagrams only ever invoke
+Create/Get/List/Delete)" — true of the diagrams, false of the actual M3
+implementation: `internal/cluster.Service.Get` calls
+`Clusters/GetKubeconfig` whenever the mapped status is `ACTIVE`
+(`osac-sp-m3-cluster-crud.spec.md` REQ-GET-020). Since `Clusters/Create`
+sets a terminal `CLUSTER_STATE_READY` immediately (REQ-MOCK-030, no
+simulated `PROGRESSING` delay), *every* `Get` of a mock-created cluster
+maps to `ACTIVE` and hits this path — so leaving `GetKubeconfig`
+`UNIMPLEMENTED` would have made the very first `cluster_crud_test.go` e2e
+spec's `Get` call fail with a mapped `500`, not the `200` it exercises.
+This is exactly the class of gap this M3/M4 e2e validation work exists to
+catch before it reaches a real deployment.
+
+**Related requirements:** REQ-MOCK-120, REQ-GET-020 (M3)
+
+---
+
+## DD-144: `test/e2e/manifests/osac-service-provider.yaml` gains `DCM_NATS_URL`, required now that M5 has merged
+
+**Decision:** the e2e Deployment manifest now sets
+`DCM_NATS_URL=nats://dcm-nats:4222`, pointing at the `dcm-nats` StatefulSet
+this workflow's own `helm install dcm control-plane/deploy/helm/dcm` step
+already deploys and waits on (`.github/workflows/e2e.yaml`'s
+`kubectl rollout status statefulset/dcm-nats`).
+
+**Rationale:** Milestone 5 (REQ-PUBLISH-010, now merged to `main` via #25)
+made `DCM_NATS_URL` a required, fail-fast `DCMConfig` field —
+`internal/config.Load()` errors out before any subsystem starts if it's
+empty. With `main` now merged into this branch (bringing M5/M6 in), the
+mock e2e's `osac-service-provider` Deployment would crash-loop on startup
+without this, since no manifest here previously set it (this pod had
+nothing to gate on before M5 existed). Caught by this branch's own `e2e`
+CI job going red (`kubectl wait --for=condition=Available` timing out on
+both `osac-service-provider`/`osac-mock-provider` Deployments) immediately
+after the M5/M6 merge — not from a design review. The exact value was
+already known and pre-validated on a separate, ahead-of-time branch (see
+`e2e/crud-coverage`'s own `DD-146`, which added this same fix proactively
+before M5 had even landed, anticipating exactly this gap) — reused
+verbatim here since this branch is the one that actually now needs it.
+
+**Related requirements:** REQ-PUBLISH-010 (M5)
+
+---
+
+## DD-147: `control-plane`#51 forces Phase 2 (`environment-agent`) migration — deferred until current PR stack lands
+
+**Decision:** `control-plane`'s `main` deleted `api/sp/v1alpha1/provider`
+([control-plane#51](https://github.com/dcm-project/control-plane/pull/51),
+2026-08-19), permanently invalidating DD-050's Phase 1 target.
+`environment-agent` has matured past the stub state DD-050 cited, so
+Phase 2 is now mandatory, not optional — but is deliberately deferred
+until the in-flight PR stack (#29, #22, #24, #27, #32) lands, to keep it a
+clean refactor rather than mid-flight scope creep. `.github/workflows/e2e.yaml`'s
+`CONTROL_PLANE_REF` is pinned to the last commit before #51 as a stopgap
+in the meantime. Pinning the chart ref alone was not sufficient — the
+chart's `values.yaml` hardcodes `global.imageTag: main` as its own default
+regardless of which chart commit is checked out, so Helm kept pulling the
+floating (already-broken) `:main` image. `CONTROL_PLANE_IMAGE_TAG` pins the
+actual deployed image to the matching short-SHA tag
+(`shared-workflows`' `build-push-quay.yaml` publishes both `main` and
+`${GITHUB_SHA:0:7}` on every push), verified present on quay.io before use.
+Full RCA, maturity evidence, and known implementation
+deltas are tracked in
+[#33](https://github.com/dcm-project/osac-service-provider/issues/33);
+DD-050 will be formally superseded once that work actually starts.
+
+**Related requirements:** REQ-REG-010, REQ-REG-090, REQ-REG-100 (all to be
+revised when Phase 2 starts — see #33)
+
+---
+
+## DD-148: `.golangci.yml` hardened with 10 additional linters, evidence-tested before adoption
+
+**Decision:** added `nestif`, `errorlint`, `forcetypeassert`, `predeclared`,
+`perfsprint`, `intrange`, `gocyclo` (`min-complexity: 15`), `funlen`
+(`lines: 80`, `statements: 50`), `goconst` (`min-occurrences: 3`), and
+`exhaustive` (`default-signifies-exhaustive: true`) to the linter set this
+repo shares verbatim with every sibling DCM Go service provider
+(`control-plane`, `environment-agent`, `k8s-network-service-provider`,
+`k8s-storage-service-provider` all carry the identical file). Explicitly
+**not** added: `dupl`, `noctx` (see Rationale).
+
+**Rationale:** triggered by two real review nits on [PR #25](https://github.com/dcm-project/osac-service-provider/pull/25) that manual review caught but no linter would have (`internal/statuspoll`: two guard-`if`s that should have been one condition; a repeated string literal that should have been a constant) — the concrete goal was closing exactly that gap, plus general AI-generated-code hardening, without adding noise.
+
+Each candidate was run against this repo's actual code before being adopted, not chosen from a generic "best practices" list:
+- `nestif`/`errorlint`/`forcetypeassert`/`predeclared`/`perfsprint`/`intrange`/`gocyclo`/`funlen`: **zero** current hits — pure forward-looking regression guards, free to adopt.
+- `exhaustive`: naively fires on 5 switches over `codes.Code`/`ClusterState`, but 4 already have a deliberate `default:` catch-all (the documented `internal/grpcerror.Classify` pattern, e.g.). Setting `default-signifies-exhaustive: true` drops this to exactly 1 real hit — `internal/cluster/status.go`'s intentional partial-match-then-fallthrough switch (checks terminal states first, falls through to a `DEGRADED` condition check, falls through again to a final exhaustive switch) — annotated with a justified `//nolint:exhaustive` rather than restructured, since the fallthrough is the intended design. This is the single most valuable addition: a safety net against silently mishandling a future new OSAC proto enum value.
+- `goconst` (`min-occurrences: 3`): 4 hits, all pre-existing test-only literals (`internal/osac/bootstrap_unit_test.go`'s repeated CA-file path, `internal/registration/registration_unit_test.go`'s repeated content-type/service-type strings) — extracted to fixture-local constants. This is the exact linter that would have auto-caught the PR #25 nit.
+- `dupl`: 25 hits, but every one is the deliberate Cluster/VM/Subnet/VirtualNetwork structural mirroring already established as an intentional non-generic design elsewhere in this codebase (`test/mockprovider`'s per-resource-type servers, `internal/cluster`/`internal/vm`'s parallel service packages). Enabling it would force either an unwanted generics refactor or ~12 blanket `//nolint`s — noise, not signal. Left off.
+- `noctx`: 6 hits, all `net.Listen`/`net.DialTimeout` at process-startup or test-probe call sites with no real cancellation need. Stylistic modernization, not a correctness or AI-slop risk. Left off.
+
+Deliberately scoped to this repo first, not simultaneously rolled out to sibling SPs — this repo's `.golangci.yml` already functions as the de facto shared template (byte-identical across 4 other repos), so validating the change here first, then propagating, is lower-risk than a coordinated multi-repo change.
+
+**Related requirements:** none (tooling/process decision, no REQ/AC).

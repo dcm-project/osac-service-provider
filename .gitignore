@@ -46,3 +46,5 @@ bin/
 !.cursor/rules/
 !.cursor/skills/
 .cursor/rules/hindsight-memory.mdc
+# Serena MCP trial (project config/cache/logs; not yet a team decision)
+.serena/

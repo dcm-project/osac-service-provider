@@ -24,25 +24,35 @@ linters:
     - dogsled
     - durationcheck
     - errchkjson
+    - errorlint
+    - exhaustive
     - exptostd
     - fatcontext
+    - forcetypeassert
+    - funlen
     - ginkgolinter
     - gocheckcompilerdirectives
     - gochecksumtype
     - gocritic
+    - gocyclo
+    - goconst
     - goprintffuncname
     - grouper
     - iface
     - inamedparam
     - interfacebloat
+    - intrange
     - makezero
     - mirror
     - misspell
+    - nestif
     - nilerr
     - nilnesserr
     - nolintlint
     - nosprintfhostport
+    - perfsprint
     - prealloc
+    - predeclared
     - protogetter
     - reassign
     - recvcheck
@@ -68,6 +78,19 @@ linters:
     revive:
       rules:
         - name: unused-parameter
+    exhaustive:
+      # A switch with an explicit default is exhaustive by convention here
+      # (e.g. internal/grpcerror.Classify's gRPC-code table) — do not force
+      # every enum member to be spelled out when a catch-all default is the
+      # documented, intended design.
+      default-signifies-exhaustive: true
+    goconst:
+      min-occurrences: 3
+    gocyclo:
+      min-complexity: 15
+    funlen:
+      lines: 80
+      statements: 50
 
 issues:
   max-issues-per-linter: 0

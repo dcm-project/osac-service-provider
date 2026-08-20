@@ -42,7 +42,7 @@ rather than silently deferring them.
   not one of them yet, see REQ-E2E-030)
 - `internal/config/config.go` — the exact env-var contract this phase's
   `osac-sp` manifest must satisfy (`SP_SERVER_*`, `SP_OSAC_*`, `DCM_*`, `SP_*`)
-- `internal/mockprovider/config.go` — the exact env-var contract this phase's
+- `test/mockprovider/config.go` — the exact env-var contract this phase's
   `osac-mock-provider` manifest must satisfy (`MOCK_GRPC_ADDRESS`,
   `MOCK_OIDC_ADDRESS`)
 - [Design Decisions](../decisions/osac-sp.decisions.md) — new decisions for
@@ -98,9 +98,9 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | REQ-E2E-010 | The GitHub Actions job MUST create a `kind` cluster, build+load `osac-service-provider` and `osac-mock-provider` images (no push), and pull `quay.io/dcm-project/control-plane:main` (no build) | MUST | |
 | REQ-E2E-020 | The job MUST install `control-plane`'s `deploy/helm/dcm/` chart (sparse-checkout at a pinned ref) with `dcmUi.enabled=false`, `controlPlane.route.enabled=false`, `controlPlane.ingress.enabled=false` | MUST | `kind` has no `Route` CRD; UI is irrelevant to assertions |
 | REQ-E2E-030 | The job MUST apply this repo's own plain-manifest `Deployment`+`Service` pair for `osac-service-provider` and for `osac-mock-provider`, wired per §2's table | MUST | Not part of the upstream chart (yet) |
-| REQ-E2E-040 | The job MUST wait, with a bounded timeout, for every component's readiness (control-plane's `/health`-equivalent, `osac-sp`'s `GET /api/v1alpha1/clusters/health` and `/vms/health` both reporting `status: healthy`) before running assertions, and MUST fail the job (not hang) if the timeout is exceeded | MUST | Reuses each component's existing health endpoint — no new one invented |
+| REQ-E2E-040 | The job MUST wait, with a bounded timeout, for every component's Kubernetes readiness (`kubectl wait --for=condition=Available`) before starting the e2e suite, and MUST fail the job (not hang) if the timeout is exceeded. The suite itself, once running, separately polls `osac-sp`'s own `GET /api/v1alpha1/clusters/health` and `/vms/health` for `status: healthy` (see AC-E2E-030) — deliberately not gated by this job-level wait, to avoid a hidden test-ordering assumption (DD-142) | MUST | Reuses each component's existing health endpoint — no new one invented |
 | REQ-E2E-050 | The e2e suite MUST assert that `osac-sp`, running for real against real `control-plane`, successfully self-registers **both** the `cluster` and `vm` service types (2 independent registrations, per `internal/registration.Registrar`'s existing design) | MUST | First real cross-repo assertion of the SP↔control-plane registration contract |
-| REQ-E2E-060 | The e2e suite MUST assert that `osac-sp`'s own two health endpoints report `status: healthy` with `connected: true` against the real `osac-mock-provider` (real gRPC dial + real OIDC token fetch, not bufconn) | MUST | Exercises `internal/osac.Bootstrap` end-to-end for the first time outside its own unit/integration tests |
+| REQ-E2E-060 | The e2e suite MUST assert that `osac-sp`'s own two health endpoints report `status: healthy` against the real `osac-mock-provider` (real gRPC dial + real OIDC token fetch, not bufconn) | MUST | Exercises `internal/osac.Bootstrap` end-to-end for the first time outside its own unit/integration tests; the `Health` schema (`api/v1alpha1/openapi.yaml`) has no `connected` field — `status`/`detail` are the only signal |
 | REQ-E2E-070 | The job MUST tear down the `kind` cluster on both success and failure, and MUST upload each component's logs as a build artifact on failure | MUST | Matches `fulfillment-service`'s own IT harness convention (verified in the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19)) |
 | REQ-E2E-080 | The e2e suite MUST run as a separate nested Go module (own `go.mod`) so its dependencies (a `control-plane` REST client, `k8s.io/client-go` if used for readiness polling) never enter the main module's `go.mod`/`go.sum` | MUST | Same isolation rationale as the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19) |
 
@@ -113,9 +113,11 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 - **Validates:** REQ-E2E-010, REQ-E2E-020, REQ-E2E-030, REQ-E2E-040
 - **Given** a freshly created `kind` cluster with the chart and manifests
   applied per §2
-- **When** the job polls each component's readiness/health endpoint
-- **Then** every component reports ready/healthy before the bounded timeout
-  elapses, and the job proceeds to run the e2e suite
+- **When** the job waits on each component's Kubernetes `Available` condition
+- **Then** every component reaches `Available` before the bounded timeout
+  elapses, and the job proceeds to run the e2e suite — `osac-sp`'s own
+  business-level `healthy` status is confirmed separately by the suite
+  itself (AC-E2E-030), not by this job-level wait
 
 ##### AC-E2E-020: `osac-sp` registers both service types with real `control-plane`
 
@@ -133,8 +135,9 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 - **When** the e2e suite calls `osac-sp`'s own
   `GET /api/v1alpha1/clusters/health` and `GET /api/v1alpha1/vms/health`
   directly
-- **Then** both report `status: healthy` with the OIDC-token and gRPC-probe
-  sub-fields both indicating success
+- **Then** both report `status: healthy` with an empty `detail` — a
+  non-empty `detail` would indicate the OIDC token fetch or the OSAC gRPC
+  probe failed (`internal/osac.Bootstrap`)
 
 ##### AC-E2E-040: A component failure produces retrievable logs, not a silent hang
 

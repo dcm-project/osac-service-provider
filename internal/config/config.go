@@ -33,14 +33,17 @@ type OSACConfig struct {
 }
 
 // DCMConfig holds settings for reaching control-plane's SP registration
-// endpoint.
+// endpoint and the shared NATS broker used for async status reporting.
 //
-// Implements REQ-REG-110. envPrefix is unprefixed by "SP_" (unlike the
-// other nested configs) to match the DCM_REGISTRATION_URL env var name
-// already used by sibling SPs (k8s-container-service-provider,
-// acm-cluster-service-provider) for the same backend — see DD-050.
+// Implements REQ-REG-110, REQ-PUBLISH-010. envPrefix is unprefixed by "SP_"
+// (unlike the other nested configs) to match the DCM_REGISTRATION_URL env
+// var name already used by sibling SPs (k8s-container-service-provider,
+// acm-cluster-service-provider) for the same backend — see DD-050. NATSURL
+// follows the same placement principle (DD-071): the NATS broker is a
+// shared, DCM-wide backend, not provider-specific.
 type DCMConfig struct {
 	RegistrationURL string `env:"REGISTRATION_URL,notEmpty"`
+	NATSURL         string `env:"NATS_URL,notEmpty"`
 }
 
 // ProviderConfig holds this service provider's own identity, as advertised
@@ -53,12 +56,33 @@ type ProviderConfig struct {
 	VMName      string `env:"PROVIDER_VM_NAME"      envDefault:"osac-sp-vm"`
 }
 
+// VersionMatrixConfig holds the optional override path for the
+// version-translation compatibility matrix (Milestone 6).
+//
+// Implements REQ-VERSION-090. Path empty/unset is valid and means "use
+// internal/versionmatrix.DefaultMatrix" — only a non-empty Path pointing
+// at a missing/malformed file is a fail-fast condition.
+type VersionMatrixConfig struct {
+	Path string `env:"VERSION_MATRIX_PATH"`
+}
+
+// StatusConfig holds settings for the async status-reporting poll loop.
+//
+// Implements REQ-POLL-010.
+type StatusConfig struct {
+	PollInterval time.Duration `env:"POLL_INTERVAL"  envDefault:"30s"`
+	ResyncEvery  int           `env:"RESYNC_EVERY"   envDefault:"10"`
+	ListTimeout  time.Duration `env:"LIST_TIMEOUT"   envDefault:"10s"`
+}
+
 // Config is the root configuration for the service provider.
 type Config struct {
-	Server   ServerConfig   `envPrefix:"SP_SERVER_"`
-	OSAC     OSACConfig     `envPrefix:"SP_OSAC_"`
-	DCM      DCMConfig      `envPrefix:"DCM_"`
-	Provider ProviderConfig `envPrefix:"SP_"`
+	Server        ServerConfig        `envPrefix:"SP_SERVER_"`
+	OSAC          OSACConfig          `envPrefix:"SP_OSAC_"`
+	DCM           DCMConfig           `envPrefix:"DCM_"`
+	Provider      ProviderConfig      `envPrefix:"SP_"`
+	VersionMatrix VersionMatrixConfig `envPrefix:"SP_"`
+	Status        StatusConfig        `envPrefix:"SP_STATUS_"`
 }
 
 // Load reads configuration from environment variables. It fails fast

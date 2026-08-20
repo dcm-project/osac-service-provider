@@ -10,13 +10,13 @@ numbering (DD-126).
 `_integration_test.go` suffix. Run a single case with:
 
 ```bash
-go run github.com/onsi/ginkgo/v2/ginkgo -r -v -focus "TC-U-114" ./internal/mockprovider/... ./cmd/osac-mock-provider/...
+go run github.com/onsi/ginkgo/v2/ginkgo -r -v -focus "TC-U-114" ./test/mockprovider/... ./cmd/osac-mock-provider/...
 ```
 
 **Assertion discipline:** assert actual values (exact IDs, exact status
 enum values, exact response bodies), not existence-only checks.
 
-**What's a "fake" here:** `internal/mockprovider` itself *is* the fake (it
+**What's a "fake" here:** `test/mockprovider` itself *is* the fake (it
 plays the role OSAC's real `fulfillment-service` plays for `osac-sp`). Its
 own unit tests therefore call its exported `grpc.Server`-implementing types
 directly (`Create`/`Get`/`List`/`Delete`) — real production code under
@@ -24,7 +24,7 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 1. `internal/mockprovider` — `Clusters` and `ComputeInstances` (SP-supplied-ID services)
+## 1. `test/mockprovider` — `Clusters` and `ComputeInstances` (SP-supplied-ID services)
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -40,10 +40,11 @@ test, no further fake/mock layer needed underneath it.
 | TC-U-123 | `ComputeInstances.List` honors `offset`/`limit` in creation order | REQ-MOCK-050, AC-MOCK-060 | Same as TC-U-122 for `ComputeInstances`. |
 | TC-U-124 | `Clusters.Delete` removes a known `id`; a second `Delete` is `NotFound` | REQ-MOCK-060, AC-MOCK-050 | `Create` with `id="x"`; call `Delete("x")` — assert no error and `List` no longer contains `"x"`; call `Delete("x")` again — assert error code `NOT_FOUND`. |
 | TC-U-125 | `ComputeInstances.Delete` removes a known `id`; a second `Delete` is `NotFound` | REQ-MOCK-060, AC-MOCK-050 | Same as TC-U-124 for `ComputeInstances`. |
+| TC-U-155 | `Clusters.GetKubeconfig` round-trips a non-empty, base64-encoded stub for a known `id`; unknown `id` is `NotFound` | REQ-MOCK-120, AC-MOCK-130 | Regression test for a real gap found while building M3/M4 e2e coverage (DD-143): `Create` a cluster with `id="x"`; call `GetKubeconfig("x")`; assert the response's `kubeconfig` is non-empty and `base64.StdEncoding.DecodeString` succeeds on it; call `GetKubeconfig("missing")`; assert error code `NOT_FOUND`. |
 
 ---
 
-## 2. `internal/mockprovider` — `Subnets` and `VirtualNetworks` (server-generated-ID services)
+## 2. `test/mockprovider` — `Subnets` and `VirtualNetworks` (server-generated-ID services)
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -58,7 +59,7 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 3. `internal/mockprovider` — `Capabilities`
+## 3. `test/mockprovider` — `Capabilities`
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -66,7 +67,7 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 4. `internal/mockprovider` — OIDC discovery + token stub
+## 4. `test/mockprovider` — OIDC discovery + token stub
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -81,7 +82,7 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 5. `internal/mockprovider` — Config
+## 5. `test/mockprovider` — Config
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -121,6 +122,6 @@ test, no further fake/mock layer needed underneath it.
 | `Subnets`/`VirtualNetworks` CRUD | REQ-MOCK-021, 030, 040, 050, 060 | AC-MOCK-040, 050, 070 | 8 (TC-U-126..133) | — | |
 | `Capabilities` | REQ-MOCK-070 | AC-MOCK-080 | 1 (TC-U-134) | — | |
 | OIDC discovery + token | REQ-MOCK-080, 090, 100 | AC-MOCK-090, 100, 110 | 8 (TC-U-135..141, 152) | — | TC-U-140/141 added post-hoc to close `ParseForm`- and encode-error coverage gaps; TC-U-152 added post-hoc as a regression test for a real cross-pod-unreachability bug found via the e2e infra (DD-139). |
-| Mock config (`internal/mockprovider.LoadConfig`) | REQ-MOCK-110 | — | 2 (TC-U-142..143) | — | |
+| Mock config (`test/mockprovider.LoadConfig`) | REQ-MOCK-110 | — | 2 (TC-U-142..143) | — | |
 | Binary wiring (`cmd/osac-mock-provider`) | REQ-MOCK-010, 070, 080, 090, 110 | AC-MOCK-120 | 8 (TC-U-144..151) | 1 (TC-I-031) | `run`/`serveUntilDone` are 100% unit-covered on their own (TC-U-144..151); TC-I-031 closes the pyramid invariant by proving the real transport end to end with a real `osac.Bootstrap`, not a fake. `main`/`mainRun`'s happy path is a documented coverage exception (real-OS-signal-dependent), mirroring `cmd/osac-service-provider/main.go`'s own accepted gap. |
 | **Total** | 11 | 12 | **38** | **1** | |

@@ -2,6 +2,7 @@ package mockprovider_test
 
 import (
 	"context"
+	"encoding/base64"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -9,8 +10,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/dcm-project/osac-service-provider/internal/mockprovider"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
 
 var _ = Describe("ClustersServer", func() {
@@ -127,6 +128,24 @@ var _ = Describe("ClustersServer", func() {
 		Expect(listResp.GetItems()).To(BeEmpty())
 
 		_, err = srv.Delete(ctx, &publicv1.ClustersDeleteRequest{Id: "x"})
+		st, ok := status.FromError(err)
+		Expect(ok).To(BeTrue())
+		Expect(st.Code()).To(Equal(codes.NotFound))
+	})
+
+	// TC-U-155: GetKubeconfig round-trips a non-empty, base64-encoded stub
+	// for a known id; unknown id is NotFound.
+	It("round-trips a non-empty, base64-encoded kubeconfig for a known id, NotFound for an unknown one (TC-U-155)", func() {
+		_, err := srv.Create(ctx, &publicv1.ClustersCreateRequest{Object: &publicv1.Cluster{Id: "x"}})
+		Expect(err).NotTo(HaveOccurred())
+
+		kcResp, err := srv.GetKubeconfig(ctx, &publicv1.ClustersGetKubeconfigRequest{Id: "x"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kcResp.GetKubeconfig()).NotTo(BeEmpty())
+		_, decodeErr := base64.StdEncoding.DecodeString(kcResp.GetKubeconfig())
+		Expect(decodeErr).NotTo(HaveOccurred())
+
+		_, err = srv.GetKubeconfig(ctx, &publicv1.ClustersGetKubeconfigRequest{Id: "missing"})
 		st, ok := status.FromError(err)
 		Expect(ok).To(BeTrue())
 		Expect(st.Code()).To(Equal(codes.NotFound))

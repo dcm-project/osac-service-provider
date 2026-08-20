@@ -19,6 +19,7 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	clusterhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/cluster"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // fakeClustersServer is a real, wire-level fake implementing the generated
@@ -105,6 +106,15 @@ func (s *fakeClustersServer) CreateCallCount() int {
 	return len(s.createCalls)
 }
 
+func (s *fakeClustersServer) LastCreateCall() *publicv1.ClustersCreateRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.createCalls) == 0 {
+		return nil
+	}
+	return s.createCalls[len(s.createCalls)-1]
+}
+
 func (s *fakeClustersServer) DeleteCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,6 +162,13 @@ type fixture struct {
 }
 
 func newFixture() *fixture {
+	return newFixtureWithMatrix(versionmatrix.DefaultMatrix)
+}
+
+// newFixtureWithMatrix is newFixture with an explicit matrix, for
+// TC-U-530/531 (unsupported-version rejection against a matrix lacking the
+// requested version).
+func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
@@ -167,7 +184,7 @@ func newFixture() *fixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn))
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix)
 	return &fixture{
 		handler: clusterhandlers.NewHandler(svc, discardLogger),
 		fake:    fake,
@@ -239,6 +256,12 @@ type integrationFixture struct {
 }
 
 func newIntegrationFixture() *integrationFixture {
+	return newIntegrationFixtureWithMatrix(versionmatrix.DefaultMatrix)
+}
+
+// newIntegrationFixtureWithMatrix is newIntegrationFixture with an
+// explicit matrix, for TC-I-500/501/502.
+func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFixture {
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
@@ -254,7 +277,7 @@ func newIntegrationFixture() *integrationFixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn))
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix)
 	h := &realHandler{Handler: clusterhandlers.NewHandler(svc, discardLogger)}
 	strict := oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(discardLogger),

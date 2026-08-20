@@ -35,11 +35,13 @@ spec:
             - name: SP_OSAC_OIDC_ISSUER_URL
               value: "http://osac-mock-provider:9091"
             - name: SP_OSAC_OIDC_CLIENT_ID
-              value: "e2e-client"
+              value: "osac-sp-e2e-client"
             - name: SP_OSAC_OIDC_CLIENT_SECRET
-              value: "e2e-secret"
+              value: "osac-sp-e2e-secret"
             - name: DCM_REGISTRATION_URL
               value: "http://dcm-control-plane:8080/api/v1alpha1"
+            - name: DCM_NATS_URL
+              value: "nats://dcm-nats:4222"
             - name: SP_ENDPOINT
               value: "http://osac-service-provider:8080"
           readinessProbe:
