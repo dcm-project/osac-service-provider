@@ -1,0 +1,239 @@
+name: E2E Tier B (kind + real OSAC stack)
+
+# Tier B of osac-service-provider#21's e2e effort — Phase 1
+# (.ai/specs/osac-sp-e2e-tier-b.spec.md): real Postgres, real Keycloak
+# (vendored realm, DD-145), and real fulfillment-service (pinned, published
+# chart, DD-146), replacing Phase A's osac-mock-provider, to close DD-132's
+# structural auth-fidelity gap. dcm-control-plane/osac-service-provider
+# wiring otherwise unchanged from .github/workflows/e2e.yaml (Phase A).
+
+on:
+  push:
+    branches: [main, 'release/v*', 'feat/e2e-tier-b-phase1']
+  pull_request:
+    branches: [main, 'release/v*']
+  workflow_dispatch:
+    inputs:
+      bad_auth:
+        description: "Also deploy the deliberately-misconfigured osac-sp instance (TC-TB-050 / REQ-TB-060)"
+        type: boolean
+        default: false
+
+env:
+  KIND_CLUSTER_NAME: osac-sp-e2e-tierb
+  CONTROL_PLANE_REF: main
+  CERT_MANAGER_VERSION: v1.20.0
+  FULFILLMENT_SERVICE_CHART_VERSION: "0.0.85" # REQ-TB-050 — pin, never `main`/`latest`
+
+jobs:
+  e2e-tierb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # NFR-TB-010
+    steps:
+      - name: Checkout osac-service-provider
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build osac-service-provider image
+        run: docker build -t osac-service-provider:e2e -f Containerfile .
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER_NAME }}
+          config: test/e2e/kind-config.yaml
+          wait: 120s
+
+      - name: Load osac-service-provider image into kind
+        run: kind load docker-image osac-service-provider:e2e --name "${{ env.KIND_CLUSTER_NAME }}"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      # --- cert-manager (DD-146: hard prerequisite of fulfillment-service's chart, all variants) ---
+      - name: Install cert-manager
+        run: |
+          helm upgrade cert-manager oci://quay.io/jetstack/charts/cert-manager \
+            --install --version "${{ env.CERT_MANAGER_VERSION }}" \
+            --namespace cert-manager --create-namespace \
+            --set crds.enabled=true --wait
+
+      - name: Create self-signed CA chain (mirrors fulfillment-service/docs/INSTALL.md)
+        run: |
+          kubectl apply -f test/e2e/manifests-tierb/cert-manager-ca.yaml
+          kubectl wait --for=condition=Ready certificate/osac-ca -n cert-manager --timeout=60s
+
+      - name: Copy CA cert into a `ca-bundle` ConfigMap (stands in for trust-manager)
+        run: |
+          kubectl get secret osac-ca -n cert-manager -o go-template='{{ index .data "tls.crt" | base64decode }}' > /tmp/ca.pem
+          kubectl create configmap ca-bundle --from-file=bundle.pem=/tmp/ca.pem
+
+      # --- ffs-postgres ---
+      - name: Deploy ffs-postgres
+        run: |
+          kubectl apply -f test/e2e/manifests-tierb/postgres.yaml
+          kubectl rollout status deployment/ffs-postgres --timeout=2m
+
+      # --- ffs-keycloak (real Keycloak, vendored realm — DD-145) ---
+      - name: Create ffs-keycloak-realm ConfigMap from the vendored realm.json
+        run: kubectl create configmap ffs-keycloak-realm --from-file=realm.json=test/e2e/tierb-config/realm.json
+
+      - name: Deploy ffs-keycloak
+        run: |
+          kubectl apply -f test/e2e/manifests-tierb/keycloak.yaml
+          kubectl rollout status deployment/ffs-keycloak --timeout=3m
+
+      # --- ffs-fulfillment-service (real, published chart — DD-146) ---
+      - name: Deploy fulfillment-service secrets
+        run: kubectl apply -f test/e2e/manifests-tierb/fulfillment-secrets.yaml
+
+      - name: Install fulfillment-service
+        run: |
+          set -o pipefail
+          # The chart unconditionally renders Gateway API `TLSRoute`
+          # objects for its ingress-proxy, even though nothing in this
+          # workflow needs external/TLS-terminated ingress — osac-sp talks
+          # to fulfillment-grpc-server in-cluster. Installing the Gateway
+          # API CRDs just to satisfy `helm install`'s CRD-existence check
+          # pulls in a dependency (and a `v1alpha3` vs. this cluster's
+          # `v1alpha2` version mismatch, confirmed via a live spike) with
+          # no corresponding controller to ever reconcile the resource —
+          # so render+filter+apply instead of `helm install`, dropping
+          # only the `TLSRoute` kind. Everything else in the chart
+          # (Deployments/Services/Certificates/etc.) is applied as-is.
+          # `helm template`'s OCI pull status ("Pulled: ...", "Digest:
+          # ...") lands on stdout or stderr depending on the installed
+          # Helm build (confirmed empirically: this repo's local Helm
+          # v4.1.1 writes it to stderr, but `azure/setup-helm@v4`'s
+          # "latest" resolves to a build that writes it to stdout) — so
+          # redirecting stderr away isn't a reliable fix by itself.
+          # Strip both lines by content instead, whichever stream they
+          # land on, before handing the file to yq/kubectl: left as-is,
+          # they render as a bogus leading YAML document with no
+          # apiVersion/kind, which kubectl apply rejects outright.
+          helm template ffs-fulfillment-service oci://ghcr.io/osac-project/charts/fulfillment-service \
+            --version "${{ env.FULFILLMENT_SERVICE_CHART_VERSION }}" \
+            --values test/e2e/tierb-config/fulfillment-service-values.yaml \
+            2>&1 | grep -Ev '^(Pulled|Digest): ' > /tmp/ffs-rendered.yaml
+          # `select(. != null)` additionally guards against a real,
+          # separate finding: some of the chart's templates emit a
+          # `---\n# Source: ...` separator with no body for a
+          # conditionally-skipped block, which yq would otherwise pass
+          # through as a null document.
+          yq eval-all 'select(. != null) | select(.kind != "TLSRoute")' /tmp/ffs-rendered.yaml \
+            > /tmp/ffs-rendered-filtered.yaml
+          kubectl apply -f /tmp/ffs-rendered-filtered.yaml || {
+            echo "::group::triage: filtered manifest, full content"
+            cat -A /tmp/ffs-rendered-filtered.yaml
+            echo "::endgroup::"
+            exit 1
+          }
+          # Only wait on what osac-sp's health check actually exercises
+          # (fulfillment-grpc-server's Capabilities service) — the chart's
+          # Deployments carry no common selector label to wait on as a
+          # group, and fulfillment-console-proxy (an interactive web
+          # console frontend, unrelated to gRPC health) was observed
+          # flaky/not-ready in a live spike with no bearing on this suite.
+          kubectl wait --for=condition=Available deployment/fulfillment-grpc-server --timeout=5m
+
+      # --- dcm-control-plane (unchanged from Phase A) ---
+      - name: Sparse-checkout control-plane's chart
+        uses: actions/checkout@v7
+        with:
+          repository: dcm-project/control-plane
+          ref: ${{ env.CONTROL_PLANE_REF }}
+          sparse-checkout: deploy/helm/dcm
+          sparse-checkout-cone-mode: false
+          path: control-plane
+
+      - name: Install control-plane (+ Postgres, NATS) via its own chart
+        run: |
+          helm install dcm control-plane/deploy/helm/dcm \
+            --set dcmUi.enabled=false \
+            --set controlPlane.route.enabled=false \
+            --set controlPlane.ingress.enabled=false
+          kubectl rollout status statefulset/dcm-postgres --timeout=5m
+          kubectl rollout status statefulset/dcm-nats --timeout=5m
+
+      # Same control-plane#42 workaround as Phase A (e2e.yaml) — not fixed upstream yet.
+      - name: Work around control-plane#42 (wait-for-postgres init container)
+        run: |
+          kubectl patch deployment dcm-control-plane --type strategic -p \
+            '{"spec":{"template":{"spec":{"initContainers":[{"name":"wait-for-postgres","securityContext":{"runAsNonRoot":false}}]}}}}'
+          kubectl rollout status deployment/dcm-control-plane --timeout=5m
+
+      # --- osac-service-provider, wired at the real OSAC stack ---
+      - name: Apply osac-service-provider (Tier B wiring)
+        run: kubectl apply -f test/e2e/manifests-tierb/osac-service-provider.yaml
+
+      - name: Wait for osac-sp readiness
+        run: kubectl wait --for=condition=Available deployment/osac-service-provider --timeout=180s
+
+      - name: Wait for osac-sp-bad-auth readiness (opt-in variant, TC-TB-050)
+        if: inputs.bad_auth == true
+        run: |
+          # No readiness probe on this Deployment by design (it's meant to
+          # report unhealthy) — wait on the pod entering Running instead.
+          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=osac-service-provider-bad-auth --timeout=120s
+
+      - name: Start port-forwards
+        run: |
+          kubectl port-forward svc/dcm-control-plane 18080:8080 >/tmp/pf-control-plane.log 2>&1 &
+          echo $! > /tmp/pf-control-plane.pid
+          kubectl port-forward svc/osac-service-provider 18081:8080 >/tmp/pf-osac-sp.log 2>&1 &
+          echo $! > /tmp/pf-osac-sp.pid
+          kubectl port-forward svc/ffs-keycloak 18082:8443 >/tmp/pf-keycloak.log 2>&1 &
+          echo $! > /tmp/pf-keycloak.pid
+          sleep 3
+
+      - name: Start port-forward for osac-sp-bad-auth (opt-in variant)
+        if: inputs.bad_auth == true
+        run: |
+          kubectl port-forward svc/osac-service-provider-bad-auth 18083:8080 >/tmp/pf-osac-sp-bad-auth.log 2>&1 &
+          echo $! > /tmp/pf-osac-sp-bad-auth.pid
+          sleep 3
+
+      - name: Run Tier B e2e suite
+        working-directory: test/e2e
+        env:
+          CONTROL_PLANE_URL: http://localhost:18080
+          OSAC_SP_URL: http://localhost:18081
+          KEYCLOAK_URL: https://localhost:18082/realms/osac
+          TIERB_ADMIN_SECRET: tierb-osac-admin-secret
+          BAD_AUTH_OSAC_SP_URL: ${{ inputs.bad_auth == true && 'http://localhost:18083' || '' }}
+        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=10m
+
+      - name: Stop port-forwards
+        if: always()
+        run: |
+          for f in /tmp/pf-control-plane.pid /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-osac-sp-bad-auth.pid; do
+            [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
+          done
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          mkdir -p /tmp/e2e-diagnostics
+          kubectl get pods -o wide > /tmp/e2e-diagnostics/pods.txt 2>&1 || true
+          kubectl get certificates,issuers,clusterissuers -A > /tmp/e2e-diagnostics/certs.txt 2>&1 || true
+          kubectl get events --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
+          for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-service-provider-bad-auth ffs-postgres ffs-keycloak; do
+            kubectl logs -l "app.kubernetes.io/name=${d}" --all-containers --prefix --tail=-1 > "/tmp/e2e-diagnostics/${d}.log" 2>&1 || true
+          done
+          kubectl logs -l "app.kubernetes.io/instance=ffs-fulfillment-service" --all-containers --prefix --tail=-1 > /tmp/e2e-diagnostics/ffs-fulfillment-service.log 2>&1 || true
+          cat /tmp/pf-*.log > /tmp/e2e-diagnostics/port-forward.log 2>&1 || true
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tierb-diagnostics
+          path: /tmp/e2e-diagnostics
+
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name "${{ env.KIND_CLUSTER_NAME }}"

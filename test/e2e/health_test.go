@@ -28,6 +28,14 @@ type health struct {
 // fetch against osac-mock-provider, not the bufconn fakes its own unit/
 // integration tests use — reports healthy, and that control-plane's own
 // real healthcheck.Monitor independently agrees.
+//
+// TODO(#28): this Describe block's happy-path assertions run identically,
+// and with no additional grounding, against Tier B's real backend
+// (e2e-tierb.yaml) — the mock here only proves "a backend that always
+// says yes makes osac-sp report healthy", already covered by internal/
+// osac's bufconn integration tests. Once #27 (Tier B) and #24 (CRUD e2e)
+// both merge, drop this Describe block from the mock job (e2e.yaml) and
+// keep it running only against the real backend.
 var _ = Describe("osac-sp health, against the real mock backend", func() {
 	// TC-E2E-050 / AC-E2E-030
 	It("reports the cluster health endpoint as healthy with no failure detail", func() {

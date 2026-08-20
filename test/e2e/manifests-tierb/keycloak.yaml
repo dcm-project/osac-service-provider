@@ -1,0 +1,130 @@
+# ffs-keycloak (REQ-TB-010): this repo's own plain manifest — official
+# Keycloak image, `--import-realm` against the vendored realm.json (DD-145),
+# not the unpublished/dev-only upstream Operator/chart (spec §2's vendoring
+# plan).
+#
+# HTTPS, issued by the same `osac-ca` ClusterIssuer as the rest of the
+# stack (DD-146 addendum): a live spike confirmed real fulfillment-service
+# hard-rejects a plain-HTTP issuer URL ("must use the HTTPS scheme") when
+# building its JWKS cache — this isn't optional the way it might be for a
+# generic OIDC client.
+#
+# The `ffs-keycloak-realm` ConfigMap this Deployment mounts is NOT defined
+# here — it's created by the workflow directly from
+# test/e2e/tierb-config/realm.json (`kubectl create configmap
+# ffs-keycloak-realm --from-file=realm.json=...`) so the realm's source of
+# truth stays a single plain JSON file, not JSON re-encoded inside YAML.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ffs-keycloak
+  labels:
+    app.kubernetes.io/name: ffs-keycloak
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  issuerRef:
+    kind: ClusterIssuer
+    name: osac-ca
+  dnsNames:
+    - ffs-keycloak
+    - ffs-keycloak.default.svc.cluster.local
+  secretName: ffs-keycloak-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ffs-keycloak
+  labels:
+    app.kubernetes.io/name: ffs-keycloak
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ffs-keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ffs-keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.3
+          args: ["start-dev", "--import-realm", "--health-enabled=true"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          env:
+            - name: KEYCLOAK_ADMIN
+              value: "admin"
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: "tierb-keycloak-admin-password"
+            - name: KC_DB
+              value: "postgres"
+            - name: KC_DB_URL
+              value: "jdbc:postgresql://ffs-postgres:5432/keycloak"
+            - name: KC_DB_USERNAME
+              value: "postgres"
+            - name: KC_DB_PASSWORD
+              value: "tierb-postgres-password"
+            - name: KC_HTTPS_CERTIFICATE_FILE
+              value: "/etc/keycloak-tls/tls.crt"
+            - name: KC_HTTPS_CERTIFICATE_KEY_FILE
+              value: "/etc/keycloak-tls/tls.key"
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            - name: tls
+              mountPath: /etc/keycloak-tls
+              readOnly: true
+          readinessProbe:
+            # Once KC_HTTPS_CERTIFICATE_FILE is set, Keycloak's management
+            # interface (health checks, port 9000) switches to HTTPS too —
+            # confirmed via a live spike after these probes first failed
+            # with "connection refused" against plain HTTP.
+            httpGet:
+              path: /health/ready
+              port: 9000
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 9000
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: realm
+          configMap:
+            name: ffs-keycloak-realm
+        - name: tls
+          secret:
+            secretName: ffs-keycloak-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ffs-keycloak
+  labels:
+    app.kubernetes.io/name: ffs-keycloak
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  selector:
+    app.kubernetes.io/name: ffs-keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: https
+      port: 8443
+      targetPort: https
+      protocol: TCP

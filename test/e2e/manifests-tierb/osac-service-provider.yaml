@@ -1,0 +1,218 @@
+# osac-service-provider, Tier B variant (REQ-TB-030): identical to
+# test/e2e/manifests/osac-service-provider.yaml (Phase A) except its
+# SP_OSAC_* env vars point at the real ffs-keycloak/ffs-fulfillment-service
+# Tier B stack instead of osac-mock-provider — applied *instead of* Phase
+# A's manifest, never alongside it (spec §2, Phase 1: "osac-mock-provider is
+# removed from the stack in Tier B runs").
+#
+# fulfillment-service's real chart fronts its gRPC server with an envoy
+# ingress-proxy that terminates TLS itself (see the chart's
+# ingress-proxy/_config.yaml.tpl — "Authentication and authorization are
+# handled by the service itself" only describes JWT validation, TLS
+# termination is envoy's own job) — so, unlike Phase A's plaintext
+# osac-mock-provider, osac-sp must dial with TLS here (SP_OSAC_TLS_ENABLED)
+# and trust the same self-signed `osac-ca` CA fulfillment-service's own
+# certs are issued from (cert-manager-ca.yaml / DD-146), mounted from the
+# `ca-bundle` ConfigMap the workflow creates for that chart's own required
+# `certs.caBundle.configMap` value.
+#
+# ffs-keycloak is *also* HTTPS-only now (DD-146 addendum: real
+# fulfillment-service rejects a plain-HTTP OIDC issuer). SP_OSAC_TLS_CERT_FILE
+# only configures internal/osac's gRPC transport, not the separate plain
+# net/http client internal/osac.discoveringTokenSource uses for OIDC
+# discovery/token-fetch (it has no CA-override knob at all — a real, narrow
+# gap this Tier B run works around rather than fixing in osac-sp's code,
+# consistent with "no osac-sp code changes needed" for Phase 1): `command`
+# below installs the same CA into the container's system trust store
+# (`update-ca-trust`) before starting osac-sp, so that client's default
+# `http.Client{}` — which falls back to the OS trust store — accepts it too.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osac-service-provider
+  labels:
+    app.kubernetes.io/name: osac-service-provider
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osac-service-provider
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osac-service-provider
+    spec:
+      containers:
+        - name: osac-service-provider
+          image: osac-service-provider:e2e
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              cp /etc/osac-ca/bundle.pem /etc/pki/ca-trust/source/anchors/osac-ca.pem
+              update-ca-trust extract
+              exec ./osac-service-provider
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # "fulfillment-api" is the chart's external-api ingress-proxy
+            # Service (port 8000) — the public osac.public.v1.* gRPC
+            # surface osac-sp is a legitimate consumer of, as opposed to
+            # "fulfillment-internal-api" (administrator/console access).
+            - name: SP_OSAC_FULFILLMENT_ADDRESS
+              value: "fulfillment-api:8000"
+            - name: SP_OSAC_TLS_ENABLED
+              value: "true"
+            - name: SP_OSAC_TLS_CERT_FILE
+              value: "/etc/osac-ca/bundle.pem"
+            - name: SP_OSAC_OIDC_ISSUER_URL
+              value: "https://ffs-keycloak:8443/realms/osac"
+            - name: SP_OSAC_OIDC_CLIENT_ID
+              value: "osac-admin"
+            - name: SP_OSAC_OIDC_CLIENT_SECRET
+              value: "tierb-osac-admin-secret" # matches tierb-config/realm.json (test-only, NFR-TB-020)
+            - name: DCM_REGISTRATION_URL
+              value: "http://dcm-control-plane:8080/api/v1alpha1"
+            - name: SP_ENDPOINT
+              value: "http://osac-service-provider:8080"
+          volumeMounts:
+            - name: osac-ca
+              mountPath: /etc/osac-ca
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /api/v1alpha1/clusters/health
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /api/v1alpha1/clusters/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: osac-ca
+          configMap:
+            name: ca-bundle
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: osac-service-provider
+  labels:
+    app.kubernetes.io/name: osac-service-provider
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  selector:
+    app.kubernetes.io/name: osac-service-provider
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# A second osac-sp instance/config, deployed only when the opt-in
+# TC-TB-050 workflow_dispatch variant runs (kubectl apply -f is
+# unconditional here; the workflow decides whether to apply this file at
+# all — see .github/workflows/e2e-tierb.yaml). Deliberately wrong client
+# secret: proves a real auth failure is genuinely detectable (REQ-TB-060).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osac-service-provider-bad-auth
+  labels:
+    app.kubernetes.io/name: osac-service-provider-bad-auth
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osac-service-provider-bad-auth
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osac-service-provider-bad-auth
+    spec:
+      containers:
+        - name: osac-service-provider
+          image: osac-service-provider:e2e
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              cp /etc/osac-ca/bundle.pem /etc/pki/ca-trust/source/anchors/osac-ca.pem
+              update-ca-trust extract
+              exec ./osac-service-provider
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SP_OSAC_FULFILLMENT_ADDRESS
+              value: "fulfillment-api:8000"
+            - name: SP_OSAC_TLS_ENABLED
+              value: "true"
+            - name: SP_OSAC_TLS_CERT_FILE
+              value: "/etc/osac-ca/bundle.pem"
+            - name: SP_OSAC_OIDC_ISSUER_URL
+              value: "https://ffs-keycloak:8443/realms/osac"
+            - name: SP_OSAC_OIDC_CLIENT_ID
+              value: "osac-admin"
+            - name: SP_OSAC_OIDC_CLIENT_SECRET
+              value: "this-does-not-match-any-vendored-client-secret" # TC-TB-050
+            # Deliberately points nowhere real: this variant only exists
+            # for TC-TB-050, which hits its own /health HTTP endpoint
+            # directly and never touches control-plane. Pointing it at
+            # the real dcm-control-plane (as an earlier version of this
+            # manifest did) makes it register under the same default
+            # provider names ("osac-sp-cluster"/"osac-sp-vm") as the good
+            # osac-sp Deployment above, in the same shared control-plane
+            # instance this suite's own registration_test.go/health_test.go
+            # assert against — the two Deployments then race to
+            # (idempotently) re-POST the same names, and whichever
+            # registers last wins, breaking those Phase A assertions.
+            # Confirmed by CI: ConsistOf("osac-sp-cluster", "osac-sp-vm")
+            # failed with the bad-auth endpoint winning the race, and
+            # control-plane's health monitor reported "unhealthy" for
+            # both registrations instead of "ready" for both. An
+            # unroutable hostname keeps this instance's registration loop
+            # permanently retrying in the background (by design — see
+            # internal/registration's "never blocks, never crashes"
+            # convention) without ever reaching control-plane at all.
+            - name: DCM_REGISTRATION_URL
+              value: "http://osac-sp-bad-auth-registration-intentionally-unroutable:8080/api/v1alpha1"
+            - name: SP_ENDPOINT
+              value: "http://osac-service-provider-bad-auth:8080"
+          volumeMounts:
+            - name: osac-ca
+              mountPath: /etc/osac-ca
+              readOnly: true
+          # Deliberately no readiness/liveness probes gating on the health
+          # endpoint: this instance is *expected* to report unhealthy
+          # (TC-TB-050), so a readiness probe on the same path would never
+          # succeed and the Deployment would never roll out.
+      volumes:
+        - name: osac-ca
+          configMap:
+            name: ca-bundle
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: osac-service-provider-bad-auth
+  labels:
+    app.kubernetes.io/name: osac-service-provider-bad-auth
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  selector:
+    app.kubernetes.io/name: osac-service-provider-bad-auth
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
