@@ -13,7 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	cpv1alpha1 "github.com/dcm-project/control-plane/api/sp/v1alpha1/provider"
+	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/registration"
@@ -22,8 +22,8 @@ import (
 
 var discardLogger = slog.New(slog.DiscardHandler)
 
-// Fixture-local mirrors of the fake control-plane's response shapes and
-// registration.go's own (unexported) service-type strings — this is an
+// Fixture-local mirrors of the fake environment-agent's response shapes
+// and registration.go's own (unexported) service-type strings — this is an
 // external (_test) package, so it cannot import those constants directly.
 const (
 	clusterServiceType     = "cluster"
@@ -34,17 +34,18 @@ const (
 // capturedRequest is one decoded POST /providers request seen by
 // fakeProviderTransport.
 type capturedRequest struct {
-	provider cpv1alpha1.Provider
+	provider agentv1alpha1.Provider
 	headers  http.Header
 }
 
-// responderFunc decides the fake control-plane's response for a given
+// responderFunc decides the fake environment-agent's response for a given
 // decoded registration request.
-type responderFunc func(p cpv1alpha1.Provider) (statusCode int, body any, contentType string)
+type responderFunc func(p agentv1alpha1.Provider) (statusCode int, body any, contentType string)
 
 // fakeProviderTransport is a fake http.RoundTripper implementing
-// control-plane's POST /providers contract, per the unit test plan's "fake
-// control-plane's pkg/sp/client/provider HTTP round-tripper" collaborator.
+// environment-agent's POST /providers contract, per the unit test plan's
+// "fake environment-agent's pkg/client HTTP round-tripper" collaborator
+// (DD-203).
 type fakeProviderTransport struct {
 	mu        sync.Mutex
 	requests  []capturedRequest
@@ -58,7 +59,7 @@ func (f *fakeProviderTransport) RoundTrip(req *http.Request) (*http.Response, er
 	}
 	_ = req.Body.Close()
 
-	var p cpv1alpha1.Provider
+	var p agentv1alpha1.Provider
 	_ = json.Unmarshal(bodyBytes, &p)
 
 	f.mu.Lock()
@@ -97,13 +98,13 @@ func (f *fakeProviderTransport) requestsFor(serviceType string) []capturedReques
 	return out
 }
 
-func alwaysCreated(p cpv1alpha1.Provider) (int, any, string) {
+func alwaysCreated(p agentv1alpha1.Provider) (int, any, string) {
 	return http.StatusCreated, p, contentTypeJSON
 }
 
 func testConfig() *config.Config {
 	return &config.Config{
-		DCM: config.DCMConfig{RegistrationURL: "http://control-plane.example.com/api/v1alpha1"},
+		DCM: config.DCMConfig{RegistrationURL: "http://environment-agent.example.com/api/v1alpha1"},
 		Provider: config.ProviderConfig{
 			Endpoint:    "https://osac-sp.example.com",
 			ClusterName: "osac-sp-cluster",
@@ -209,7 +210,7 @@ var _ = Describe("Registrar", func() {
 	})
 
 	// TC-U-059: no Authorization header on registration requests
-	It("sends no Authorization header to control-plane (TC-U-059)", func() {
+	It("sends no Authorization header to environment-agent (TC-U-059)", func() {
 		transport := &fakeProviderTransport{responder: alwaysCreated}
 		r := newTestRegistrar(transport)
 
@@ -245,9 +246,8 @@ var _ = Describe("Registrar", func() {
 
 	// TC-U-058: successful registration is periodically renewed (idempotent
 	// re-registration on name), not sent once and forgotten — this keeps
-	// capability metadata fresh. control-plane's Provider row has no
-	// lease/TTL to expire (DD-050), so this is a freshness concern only,
-	// not slot retention.
+	// capability metadata fresh and also serves as the retry cadence for a
+	// 409 Conflict (REQ-REG-080, DD-203).
 	It("periodically re-registers to refresh capability metadata after a successful registration (TC-U-058)", func() {
 		transport := &fakeProviderTransport{responder: alwaysCreated}
 		r := newTestRegistrar(transport, registration.WithReRegistrationInterval(10*time.Millisecond))
@@ -260,16 +260,16 @@ var _ = Describe("Registrar", func() {
 	})
 
 	// TC-U-055: retryable failures (5xx) use exponential backoff and
-	// eventually succeed once control-plane recovers.
+	// eventually succeed once environment-agent recovers.
 	It("retries a retryable failure and eventually succeeds (TC-U-055)", func() {
 		var mu sync.Mutex
 		failuresLeft := 3
-		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+		transport := &fakeProviderTransport{responder: func(p agentv1alpha1.Provider) (int, any, string) {
 			mu.Lock()
 			defer mu.Unlock()
 			if failuresLeft > 0 {
 				failuresLeft--
-				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
+				return http.StatusServiceUnavailable, agentv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
 			}
 			return http.StatusCreated, p, contentTypeJSON
 		}}
@@ -284,8 +284,8 @@ var _ = Describe("Registrar", func() {
 
 	// TC-U-054: a non-retryable 4xx stops retrying for that registration.
 	It("stops retrying after a non-retryable 4xx response (TC-U-054)", func() {
-		transport := &fakeProviderTransport{responder: func(_ cpv1alpha1.Provider) (int, any, string) {
-			return http.StatusUnprocessableEntity, cpv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, contentTypeProblemJSON
+		transport := &fakeProviderTransport{responder: func(_ agentv1alpha1.Provider) (int, any, string) {
+			return http.StatusUnprocessableEntity, agentv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, contentTypeProblemJSON
 		}}
 		r := newTestRegistrar(transport)
 
@@ -310,7 +310,7 @@ var _ = Describe("Registrar", func() {
 	// released.
 	It("does not block on construction: Start() returns before registration completes (TC-U-056)", func() {
 		release := make(chan struct{})
-		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+		transport := &fakeProviderTransport{responder: func(p agentv1alpha1.Provider) (int, any, string) {
 			<-release // blocks until explicitly released below — proves Start() didn't wait for this
 			return http.StatusCreated, p, contentTypeJSON
 		}}
@@ -340,9 +340,9 @@ var _ = Describe("Registrar", func() {
 	// (there, vm fails and cluster is unaffected; here, cluster fails and
 	// vm is unaffected).
 	It("registers vm successfully regardless of cluster's ongoing retries (TC-U-057)", func() {
-		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+		transport := &fakeProviderTransport{responder: func(p agentv1alpha1.Provider) (int, any, string) {
 			if p.ServiceType == clusterServiceType {
-				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
+				return http.StatusServiceUnavailable, agentv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
 			}
 			return http.StatusCreated, p, contentTypeJSON
 		}}
@@ -369,7 +369,7 @@ var _ = Describe("Registrar", func() {
 	It("caps backoff growth at maxBackoff instead of growing unbounded (TC-U-060)", func() {
 		var mu sync.Mutex
 		failuresLeft := 8
-		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+		transport := &fakeProviderTransport{responder: func(p agentv1alpha1.Provider) (int, any, string) {
 			if p.ServiceType != clusterServiceType {
 				// vm registers immediately; only cluster's own retry
 				// sequence is under test here, kept independent of the
@@ -381,7 +381,7 @@ var _ = Describe("Registrar", func() {
 			defer mu.Unlock()
 			if failuresLeft > 0 {
 				failuresLeft--
-				return http.StatusServiceUnavailable, cpv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
+				return http.StatusServiceUnavailable, agentv1alpha1.Error{Title: "unavailable", Type: "UNAVAILABLE"}, contentTypeProblemJSON
 			}
 			return http.StatusCreated, p, contentTypeJSON
 		}}
@@ -398,15 +398,15 @@ var _ = Describe("Registrar", func() {
 		Eventually(func() int { return len(transport.requestsFor(clusterServiceType)) }, "700ms", "5ms").Should(BeNumerically(">=", 9))
 	})
 
-	// TC-U-053: a 409 Conflict is non-retryable, exactly like any other 4xx
-	// — control-plane has no per-service-type exclusivity to contend over
-	// (unlike the superseded environment-agent design, where a vm 409 meant
-	// transient slot contention worth retrying into). Supersedes the
-	// pre-pivot "409 is retryable" test design — see DD-050.
-	It("treats a vm 409 conflict as non-retryable, same as other 4xx (TC-U-053)", func() {
-		transport := &fakeProviderTransport{responder: func(p cpv1alpha1.Provider) (int, any, string) {
+	// TC-U-053: a 409 Conflict is retried on the re-registration cadence,
+	// not treated as fatal — environment-agent enforces per-service-type
+	// exclusivity, so a vm 409 means another provider currently holds that
+	// slot, worth retrying into rather than giving up on. Restores the
+	// pre-Phase-1 design DD-050 had replaced — see DD-203.
+	It("retries a vm 409 conflict on the re-registration cadence instead of giving up (TC-U-053)", func() {
+		transport := &fakeProviderTransport{responder: func(p agentv1alpha1.Provider) (int, any, string) {
 			if p.ServiceType == "vm" {
-				return http.StatusConflict, cpv1alpha1.Error{Title: "already registered", Type: "ALREADY_EXISTS"}, contentTypeProblemJSON
+				return http.StatusConflict, agentv1alpha1.Error{Title: "already registered", Type: "CONFLICT"}, contentTypeProblemJSON
 			}
 			return http.StatusCreated, p, contentTypeJSON
 		}}
@@ -416,9 +416,9 @@ var _ = Describe("Registrar", func() {
 		defer cancel()
 		r.Start(ctx)
 
-		// vm gives up after exactly one 409 — no retry.
-		Eventually(func() int { return len(transport.requestsFor("vm")) }, "200ms", "5ms").Should(Equal(1))
-		Consistently(func() int { return len(transport.requestsFor("vm")) }, "50ms", "5ms").Should(Equal(1))
+		// vm keeps retrying past the first 409, on the re-registration
+		// cadence — it must NOT give up after exactly one attempt.
+		Eventually(func() int { return len(transport.requestsFor("vm")) }, "300ms", "5ms").Should(BeNumerically(">=", 3))
 
 		// cluster is unaffected: it keeps succeeding/renewing independently.
 		Eventually(func() int { return len(transport.requestsFor(clusterServiceType)) }, "300ms", "5ms").Should(BeNumerically(">=", 2))

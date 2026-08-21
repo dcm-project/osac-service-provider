@@ -1,11 +1,12 @@
-// Package registration handles self-registration with DCM's control-plane.
+// Package registration handles self-registration with DCM's environment
+// agent.
 //
 // Implements Topic 4.4 (SP Registration) of the Milestone 1 spec. Per
-// DD-050 (Phase 1 of a two-phase delivery — see
-// https://github.com/dcm-project/enhancements/issues/95), this registers
-// against github.com/dcm-project/control-plane's SP API and generated
-// client — not environment-agent (deferred to Phase 2) or the archived
-// service-provider-manager.
+// DD-203 (which supersedes DD-050's Phase 1 target — see
+// https://github.com/dcm-project/osac-service-provider/issues/33), this
+// registers against github.com/dcm-project/environment-agent's REST API
+// and generated client — not control-plane's now-deleted SP API
+// (control-plane#51) or the archived service-provider-manager.
 package registration
 
 import (
@@ -16,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	cpv1alpha1 "github.com/dcm-project/control-plane/api/sp/v1alpha1/provider"
-	cpclient "github.com/dcm-project/control-plane/pkg/sp/client/provider"
+	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
+	agentclient "github.com/dcm-project/environment-agent/pkg/client"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
@@ -50,26 +51,28 @@ func WithMaxBackoff(d time.Duration) Option {
 }
 
 // WithReRegistrationInterval sets the cadence for periodic re-registration
-// (REQ-REG-100), which keeps advertised capability metadata fresh.
-// control-plane's Provider record has no lease/TTL to renew (DD-050), so
-// this interval is purely a metadata-freshness concern, not slot retention.
+// (REQ-REG-100), which keeps advertised capability metadata fresh, and also
+// doubles as the retry cadence for a 409 Conflict (REQ-REG-080) — unlike a
+// transient failure, a 409 means another provider currently holds the
+// service-type slot, so retrying faster via exponential backoff wouldn't
+// help; retrying on the same cadence as a normal renewal would (DD-203).
 func WithReRegistrationInterval(d time.Duration) Option {
 	return func(r *Registrar) { r.reRegistrationInterval = d }
 }
 
 // WithHTTPClient overrides the HTTP client used by the generated
-// control-plane client. Intended for tests (inject a fake
+// environment-agent client. Intended for tests (inject a fake
 // http.RoundTripper).
 func WithHTTPClient(c *http.Client) Option {
 	return func(r *Registrar) { r.httpClient = c }
 }
 
 // Registrar performs the SP's two independent registrations (cluster, vm)
-// with control-plane's SP API.
+// with environment-agent's SP API.
 type Registrar struct {
 	cfg    *config.Config
 	logger *slog.Logger
-	client *cpclient.ClientWithResponses
+	client *agentclient.ClientWithResponses
 	matrix versionmatrix.Matrix
 
 	initialBackoff         time.Duration
@@ -110,9 +113,9 @@ func NewRegistrar(cfg *config.Config, logger *slog.Logger, matrix versionmatrix.
 	// fake purely to hit it, per this suite's "test real production
 	// types" convention (see .ai/test-plans/osac-sp-unit.test-plan.md,
 	// section 4's coverage note).
-	client, err := cpclient.NewClientWithResponses(cfg.DCM.RegistrationURL, cpclient.WithHTTPClient(r.httpClient))
+	client, err := agentclient.NewClientWithResponses(cfg.DCM.RegistrationURL, agentclient.WithHTTPClient(r.httpClient))
 	if err != nil {
-		return nil, fmt.Errorf("creating control-plane client: %w", err)
+		return nil, fmt.Errorf("creating environment-agent client: %w", err)
 	}
 	r.client = client
 
@@ -173,27 +176,23 @@ func (r *Registrar) registerVM(ctx context.Context) (int, error) {
 // non-2xx responses).
 //
 // Implements REQ-REG-115: no Authorization header is set here.
-// control-plane's provider/resource_manager OpenAPI specs declare
-// `security: bearerAuth` as of control-plane#24, but that check is
-// currently a no-op (control-plane defaults to AUTH_DISABLED=true) and
-// control-plane's own outbound call to the SP sets no bearer token either
-// — so sending none remains correct today. This is a tracked
-// production-auth gap with no active fix path yet, not a permanent
-// guarantee — see DD-050's "Authentication Gap" note in the Milestone 1
-// spec.
+// environment-agent's provider API documents its 401 response as
+// "reserved; authentication deferred to future version" — sending none is
+// the currently correct, documented behavior (DD-203), not an unenforced
+// no-op the way it was under control-plane (DD-050's Authentication Gap).
 func (r *Registrar) registerOnce(ctx context.Context, name, serviceType, endpoint string, metadata map[string]interface{}) (int, error) {
-	provider := cpv1alpha1.Provider{
+	provider := agentv1alpha1.Provider{
 		Name:          name,
 		ServiceType:   serviceType,
 		Endpoint:      endpoint,
 		SchemaVersion: schemaVersion,
 	}
 	if len(metadata) > 0 {
-		provider.Metadata = &cpv1alpha1.ProviderMetadata{AdditionalProperties: metadata}
+		provider.Metadata = &agentv1alpha1.ProviderMetadata{AdditionalProperties: metadata}
 	}
 
-	// control-plane's registration endpoint is idempotent on name alone
-	// (RegisterOrUpdateProvider), so no `id` query param is needed for the
+	// environment-agent's registration endpoint is idempotent on name alone
+	// (create-or-update), so no `id` query param is needed for the
 	// create-or-update semantic.
 	resp, err := r.client.CreateProviderWithResponse(ctx, nil, provider)
 	if err != nil {
@@ -204,12 +203,16 @@ func (r *Registrar) registerOnce(ctx context.Context, name, serviceType, endpoin
 
 // runLoop drives one service type's registration lifecycle: register, then
 // periodically re-register to refresh capability metadata (REQ-REG-100).
-// Retryable failures use exponential backoff (REQ-REG-070); non-retryable
-// 4xx responses, including 409 Conflict, stop the loop immediately
-// (REQ-REG-090) — control-plane has no per-service-type exclusivity to
-// contend over, so unlike the superseded environment-agent design, a 409
-// here always signals a genuine, non-transient name/ID conflict rather than
-// a race to retry into (DD-050).
+// Retryable failures use exponential backoff (REQ-REG-070). A 409 Conflict
+// is treated as non-fatal (REQ-REG-080): environment-agent enforces
+// per-service-type exclusivity (only one SP, embedded or external, may
+// serve a given service_type), so a 409 means another provider currently
+// holds this slot — retried on the re-registration cadence, not escalating
+// backoff, so this SP can acquire the slot later if the incumbent is
+// displaced (DD-203). This applies uniformly to both service types (unlike
+// the pre-Phase-1 design this restores, which special-cased vm only — see
+// DD-203's "Deliberate divergence" note). Any other non-retryable 4xx stops
+// the loop immediately (REQ-REG-090).
 func (r *Registrar) runLoop(ctx context.Context, name string, register func(context.Context) (int, error)) {
 	backoff := r.initialBackoff
 
@@ -220,6 +223,13 @@ func (r *Registrar) runLoop(ctx context.Context, name string, register func(cont
 		case err == nil && (statusCode == http.StatusOK || statusCode == http.StatusCreated):
 			r.logger.Info("registration successful", "name", name, "status", statusCode)
 			backoff = r.initialBackoff
+			if !sleepOrDone(ctx, r.reRegistrationInterval) {
+				return
+			}
+			continue
+
+		case err == nil && statusCode == http.StatusConflict:
+			r.logger.Warn("registration conflict: service type already served by another provider, will retry on re-registration cadence", "name", name)
 			if !sleepOrDone(ctx, r.reRegistrationInterval) {
 				return
 			}
