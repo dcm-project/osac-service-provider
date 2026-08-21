@@ -50,6 +50,7 @@ for the full milestone breakdown.
 make build               # Build binary to bin/osac-service-provider
 make test                # Run all tests (Ginkgo v2, race detector)
 make test-cover          # Run tests with coverage
+make test-realbackend-environment-agent # Tier B: internal/registration vs a REAL environment-agent build (DD-203); needs REAL_ENVIRONMENT_AGENT_URL, excluded from `test`/`check`
 make lint                # Run golangci-lint
 make check               # fmt + vet + lint + check-aep + test
 make generate-api        # Regenerate code from api/v1alpha1/openapi.yaml (oapi-codegen)

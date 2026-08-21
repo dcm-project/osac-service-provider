@@ -1893,6 +1893,18 @@ anticipated back when it deferred Phase 2. This decision covers Topic 4.4
 **Related requirements:** REQ-REG-010, REQ-REG-040, REQ-REG-080 (new),
 REQ-REG-090, REQ-REG-100, REQ-REG-115
 
+**Verified against a real local build (2026-08-21):** manually, then as a
+committed Tier B suite — `internal/registration/registration_realbackend_test.go`
+(TC-I-028/029, gated behind the `realbackend` build tag) plus
+`.github/workflows/environment-agent-registration.yaml` — built
+`environment-agent` from source at the exact `go.mod`-pinned commit and ran
+the real `Registrar` against it (real NATS/JetStream broker, no fakes).
+Confirms both idempotent create-or-update-on-name (`201` then `200`,
+`update_time` advancing on each re-registration) and per-service-type `409`
+exclusivity being retried on the re-registration cadence rather than fatal —
+i.e. the fake harness in section 3 of the integration test plan accurately
+models the real implementation, not just its documented OpenAPI contract.
+
 **Related:** #33, DD-050 (superseded), DD-040 (unaffected), DD-145/DD-147/DD-148 (the e2e stack's `control-plane` pin — unaffected, separate module)
 
 ---

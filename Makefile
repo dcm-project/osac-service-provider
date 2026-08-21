@@ -47,6 +47,15 @@ test:
 test-cover:
 	go run github.com/onsi/ginkgo/v2/ginkgo -r --race --cover
 
+# test-realbackend-environment-agent runs internal/registration's Tier B
+# specs (TC-I-028/029, DD-203) against a REAL, already-running
+# environment-agent build — unlike `test`/`test-cover`, which never build or
+# start one. Set REAL_ENVIRONMENT_AGENT_URL first (e.g. via the same steps
+# as .github/workflows/environment-agent-registration.yaml). Excluded from
+# `check` since it needs that external process, not just local fakes.
+test-realbackend-environment-agent:
+	go run github.com/onsi/ginkgo/v2/ginkgo -tags realbackend --focus "TC-I-02[89]" ./internal/registration/...
+
 lint:
 	golangci-lint run ./...
 
@@ -115,4 +124,4 @@ image-build: check-container-engine
 image-build-mock-provider: check-container-engine
 	$(CONTAINER_ENGINE) build -f Containerfile.osac-mock-provider -t $(MOCK_CONTAINER_IMAGE_NAME):$(CONTAINER_IMAGE_TAG) .
 
-.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-container-engine image-build image-build-mock-provider
+.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover test-realbackend-environment-agent lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-container-engine image-build image-build-mock-provider

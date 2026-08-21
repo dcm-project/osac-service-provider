@@ -92,6 +92,28 @@ provider, embedded or external, already serves the requested
 
 ---
 
+## 3b. SP registration against a REAL `environment-agent` build (Tier B, DD-203)
+
+Test harness: a real `environment-agent` binary, built from source at the
+exact commit pinned in `go.mod`, running as a real process against a real
+NATS/JetStream broker (a hard startup requirement of `environment-agent`
+itself, unrelated to registration) — not an `httptest.Server` modeling its
+contract (that's section 3). Proves the fake's modeled behavior actually
+matches the real implementation, not just its OpenAPI spec. Gated behind
+the `realbackend` build tag (`internal/registration/registration_realbackend_test.go`)
+and the `REAL_ENVIRONMENT_AGENT_URL` env var — both specs `Skip` if unset,
+so this file is safely excluded from `make test`/`make check`. Run via
+`make test-realbackend-environment-agent` (after starting a real backend
+locally, see the file's doc comment) or in CI via
+`.github/workflows/environment-agent-registration.yaml`.
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-I-028 | Registers cluster/vm and idempotently re-registers against a real backend | REQ-REG-010, REQ-REG-040, REQ-REG-100 | Start a real `Registrar` against the real environment-agent build; poll its real `GET /providers` until both `test-realbackend-cluster`/`test-realbackend-vm` appear with the expected `endpoint`/`schema_version`/`metadata`; capture `cluster`'s `update_time`, wait past the re-registration cadence, and assert `update_time` has advanced — proving periodic re-registration reaches the real backend and is accepted as an update, not just a one-time create. |
+| TC-I-029 | Real 409 conflict is retried on the re-registration cadence, not fatal | REQ-REG-080 | With an incumbent already holding the `vm` slot, start a second `Registrar` (different name) for `vm` through a small counting reverse proxy in front of the real backend; assert the real backend's `409` response is observed by the competitor multiple times over the wait window (proxy-recorded count `>= 3`, not just once), that `Done()` stays open throughout (pre-DD-203 behavior would have closed it after the first `409`), and that the incumbent — not the competitor — is the one listed by the real backend's `GET /providers` throughout. |
+
+---
+
 ## 4. Full-stack smoke test
 
 | TC ID | Test Name | Validates | Description |
@@ -107,5 +129,5 @@ provider, embedded or external, already serves the requested
 | 4.1 HTTP Server | 10 | 10 | 6 (TC-I-001..006) | Lifecycle/signal-handling ACs not practical to unit test are covered here. |
 | 4.2 OSAC Client Bootstrap | 11 | 14 | 2 dedicated (TC-I-015, TC-I-017) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). |
 | 4.3 Health Service | 9 | 10 | 8 (TC-I-010..017) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement. |
-| 4.4 SP Registration (`control-plane`) | 10 | 10 | 8 (TC-I-020..027) | End-to-end wiring against a fake HTTP server implementing `control-plane`'s current (implemented server-side) SP API contract. |
+| 4.4 SP Registration (`environment-agent`, DD-203) | 11 | 10 | 8 (TC-I-020..027) + 2 Tier B (TC-I-028, TC-I-029) | Fake-based wiring against `environment-agent`'s documented SP API contract, plus Tier B verification against a real local build (section 3b) — gated separately, excluded from `make test`. |
 | Full-stack | - | - | 1 (TC-I-030) | Cross-cutting cold-start smoke test. |

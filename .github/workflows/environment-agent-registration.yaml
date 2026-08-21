@@ -1,0 +1,98 @@
+name: Registration vs real environment-agent (DD-203)
+
+# Tier B for internal/registration (DD-203, dcm-project/osac-service-provider#33):
+# builds environment-agent from source at the exact commit pinned in go.mod,
+# runs it as a real process (with a real NATS/JetStream broker, which it
+# requires to start), and runs registration_realbackend_test.go's TC-I-028/029
+# against it — the real generated environment-agent client, no fakes. This
+# closes the gap between "our fake models the OpenAPI contract correctly"
+# (registration_integration_test.go) and "the real, running implementation
+# actually behaves that way" for the two behaviors DD-203 changed: idempotent
+# create-or-update on name, and per-service-type 409 exclusivity being
+# retried rather than fatal.
+#
+# Deliberately lighter-weight than .github/workflows/e2e.yaml's kind-based
+# suite: no cluster, no OSAC/Keycloak, no container images — just the two Go
+# binaries and go test, since registration only needs environment-agent's
+# HTTP API up.
+
+on:
+  pull_request:
+    branches: [main, 'release/v*']
+    paths:
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/registration/**'
+      - 'internal/config/**'
+      - '.github/workflows/environment-agent-registration.yaml'
+  workflow_dispatch: {}
+
+jobs:
+  registration-realbackend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout osac-service-provider
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Start NATS (JetStream) — required for environment-agent to start
+        run: docker run -d --name nats -p 4222:4222 nats:2.12-alpine -js
+
+      - name: Wait for NATS
+        run: |
+          for _ in $(seq 1 20); do
+            (exec 3<>/dev/tcp/127.0.0.1/4222) 2>/dev/null && exit 0
+            sleep 1
+          done
+          echo "NATS did not become ready" >&2
+          exit 1
+
+      - name: Build environment-agent at the commit pinned in go.mod
+        run: |
+          EA_VERSION=$(go list -m -f '{{.Version}}' github.com/dcm-project/environment-agent)
+          echo "Building github.com/dcm-project/environment-agent@${EA_VERSION}"
+          GOBIN="$PWD/.bin" go install "github.com/dcm-project/environment-agent/cmd/environment-agent@${EA_VERSION}"
+
+      - name: Start environment-agent
+        env:
+          AGENT_NAME: ci-realbackend-agent
+          AGENT_ENVIRONMENT: ci
+          AGENT_COST: low
+          # Deliberately unreachable: environment-agent's own upstream DCM
+          # registration is independent of the SP-registration API under
+          # test here, and (like this SP's own registrar) retries
+          # indefinitely in the background rather than blocking startup.
+          DCM_REGISTRATION_URL: http://127.0.0.1:19999/api/v1alpha1
+          AGENT_MESSAGING_URL: nats://127.0.0.1:4222
+          AGENT_SP_PERSISTENCE_PATH: /tmp/ea-registrations.json
+          AGENT_SERVER_ADDRESS: 127.0.0.1:8090
+        run: |
+          "$PWD/.bin/environment-agent" > /tmp/environment-agent.log 2>&1 &
+          echo $! > /tmp/environment-agent.pid
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8090/api/v1alpha1/health && exit 0
+            sleep 1
+          done
+          echo "environment-agent did not become healthy" >&2
+          cat /tmp/environment-agent.log
+          exit 1
+
+      - name: Run TC-I-028/029 against the real environment-agent build
+        env:
+          REAL_ENVIRONMENT_AGENT_URL: http://127.0.0.1:8090/api/v1alpha1
+        run: make test-realbackend-environment-agent
+
+      - name: Dump environment-agent log
+        if: always()
+        run: cat /tmp/environment-agent.log || true
+
+      - name: Stop environment-agent + NATS
+        if: always()
+        run: |
+          kill "$(cat /tmp/environment-agent.pid)" 2>/dev/null || true
+          docker rm -f nats 2>/dev/null || true
