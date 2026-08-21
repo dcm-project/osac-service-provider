@@ -127,6 +127,14 @@ retry loop would couple that state unnecessarily.
 
 ## DD-050: Two-phase registration target — `control-plane` for Phase 1, `environment-agent` deferred to Phase 2
 
+**Superseded by DD-203**, once `control-plane#51` deleted the Phase 1 SP
+registration API this decision depended on and forced the Phase 2 migration
+this decision had deferred — see #33. Kept here for historical record per
+this project's DD-numbering discipline — do not re-litigate; the two-phase
+framing and the maturity-comparison rationale below remain useful context
+for *why* Phase 1 targeted `control-plane` in the first place, even though
+the registration target itself has moved on.
+
 **Decision (supersedes the original single-phase decision in this slot):**
 OSAC SP's first release (Phase 1, this milestone) registers with
 [`dcm-project/control-plane`](https://github.com/dcm-project/control-plane)'s
@@ -1759,3 +1767,132 @@ Each candidate was run against this repo's actual code before being adopted, not
 Deliberately scoped to this repo first, not simultaneously rolled out to sibling SPs — this repo's `.golangci.yml` already functions as the de facto shared template (byte-identical across 4 other repos), so validating the change here first, then propagating, is lower-risk than a coordinated multi-repo change.
 
 **Related requirements:** none (tooling/process decision, no REQ/AC).
+
+---
+
+## DD-203: Registration target flips back to `environment-agent` (DD-050 superseded) — forced by `control-plane#51`, drafted before either project's PR stack has landed
+
+**Decision:** `internal/registration.Registrar` now targets
+[`dcm-project/environment-agent`](https://github.com/dcm-project/environment-agent)'s
+`POST /api/v1alpha1/providers` (`api/v1alpha1/openapi.yaml`), using its
+generated `github.com/dcm-project/environment-agent/pkg/client`, pinned by
+commit SHA
+[`8e638b2`](https://github.com/dcm-project/environment-agent/commit/8e638b289d670b85c323f90442e916503fa0f54d)
+(no tagged releases exist for `environment-agent` either — same treatment
+as `control-plane` under DD-050). This supersedes DD-050's Phase 1 target
+choice; DD-040's rationale about independent per-service-type retry loops
+is otherwise unaffected and still holds.
+
+**Rationale — why now, and why this isn't optional:** tracked in
+[#33](https://github.com/dcm-project/osac-service-provider/issues/33).
+`control-plane`'s `main` merged
+[`control-plane#51`](https://github.com/dcm-project/control-plane/pull/51)
+on 2026-08-19, deleting `api/sp/v1alpha1/provider` (the API DD-050's Phase 1
+target depended on) in favor of an agent-routed dispatch model
+(`api/agent/v1alpha1`) — a deliberate, reviewed architectural move (per
+`control-plane#51`'s own reviewer), not a bug to wait out. DD-050's Phase 2
+trigger — "`environment-agent` maturity" — is also now satisfied: as of
+`environment-agent@8e638b2`, `internal/handler/handler.go` has a real, wired
+`CreateProvider`, `internal/provider/service` has a real service+store, and
+`cmd/environment-agent/main.go` is real wiring, not the "stub-only, no-op
+`main()`" state DD-050 was written against.
+
+**Explicit gate this decision does not wait on:** issue #33 itself states
+"do not start until #29/#22/#24/#27/#32 land" (the current Milestone 7 e2e
+PR stack). This branch/PR is drafted anyway, ahead of that gate, at the
+user's explicit request to keep moving on Phase 2 groundwork in parallel —
+it targets `main` directly (not the e2e stack's branches) precisely so it
+doesn't entangle with or block that stack. **Do not merge this to `main`
+before the e2e stack lands**, per issue #33's own reasoning: landing this
+first would mean the e2e stack's `test/e2e/registration_test.go` (which
+exercises the real `internal/registration` package against `control-plane`,
+pinned per DD-147/DD-148) breaks or needs its own parallel rework, which is
+exactly the entanglement issue #33 was trying to avoid by sequencing these.
+
+**No environment-agent image needed for this work:** `environment-agent` has
+no Helm chart and no tagged release/published image (`build-push-quay.yaml`
+only publishes on `v*` tags), so a `kind`-based e2e run against a real
+`environment-agent` deployment is **not** part of this change — same as
+`control-plane`'s own Go client dependency, `environment-agent/pkg/client`
+is importable straight from its `main` branch source by commit SHA, with no
+image required. Unit and integration tests here use hand-written fakes
+(`http.RoundTripper` / `httptest.Server`), per this repo's established
+testing convention — identical in kind to how DD-050's `control-plane`
+integration was itself tested before any real `control-plane` e2e existed.
+Deploying a real `environment-agent` in `kind` remains a separate, larger
+follow-up (its own item under #33), not bundled here.
+
+**`409` semantics flip back to retryable (REQ-REG-080, new):**
+`environment-agent`'s `POST /providers` enforces "only one SP — embedded or
+external — may serve a given service type per agent" (409 on conflict),
+restoring the per-service-type exclusivity DD-050 said didn't apply under
+`control-plane`. REQ-REG-090's "409 is non-retryable" and its superseding
+tests (`TC-I-023`, `TC-U-053`) — both of which explicitly documented
+themselves as superseding "the pre-pivot 409-is-retryable design (see
+DD-050)" — flip back to that pre-pivot design: log at WARN, retry on the
+re-registration cadence, do not escalate backoff, do not stop the loop.
+
+**Deliberate divergence from the pre-pivot design:** the original
+pre-Phase-1 code (commit `3c49de7`) only applied 409-retry treatment to the
+`vm` registration loop, leaving `cluster`'s 409 non-retryable. Re-examining
+`environment-agent@8e638b2`'s `internal/provider/service.RegisterEmbedded`,
+per-service-type exclusivity (including embedded-provider collisions) is
+generic across whichever `service_type`s an agent deployment enables — there
+is no `environment-agent`-side reason `cluster` couldn't hit the same 409
+scenario `vm` could. This decision generalizes 409-retry handling to both
+service types symmetrically (`runLoop` no longer takes a
+`treat409AsLeaseCadence` flag), rather than reproducing the original
+asymmetry without justification. `TC-U-053`/`TC-I-023` still only exercise
+the `vm` case (matching the original test IDs/scope), since `cluster`'s
+symmetric handling is exercised by the same shared `runLoop` code path.
+
+**Schema consequence (same shape as DD-050 described, now on the other
+side):** `environment-agent`'s `Provider`/`ProviderMetadata` types
+(`api/v1alpha1/types.gen.go`) are field-compatible with what
+`internal/registration/registration.go` already sends —
+`name`/`endpoint`/`service_type`/`schema_version` are all direct string
+fields, and `ProviderMetadata` keeps an `AdditionalProperties` catch-all
+alongside its own named fields (`region_code`/`zone`/`status`/`resources`),
+so the existing `supported_platforms`/`supported_provisioning_types`/
+`kubernetes_supported_versions` metadata-nesting approach (REQ-REG-040)
+carries over with no payload-construction changes beyond the import swap.
+
+**Lease/TTL:** unlike DD-050's confirmation that `control-plane`'s `Provider`
+row has no lease/TTL at all, `environment-agent`'s OpenAPI documents a
+"200: lease renewal" response for re-registration, but no actual lease/TTL
+*enforcement* was found in `internal/provider/service/service.go` for
+external providers as of `8e638b2`. REQ-REG-100 is worded to not overclaim
+slot-retention behavior that isn't actually implemented upstream — periodic
+re-registration is kept for capability-metadata freshness and as the
+REQ-REG-080 retry cadence, not because losing the slot on silence is a
+proven risk today.
+
+**Authentication:** unchanged from a behavioral standpoint —
+`environment-agent`'s `401` response is documented as "reserved;
+authentication deferred to future version," so sending no `Authorization`
+header (REQ-REG-115) remains correct, and — unlike DD-050's Authentication
+Gap under `control-plane` — this isn't an unenforced no-op sitting on top of
+a declared `security: bearerAuth` scheme; `environment-agent`'s OpenAPI
+doesn't declare that requirement at all yet, so there's no gap to track here
+the way there was under `control-plane`.
+
+**Health-check mechanism:** unchanged, no code changes needed —
+`environment-agent`'s `internal/health/monitor/checker.go` polls
+`{provider.endpoint}/health` via HTTP, the same mechanism `control-plane`'s
+own `healthcheck.Monitor` used (DD-010).
+
+**Not yet addressed by this decision (tracked separately in #33):**
+Milestone 2+'s CRUD/status-dispatch design (`internal/cluster`,
+`internal/vm`, `internal/statuspublisher`) — `control-plane`'s synchronous
+direct-REST dispatch model differs materially from `environment-agent`'s
+CloudEvent-through-a-messaging-topic model, and reworking that is separate,
+larger scope than this registration-client swap, exactly as DD-050 itself
+anticipated back when it deferred Phase 2. This decision covers Topic 4.4
+(registration) only.
+
+**Related requirements:** REQ-REG-010, REQ-REG-040, REQ-REG-080 (new),
+REQ-REG-090, REQ-REG-100, REQ-REG-115
+
+**Related:** #33, DD-050 (superseded), DD-040 (unaffected), DD-145/DD-147/DD-148 (the e2e stack's `control-plane` pin — unaffected, separate module)
+
+---

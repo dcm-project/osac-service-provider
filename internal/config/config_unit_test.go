@@ -44,7 +44,7 @@ func setRequiredEnv() {
 	_ = os.Setenv("SP_OSAC_OIDC_ISSUER_URL", "https://keycloak.example.com/token")
 	_ = os.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 	_ = os.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "s3cr3t")
-	_ = os.Setenv("DCM_REGISTRATION_URL", "https://control-plane.example.com/api/v1alpha1")
+	_ = os.Setenv("DCM_REGISTRATION_URL", "https://environment-agent.example.com/api/v1alpha1")
 	_ = os.Setenv("DCM_NATS_URL", "nats://nats.example.com:4222")
 	_ = os.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 }
@@ -84,7 +84,7 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.OSAC.TLSCertFile).To(Equal("/etc/osac/ca.pem"))
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(9 * time.Second))
 
-		Expect(cfg.DCM.RegistrationURL).To(Equal("https://control-plane.example.com/api/v1alpha1"))
+		Expect(cfg.DCM.RegistrationURL).To(Equal("https://environment-agent.example.com/api/v1alpha1"))
 		Expect(cfg.DCM.NATSURL).To(Equal("nats://nats.example.com:4222"))
 
 		Expect(cfg.Provider.Endpoint).To(Equal("https://osac-sp.example.com"))

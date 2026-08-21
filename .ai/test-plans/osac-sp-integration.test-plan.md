@@ -67,27 +67,28 @@ health/token-caching behavior below, and a real gRPC server bound via
 
 ---
 
-## 3. SP registration against a fake `control-plane`
+## 3. SP registration against a fake `environment-agent` (DD-203 — supersedes the fake `control-plane` harness DD-050 described here)
 
-Test harness: an `httptest.Server` implementing `control-plane`'s current
-`api/sp/v1alpha1/provider/openapi.yaml` contract for
+Test harness: an `httptest.Server` implementing `environment-agent`'s
+current `api/v1alpha1/openapi.yaml` contract for
 `POST /api/v1alpha1/providers` (pinned to the same commit SHA as the
-`go.mod` dependency, per DD-050), with a handler that records every request
+`go.mod` dependency, per DD-203), with a handler that records every request
 body and can be configured to return specific status codes per call. This
-mirrors `control-plane`'s actual, implemented `RegisterOrUpdateProvider`
-conflict semantics (name/ID-based only, no per-service-type exclusivity —
-see DD-050) rather than faking a live instance.
+mirrors `environment-agent`'s actual, documented `createProvider`
+conflict semantics (per-service-type exclusivity — 409 when another
+provider, embedded or external, already serves the requested
+`service_type` — see DD-203) rather than faking a live instance.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-020 | Both registrations are sent on startup | REQ-REG-010, AC-REG-010 | Fake `control-plane` returns `201` for all requests; start the SP; within a bounded wait, assert the fake recorded exactly 2 distinct requests with `name` values `"osac-sp-cluster"` and `"osac-sp-vm"` respectively. |
+| TC-I-020 | Both registrations are sent on startup | REQ-REG-010, AC-REG-010 | Fake `environment-agent` returns `201` for all requests; start the SP; within a bounded wait, assert the fake recorded exactly 2 distinct requests with `name` values `"osac-sp-cluster"` and `"osac-sp-vm"` respectively. |
 | TC-I-021 | Cluster registration payload matches contract exactly | REQ-REG-020, REQ-REG-030, REQ-REG-040, AC-REG-020 | Inspect the recorded cluster registration request body; assert every field listed in AC-REG-020 matches exactly (not just "field present"), including `supported_platforms`/`supported_provisioning_types`/`kubernetes_supported_versions` nested under `metadata` rather than top-level. |
-| TC-I-022 | Registration does not block server readiness | REQ-REG-050, AC-REG-030 | Fake `control-plane`'s handler blocks (does not respond) until explicitly released; assert `GET /api/v1alpha1/clusters/health` still succeeds with a normal HTTP response while registration is still pending. |
-| TC-I-023 | VM 409 Conflict is non-retryable, cluster registration still succeeds | REQ-REG-060, REQ-REG-090, AC-REG-040, AC-REG-060 | Fake `control-plane` returns `409` for `vm` requests and `201` for `cluster`; assert (via the fake's recorded request log, polled with a bounded wait) that `cluster` registration completed successfully, that exactly one `vm` request was recorded (no retry after the `409`), and that the `vm` failure is logged at ERROR level. Supersedes the pre-pivot "409 is retryable" test design — see DD-050. |
-| TC-I-024 | Non-retryable 4xx on cluster does not crash the process or block vm registration | REQ-REG-090, AC-REG-070 | Fake `control-plane` returns `400` for `cluster`, `201` for `vm`; assert the SP process/goroutines remain alive (health endpoint still responds) and `vm` registration recorded a successful request. |
-| TC-I-025 | Retry backoff observed against a flaky fake `control-plane` | REQ-REG-070, AC-REG-050 | Fake fails the first 2 requests per service type (connection reset) then succeeds; assert both service types eventually reach a recorded successful request, and the elapsed wall-clock time between attempts is consistent with the configured initial backoff (bounded assertion, e.g. `>= initialBackoff` and `< initialBackoff * 4`). |
-| TC-I-026 | Idempotent re-registration on simulated restart | REQ-REG-100, AC-REG-080 | Run the registration flow twice against the same fake `control-plane` instance (simulating a process restart) without changing configuration; assert both runs send identical `name`/`service_type` pairs, consistent with `control-plane`'s documented idempotency-on-`name` behavior (no client-side dedup logic needed, but no drift in identifying fields either). |
-| TC-I-027 | No Authorization header sent to the fake `control-plane` | REQ-REG-115, AC-REG-095 | Fake handler records all request headers; start the SP and let both registrations fire; assert neither recorded request has an `Authorization` header. |
+| TC-I-022 | Registration does not block server readiness | REQ-REG-050, AC-REG-030 | Fake `environment-agent`'s handler blocks (does not respond) until explicitly released; assert `GET /api/v1alpha1/clusters/health` still succeeds with a normal HTTP response while registration is still pending. |
+| TC-I-023 | VM 409 Conflict is retried on the re-registration cadence, cluster registration still succeeds independently | REQ-REG-060, REQ-REG-080, AC-REG-040, AC-REG-060 | Fake `environment-agent` returns `409` for `vm` requests and `201` for `cluster`; assert (via the fake's recorded request log, polled with a bounded wait) that `cluster` registration completed successfully, and that `vm` keeps retrying on the re-registration cadence after each `409` (multiple `vm` requests recorded over the wait window, not just one) logged at WARN level. Restores the pre-Phase-1 design DD-050 had replaced — see DD-203. |
+| TC-I-024 | Non-retryable 4xx on cluster does not crash the process or block vm registration | REQ-REG-090, AC-REG-070 | Fake `environment-agent` returns `400` for `cluster`, `201` for `vm`; assert the SP process/goroutines remain alive (health endpoint still responds) and `vm` registration recorded a successful request. |
+| TC-I-025 | Retry backoff observed against a flaky fake `environment-agent` | REQ-REG-070, AC-REG-050 | Fake fails the first 2 requests per service type (connection reset) then succeeds; assert both service types eventually reach a recorded successful request, and the elapsed wall-clock time between attempts is consistent with the configured initial backoff (bounded assertion, e.g. `>= initialBackoff` and `< initialBackoff * 4`). |
+| TC-I-026 | Idempotent re-registration on simulated restart | REQ-REG-100, AC-REG-080 | Run the registration flow twice against the same fake `environment-agent` instance (simulating a process restart) without changing configuration; assert both runs send identical `name`/`service_type` pairs, consistent with `environment-agent`'s documented idempotency-on-`name` behavior (no client-side dedup logic needed, but no drift in identifying fields either). |
+| TC-I-027 | No Authorization header sent to the fake `environment-agent` | REQ-REG-115, AC-REG-095 | Fake handler records all request headers; start the SP and let both registrations fire; assert neither recorded request has an `Authorization` header. |
 
 ---
 

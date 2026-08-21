@@ -3,7 +3,7 @@ package main
 // Unit scope (per .ai/test-plans/osac-sp-unit.test-plan.md, section 8
 // "cmd/osac-service-provider"): these cases call run/mainRun directly and
 // in-process, each failing before reaching any real OSAC/Keycloak/
-// control-plane collaborator — no fakes needed, unlike
+// environment-agent collaborator — no fakes needed, unlike
 // main_integration_test.go's full-stack happy-path suite.
 
 import (
@@ -42,7 +42,7 @@ func setValidEnv(serverAddr string) {
 	t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
 	t.Setenv("SP_OSAC_TLS_ENABLED", "false")
 	t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
-	t.Setenv("DCM_REGISTRATION_URL", "https://control-plane.example.com/api/v1alpha1")
+	t.Setenv("DCM_REGISTRATION_URL", "https://environment-agent.example.com/api/v1alpha1")
 	t.Setenv("DCM_NATS_URL", "nats://127.0.0.1:4222")
 	t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 	t.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster")
@@ -60,7 +60,7 @@ var _ = Describe("run's top-level error wrapping (unit)", func() {
 		t.Setenv("SP_OSAC_OIDC_ISSUER_URL", "https://keycloak.example.com/realms/osac")
 		t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 		t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
-		t.Setenv("DCM_REGISTRATION_URL", "https://control-plane.example.com/api/v1alpha1")
+		t.Setenv("DCM_REGISTRATION_URL", "https://environment-agent.example.com/api/v1alpha1")
 
 		err := run(context.Background(), slog.New(slog.DiscardHandler))
 		Expect(err).To(HaveOccurred())
@@ -356,7 +356,7 @@ var _ = Describe("mainRun (unit)", func() {
 		t.Setenv("SP_OSAC_OIDC_ISSUER_URL", "https://keycloak.example.com/realms/osac")
 		t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 		t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
-		t.Setenv("DCM_REGISTRATION_URL", "https://control-plane.example.com/api/v1alpha1")
+		t.Setenv("DCM_REGISTRATION_URL", "https://environment-agent.example.com/api/v1alpha1")
 
 		Expect(mainRun()).To(Equal(1))
 	})
