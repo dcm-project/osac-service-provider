@@ -1,0 +1,181 @@
+name: E2E (kind + real control-plane)
+
+# Phase 2 of osac-service-provider#17 (FLPATH-4759): real control-plane +
+# real osac-sp + osac-mock-provider (Phase 1, #18), all in a kind cluster.
+# See .ai/specs/osac-sp-e2e-suite.spec.md for the full requirements this
+# workflow implements (REQ-E2E-010..080).
+
+on:
+  push:
+    # TODO(#17/FLPATH-4759): drop 'e2e/kind-control-plane-infra' once this
+    # workflow lands on main — workflow_dispatch only works for workflows
+    # that already exist on the default branch, so this is the only way to
+    # get CI runs while iterating on the workflow itself pre-merge.
+    branches: [main, 'release/v*', 'e2e/kind-control-plane-infra']
+  pull_request:
+    branches: [main, 'release/v*']
+  workflow_dispatch: {}
+
+env:
+  KIND_CLUSTER_NAME: osac-sp-e2e
+  # control-plane's chart + image are *intended* to track the same moving
+  # "main" tag deliberately (issue #17's "Ownership & artifact sourcing": we
+  # consume control-plane purely as a published upstream artifact, not a pin
+  # we manage independently of it) — but temporarily pinned below, see TODO.
+  #
+  # TODO(DD-147, dcm-project/osac-service-provider#33): control-plane@35c0e8f
+  # (PR https://github.com/dcm-project/control-plane/pull/51, merged
+  # 2026-08-19) deleted api/sp/v1alpha1/provider (the direct
+  # POST /api/v1alpha1/providers registration API this SP's
+  # internal/registration and test/e2e/registration_test.go depend on via
+  # pkg/sp/client/provider) in favor of a new agent-routed
+  # api/agent/v1alpha1 model. This is not a bug upstream — it's control-plane
+  # completing the pivot back to the environment-agent-style registration
+  # model that DD-050 deferred as "Phase 2", now that environment-agent has
+  # matured past the stub state DD-050 was written against. Pinning to the
+  # last commit before that removal so e2e stays green; the Phase 2
+  # migration itself (registering via environment-agent instead of
+  # control-plane directly) is deliberately deferred until the current PR
+  # stack lands (see #33) rather than done mid-flight — revert to `main`
+  # once that migration lands.
+  #
+  # Pinning CONTROL_PLANE_REF alone is *not* sufficient: the chart's own
+  # values.yaml hardcodes `global.imageTag: main` as its default regardless
+  # of which chart commit is checked out, so Helm would still pull
+  # quay.io/dcm-project/control-plane:main — a floating tag that already
+  # points at the post-#51 image today. CONTROL_PLANE_IMAGE_TAG below pins
+  # the actual deployed image to the short-SHA tag
+  # (dcm-project/shared-workflows' build-push-quay.yaml pushes `main` +
+  # `${GITHUB_SHA:0:7}` on every push to main) that control-plane's own CI
+  # built and pushed for this exact commit — verified via that commit's
+  # `build-push / build-push` check run before relying on it.
+  CONTROL_PLANE_REF: c04802d05ecc4fd11e070f3bc604ef9e8671a09b
+  CONTROL_PLANE_IMAGE_TAG: c04802d
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # NFR-E2E-010
+    steps:
+      - name: Checkout osac-service-provider
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build osac-service-provider image
+        run: docker build -t osac-service-provider:e2e -f Containerfile .
+
+      - name: Build osac-mock-provider image
+        run: docker build -t osac-mock-provider:e2e -f Containerfile.osac-mock-provider .
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER_NAME }}
+          config: test/e2e/kind-config.yaml
+          wait: 120s
+
+      - name: Load images into kind
+        run: |
+          kind load docker-image osac-service-provider:e2e --name "${{ env.KIND_CLUSTER_NAME }}"
+          kind load docker-image osac-mock-provider:e2e --name "${{ env.KIND_CLUSTER_NAME }}"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Sparse-checkout control-plane's chart
+        uses: actions/checkout@v7
+        with:
+          repository: dcm-project/control-plane
+          ref: ${{ env.CONTROL_PLANE_REF }}
+          sparse-checkout: deploy/helm/dcm
+          sparse-checkout-cone-mode: false
+          path: control-plane
+
+      - name: Install control-plane (+ Postgres, NATS) via its own chart
+        run: |
+          helm install dcm control-plane/deploy/helm/dcm \
+            --set global.imageTag="${{ env.CONTROL_PLANE_IMAGE_TAG }}" \
+            --set dcmUi.enabled=false \
+            --set controlPlane.route.enabled=false \
+            --set controlPlane.ingress.enabled=false
+          kubectl rollout status statefulset/dcm-postgres --timeout=5m
+          kubectl rollout status statefulset/dcm-nats --timeout=5m
+
+      # Workaround for a bug in control-plane's own chart, not this repo's:
+      # its `wait-for-postgres` init container sets `runAsNonRoot: true`
+      # without `runAsUser` against the official postgres image (which has
+      # no non-root default user), so the kubelet permanently refuses to
+      # start it (CreateContainerConfigError) on plain Kubernetes/kind —
+      # only OpenShift's SCC-injected runAsUser sidesteps this, which is
+      # presumably why it's gone unnoticed. Filed upstream as
+      # https://github.com/dcm-project/control-plane/issues/42; drop this
+      # step once that's fixed and released.
+      - name: Work around control-plane#42 (wait-for-postgres init container)
+        run: |
+          kubectl patch deployment dcm-control-plane --type strategic -p \
+            '{"spec":{"template":{"spec":{"initContainers":[{"name":"wait-for-postgres","securityContext":{"runAsNonRoot":false}}]}}}}'
+          kubectl rollout status deployment/dcm-control-plane --timeout=5m
+
+      - name: Apply osac-service-provider + osac-mock-provider manifests
+        run: kubectl apply -f test/e2e/manifests/
+
+      - name: Wait for osac-sp + osac-mock-provider readiness
+        run: |
+          kubectl wait --for=condition=Available deployment/osac-service-provider deployment/osac-mock-provider --timeout=120s
+
+      - name: Start port-forwards to control-plane and osac-sp
+        run: |
+          kubectl port-forward svc/dcm-control-plane 18080:8080 >/tmp/pf-control-plane.log 2>&1 &
+          echo $! > /tmp/pf-control-plane.pid
+          kubectl port-forward svc/osac-service-provider 18081:8080 >/tmp/pf-osac-sp.log 2>&1 &
+          echo $! > /tmp/pf-osac-sp.pid
+          sleep 3
+
+      - name: Run e2e suite
+        working-directory: test/e2e
+        env:
+          CONTROL_PLANE_URL: http://localhost:18080
+          OSAC_SP_URL: http://localhost:18081
+        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=10m
+
+      - name: Stop port-forwards
+        if: always()
+        run: |
+          kill "$(cat /tmp/pf-control-plane.pid)" 2>/dev/null || true
+          kill "$(cat /tmp/pf-osac-sp.pid)" 2>/dev/null || true
+
+      - name: Collect diagnostics # REQ-E2E-070
+        if: failure()
+        run: |
+          mkdir -p /tmp/e2e-diagnostics
+          kubectl get pods -o wide > /tmp/e2e-diagnostics/pods.txt 2>&1 || true
+          # Full event list, not filtered per-object: at 5-component-cluster
+          # scale this is small enough (a handful of KB) that filtering to
+          # save noise isn't worth the risk of a filter expression hiding
+          # the one event that would've explained the failure.
+          kubectl get events --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
+          for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-mock-provider; do
+            # dcm-postgres/dcm-nats are StatefulSets, the rest are
+            # Deployments — describe whichever of deployment/statefulset/
+            # service actually exists under this name; kubectl reports (and
+            # this swallows) a "not found" for the types that don't apply.
+            kubectl describe deployment,statefulset,service "$d" > "/tmp/e2e-diagnostics/${d}.describe.txt" 2>&1 || true
+            kubectl logs -l "app.kubernetes.io/name=${d#dcm-}" --all-containers --prefix --tail=-1 > "/tmp/e2e-diagnostics/${d}.log" 2>&1 || true
+            kubectl logs -l "app.kubernetes.io/instance=dcm" --all-containers --prefix --tail=-1 > /tmp/e2e-diagnostics/dcm-chart-all.log 2>&1 || true
+          done
+          cat /tmp/pf-control-plane.log /tmp/pf-osac-sp.log > /tmp/e2e-diagnostics/port-forward.log 2>&1 || true
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics
+          path: /tmp/e2e-diagnostics
+
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name "${{ env.KIND_CLUSTER_NAME }}"

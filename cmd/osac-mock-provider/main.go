@@ -77,12 +77,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	publicv1.RegisterSubnetsServer(grpcSrv, mockprovider.NewSubnetsServer())
 	publicv1.RegisterVirtualNetworksServer(grpcSrv, mockprovider.NewVirtualNetworksServer())
 
-	// The token URL is derived from the OIDC listener's own resolved
-	// address (not cfg.OIDCAddress verbatim) so an ephemeral ":0" port
-	// (as used by TC-I-031) still produces a dereferenceable
-	// token_endpoint in the discovery documents.
-	tokenURL := "http://" + oidcLn.Addr().String() + "/token"
-	oidcSrv := &http.Server{Handler: mockprovider.NewOIDCHandler(tokenURL, logger)}
+	// OIDCHandler derives each response's token_endpoint from that
+	// request's own Host header (DD-139), so it needs no address
+	// computed from oidcLn here.
+	oidcSrv := &http.Server{Handler: mockprovider.NewOIDCHandler(logger)}
 
 	return serveUntilDone(ctx, logger, shutdownTimeout, grpcSrv, grpcLn, oidcSrv, oidcLn)
 }
