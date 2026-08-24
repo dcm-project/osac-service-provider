@@ -78,6 +78,7 @@ types" convention (see `.ai/test-plans/osac-sp-unit.test-plan.md`, section
 | TC-U-416 | `Close` closes the underlying NATS connection | REQ-PUBLISH-090 | Construct a `Publisher` against a fake/real connection wrapper recording `Close()` calls; call `Publisher.Close()`; assert the underlying connection's `Close` was called exactly once. |
 | TC-U-417 | `NewPublisher` wraps and returns a NATS connect failure | REQ-PUBLISH-020 | Call `NewPublisher("://not-a-valid-url", logger)` — `nats.Connect` fails synchronously on URL parsing, no live broker needed; assert a non-nil error wrapping "connecting to NATS" and a nil `*Publisher`. |
 | TC-U-418 | A retry sends the latest value, never resending one superseded during backoff (regression) | REQ-PUBLISH-080, AC-PUBLISH-040 | Fake `jsPublisher` fails only the first call; call `Publish(st, "vm-1", "DELETED", ...)`, `Start(ctx)`, wait for the failed first attempt, then call `Publish(st, "vm-1", "RUNNING", ...)` while the worker is backing off before its retry; assert the retry (second attempt) carries `"RUNNING"` directly, never resending the now-stale `"DELETED"` a second time. Confirmed to fail against the pre-fix `deliver` (which retried a value captured once at pop time) and pass against `deliverLatest` (which re-reads the pending map before every attempt). |
+| TC-U-419 | A persistently failing key does not block delivery of an unrelated key (regression) | REQ-PUBLISH-095, AC-PUBLISH-060 | Fake `jsPublisher` always fails for subject `dcm.vm`, always succeeds for `dcm.cluster`; call `Publish(vmType, "vm-1", ...)`, `Start(ctx)`, wait for `vm-1`'s failed first attempt (entering backoff), then call `Publish(clusterType, "c-1", ...)`; assert `c-1` is delivered within a window far shorter than `vm-1`'s configured initial backoff. Confirmed to fail against the pre-fix `run`/`deliverLatest` (which retried `vm-1` to exhaustion before ever considering `c-1`) and pass against the per-round `attemptRound`/`attemptOnce` fix (DD-077). |
 
 **Coverage note:** `NewPublisher`'s `jetstream.New(nc)` error-wrap branch is
 not exercised by any TC here — `jetstream.New` is called with no
@@ -146,6 +147,7 @@ section 4's coverage note).
 | REQ-PUBLISH-070 / AC-PUBLISH-030 (retry) | TC-U-412 | TC-I-401 |
 | REQ-PUBLISH-080 / AC-PUBLISH-040 (coalescing) | TC-U-413, TC-U-414, TC-U-418 | TC-I-400 |
 | REQ-PUBLISH-090 (Close) | TC-U-416 | TC-I-400 (implicit via suite teardown) |
+| REQ-PUBLISH-095 / AC-PUBLISH-060 (no head-of-line blocking) | TC-U-419 | — |
 | REQ-POLL-010 (config) | — (env-parsing, no new logic) | — |
 | REQ-POLL-015 / AC-POLL-015 (Source from caller-supplied names) | TC-U-464 | TC-I-450 |
 | REQ-POLL-020 / AC-POLL-010 (list+filter+paging) | TC-U-450, TC-U-466 | TC-I-450 |

@@ -94,6 +94,7 @@ done, regardless of coverage percentage:
 | TC-U-220 | List applies the ownership filter, default page size, and exact field values | REQ-LIST-010, REQ-LIST-030, AC-LIST-010 | Exercises AC-LIST-010 via `internal/cluster.List` against the bufconn fake. |
 | TC-U-221 | `page_token` round-trips through OSAC's `offset` | REQ-LIST-020, REQ-LIST-040, AC-LIST-020 | Exercises AC-LIST-020 via two sequential `internal/cluster.List` calls against the bufconn fake. |
 | TC-U-222 | List entries never populate `kubeconfig` | REQ-LIST-030, AC-LIST-030 | Exercises AC-LIST-030 via `internal/cluster.List` against the bufconn fake. |
+| TC-U-223 | A `Size`/`Total` mismatch never reissues the same `page_token` (regression) | REQ-LIST-040, AC-LIST-050 | Fake `Clusters/List` returns `Items: nil, Size: 0, Total: 5` at `offset=0`; call `internal/cluster.List`; assert `NextPageToken` is nil. |
 
 ---
 

@@ -1451,6 +1451,56 @@ REQ-PUBLISH-030, REQ-PUBLISH-080
 
 ---
 
+## DD-077: `Publisher`'s single worker delivers in per-round sweeps, not one key retried to exhaustion, to prevent head-of-line blocking
+
+**Decision:** `Publisher.run`'s single background worker (REQ-PUBLISH-060) no
+longer picks one pending key and retries it with backoff until it succeeds
+before ever looking at another key. Instead, each round
+(`attemptRound`) makes exactly one delivery attempt for *every* pending key
+that isn't currently cooling down from a prior failure, then sleeps only
+until the next key becomes ready (or a fresh `Publish` wakes it early via
+the existing `wake` channel). Per-key backoff state (`retryState`: current
+backoff, next-eligible-attempt time) is tracked in a new `Publisher.retry`
+map, populated on failure (`bumpRetry`) and cleared on success or a
+malformed-envelope drop (`clearRetry`). `deliverLatest` (the old
+retry-to-exhaustion loop) is replaced by `attemptOnce`, a single-shot
+version of the same re-read-current-value-before-every-attempt logic
+(DD-072/DD-076 item 1) — that guarantee is unchanged, just now evaluated
+once per round instead of once per backoff sleep.
+
+**Problem:** found while reassessing merged M5 PRs (#25) for latent issues
+before opening further work — not from a bug report. With exactly one
+worker (REQ-PUBLISH-060, a deliberate constraint so no two deliveries for
+different keys could ever race) previously bound to the *old* exhaustive
+retry-one-key loop, a single persistently-failing resource (e.g. a bad
+provider ID, or a subject the broker permanently rejects) could occupy the
+worker for its entire backoff sequence — indefinitely, per REQ-PUBLISH-070's
+"retry indefinitely" requirement — starving every *other* resource's status
+updates for as long as that one key kept failing. Two updates racing at the
+JetStream/NATS layer was never the concern (JetStream's own per-subject
+ordering already handles that); the concern was purely one Go-level worker
+loop's scheduling starving unrelated work it had no reason to block on.
+
+**Why per-round sweeps, not multiple workers:** REQ-PUBLISH-060 fixes
+"exactly one worker goroutine" as a MUST, so running one worker per subject
+(or per key) was not an option without a spec change. Round-robin
+scheduling within the single worker satisfies the same requirement
+unchanged while still eliminating the head-of-line block: a key's backoff
+now only delays *that key's* next attempt, never the worker's ability to
+service other keys in between.
+
+**Regression test:** TC-U-419 publishes a permanently-failing key (`vm-1`)
+followed by an unrelated always-succeeding key (`c-1` on a different
+subject), and asserts `c-1` is delivered within a window far shorter than
+`vm-1`'s configured initial backoff — confirmed to fail against the
+pre-fix code (times out waiting for `c-1`, which the old loop could not
+reach until `vm-1`'s retry loop happened to succeed or `vm-1`'s backoff
+between attempts left a gap) and pass against the fix.
+
+**Related requirements:** REQ-PUBLISH-060, REQ-PUBLISH-070, REQ-PUBLISH-080
+
+---
+
 ## Validation evidence: M3+M4+M5 merged worktree (DD-075)
 
 Per DD-075, the full stack was validated on a throwaway worktree merging all
@@ -1686,6 +1736,20 @@ convention (`LoadConfig`, fail-fast via the `notEmpty` tag) as
 keeps this binary's env vars unambiguously distinct from the real SP's own,
 since both binaries may run side by side in the same `kind` pod/namespace
 once Phase 2 wires them together.
+
+---
+
+## DD-134: `List` pagination advances by `len(results)` actually received, not the server-reported `Size` field
+
+**Decision:** `internal/cluster.List` and `internal/vm.List` compute the next
+`page_token`'s offset from `len(results)` (the number of items this SP
+actually received and mapped), not from OSAC's `resp.GetSize()` field. An
+empty page (`len(results) == 0`) never emits a `next_page_token`, regardless
+of what `resp.GetTotal()` reports.
+
+**Rationale:** found during review of [PR #25](https://github.com/dcm-project/osac-service-provider/pull/25) (`internal/statuspoll`, which copied this exact pagination shape from these two functions' own doc comments — "mirroring `internal/cluster/list.go`'s own offset/limit pagination math exactly"). The original `nextOffset := offset + resp.GetSize()` trusts OSAC's self-reported `Size` field for computing forward progress; if `Size` and `Total` are ever inconsistent (e.g. `Size=0` while `Total>offset` — a malformed/buggy upstream response), `nextOffset` never advances past the current `offset`, so `List` would keep reissuing the *exact same* `page_token` it just consumed. Unlike `internal/statuspoll`'s own internal pagination loop (which could spin forever inside this SP's process), this doesn't hang *this* SP — each `List` call is one bounded HTTP request — but it pushes the same failure onto whichever caller (`control-plane`) faithfully follows `next_page_token`: that caller would loop forever refetching an empty page it already has. `len(results)` is what this SP actually received and can prove happened; it cannot be inconsistent with itself the way a separate self-reported counter can be with `Total`.
+
+**Related requirements:** REQ-LIST-040, REQ-VMLIST-040
 
 **Related requirements:** REQ-MOCK-110
 
@@ -2266,6 +2330,36 @@ instance.
 
 ---
 
+## DD-153: `e2e-tierb.yaml`/`manifests-tierb` needed the same two Phase-A CI fixes (DD-144, DD-147) independently applied
+
+**Decision:** after retargeting this PR from the now-squash-merged
+`e2e/kind-control-plane-infra` (#29) directly to `main`, `e2e-tierb`'s CI
+run was still red on its pre-existing head commit, for the exact two
+reasons DD-144 and DD-147 already fixed in the sibling `e2e.yaml` (Phase
+A) — but never ported to this PR's own Tier B-specific files, since
+`manifests-tierb/osac-service-provider.yaml` and `e2e-tierb.yaml` are
+separate files from Phase A's, unaffected by a `main`-merge alone:
+
+1. Both `osac-service-provider` Deployments in
+   `manifests-tierb/osac-service-provider.yaml` now set
+   `DCM_NATS_URL=nats://dcm-nats:4222` (DD-144's exact fix, reused
+   verbatim) — confirmed via the failing run's captured pod log
+   (`"env: environment variable \"DCM_NATS_URL\" should not be empty"`),
+   same M5 fail-fast gap, same missing manifest field.
+2. `e2e-tierb.yaml`'s `CONTROL_PLANE_REF`/`CONTROL_PLANE_IMAGE_TAG` are now
+   pinned to DD-147's exact commit/tag (`c04802d0`/`c04802d`), since this
+   workflow installs `control-plane`'s chart independently of `e2e.yaml`
+   and was still floating on `main` (i.e. still exposed to control-plane#51).
+
+**Rationale:** these are config-only ports of already-validated fixes, not
+new decisions — recorded here (rather than amending DD-144/147 in place)
+so the CI history for *why this PR's checks went from red to green* stays
+traceable to this branch's own timeline.
+
+**Related requirements:** REQ-TB-030, REQ-PUBLISH-010 (M5)
+
+---
+
 ## DD-143: `osac-mock-provider`'s `Clusters/GetKubeconfig` is implemented, correcting Phase 1's original out-of-scope call
 
 **Decision:** `test/mockprovider/clusters.go`'s `ClustersServer` now
@@ -2348,6 +2442,29 @@ DD-050 will be formally superseded once that work actually starts.
 
 **Related requirements:** REQ-REG-010, REQ-REG-090, REQ-REG-100 (all to be
 revised when Phase 2 starts — see #33)
+
+---
+
+## DD-202: Milestone 7 (E2E suite) stays in `osac-service-provider`, not `dcm-project/utilities`, for now
+
+**Decision:** Issue #1's original Milestone 7 plan pointed at
+`dcm-project/utilities` (mirroring `kubevirt-service-provider`'s e2e
+pattern). In practice, the kind-based e2e suite (#18, #20/#29, and the
+Tier B stack #22/#27/#24) was built directly in this repo instead. Keep it
+here for now; relocate to `dcm-project/utilities` once the Phase 2
+`environment-agent` migration (#33) lands and the suite has stabilized.
+
+**Rationale:** `control-plane` now ships a versioned image and Helm chart
+that a self-contained in-repo `kind` job can pull directly (see the
+Milestone 7 e2e suite's own e2e.yaml), so an in-repo job doesn't need
+`utilities`' shared harness to stand up a realistic environment — the
+original rationale for putting it there doesn't hold as strongly as it did
+for the sibling SPs' earlier e2e work. Deferring the move also avoids
+adding a cross-repo relocation to the already in-flight PR stack; issue
+#1's Milestone 7 text is stale relative to this and will be updated to
+match.
+
+**Related:** #17, #21, #33
 
 ---
 

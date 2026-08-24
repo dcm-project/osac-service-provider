@@ -77,6 +77,10 @@ spec:
               value: "tierb-osac-admin-secret" # matches tierb-config/realm.json (test-only, NFR-TB-020)
             - name: DCM_REGISTRATION_URL
               value: "http://dcm-control-plane:8080/api/v1alpha1"
+            # Required since M5 merged (same fix as DD-144's Phase A
+            # manifest) — osac-sp's config now fails fast without it.
+            - name: DCM_NATS_URL
+              value: "nats://dcm-nats:4222"
             - name: SP_ENDPOINT
               value: "http://osac-service-provider:8080"
           volumeMounts:
@@ -186,6 +190,10 @@ spec:
             # convention) without ever reaching control-plane at all.
             - name: DCM_REGISTRATION_URL
               value: "http://osac-sp-bad-auth-registration-intentionally-unroutable:8080/api/v1alpha1"
+            # Required since M5 merged (same fix as DD-144's Phase A
+            # manifest) — osac-sp's config now fails fast without it.
+            - name: DCM_NATS_URL
+              value: "nats://dcm-nats:4222"
             - name: SP_ENDPOINT
               value: "http://osac-service-provider-bad-auth:8080"
           volumeMounts:

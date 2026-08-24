@@ -21,7 +21,15 @@ on:
 
 env:
   KIND_CLUSTER_NAME: osac-sp-e2e-tierb
-  CONTROL_PLANE_REF: main
+  # Pinned for the same reason/commit as e2e.yaml's CONTROL_PLANE_REF
+  # (DD-147): control-plane#51 (2026-08-19) deleted the SP registration API
+  # this suite's dcm-control-plane install still relies on. Revert to
+  # `main` once the Phase 2 (`environment-agent`) migration (#33) lands.
+  # CONTROL_PLANE_IMAGE_TAG pins the actual deployed image too — the
+  # chart's values.yaml hardcodes `global.imageTag: main` as its own
+  # default regardless of which chart commit is checked out.
+  CONTROL_PLANE_REF: c04802d05ecc4fd11e070f3bc604ef9e8671a09b
+  CONTROL_PLANE_IMAGE_TAG: c04802d
   CERT_MANAGER_VERSION: v1.20.0
   FULFILLMENT_SERVICE_CHART_VERSION: "0.0.85" # REQ-TB-050 — pin, never `main`/`latest`
 
@@ -153,6 +161,7 @@ jobs:
       - name: Install control-plane (+ Postgres, NATS) via its own chart
         run: |
           helm install dcm control-plane/deploy/helm/dcm \
+            --set global.imageTag="${{ env.CONTROL_PLANE_IMAGE_TAG }}" \
             --set dcmUi.enabled=false \
             --set controlPlane.route.enabled=false \
             --set controlPlane.ingress.enabled=false

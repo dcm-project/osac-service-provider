@@ -141,6 +141,7 @@ recently enqueued value for a resource, never a stale superseded one.
 | REQ-PUBLISH-070 | On a JetStream publish failure, the worker MUST retry with exponential backoff (configurable initial/max, default `1s`/`60s`) before its next attempt; no enqueued update may be silently dropped | MUST | DD-072 |
 | REQ-PUBLISH-080 | If a newer update for the same `(serviceType, resourceID)` key is enqueued while an older one for that same key is still pending or being retried, only the newer value MUST ultimately be delivered — the worker MUST NOT deliver a stale value after a newer one was already recorded | MUST | coalescing; prevents out-of-order status regressions |
 | REQ-PUBLISH-090 | `Publisher.Close()` MUST close the underlying NATS connection | MUST | |
+| REQ-PUBLISH-095 | The worker MUST NOT let a single persistently-failing key's retry backoff block or delay delivery of any other pending key — every pending key not currently cooling down from a prior failure MUST be attempted before the worker next sleeps | MUST | DD-077; prevents head-of-line blocking while preserving REQ-PUBLISH-060's single-worker constraint |
 
 #### Configuration Introduced
 
@@ -186,6 +187,13 @@ recently enqueued value for a resource, never a stale superseded one.
 - **Given** a constructed `Publisher`
 - **When** `Start(ctx)` is called twice, then `ctx` is cancelled
 - **Then** `Done()` MUST close exactly once, and no test observes two worker goroutines running concurrently (e.g. via a call counter with `-race` clean)
+
+##### AC-PUBLISH-060: A persistently failing key does not block delivery of an unrelated key
+
+- **Validates:** REQ-PUBLISH-095
+- **Given** a fake `jsPublisher` that always fails for one key (`vm-1`) and always succeeds for a different, unrelated key (`c-1`, a different subject)
+- **When** `vm-1` is published first (and its first attempt fails, entering backoff), then `c-1` is published while `vm-1` is still cooling down
+- **Then** `c-1` MUST be delivered promptly — well within `vm-1`'s configured initial backoff window, not only after it elapses
 
 #### Dependencies
 
