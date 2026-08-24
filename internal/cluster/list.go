@@ -56,10 +56,18 @@ func (s *Service) List(ctx context.Context, params v1alpha1.ListClustersParams) 
 	list := v1alpha1.ClusterList{Results: results}
 
 	// REQ-LIST-040: next_page_token is present exactly when there are
-	// further results beyond this page, not merely when this page is short.
-	nextOffset := offset + resp.GetSize()
-	if nextOffset < resp.GetTotal() {
-		list.NextPageToken = util.Ptr(encodePageToken(nextOffset))
+	// further results beyond this page, not merely when this page is
+	// short. Advances using len(results) actually received, not the
+	// server-reported resp.GetSize() (DD-134) — a Size/Total mismatch
+	// (e.g. Size=0 while Total>offset) would otherwise reissue the exact
+	// same page_token, and a caller faithfully following pagination would
+	// loop forever refetching the same page. An empty page can never make
+	// progress, so it never emits a next_page_token regardless of Total.
+	if len(results) > 0 {
+		nextOffset := offset + int32(len(results))
+		if nextOffset < resp.GetTotal() {
+			list.NextPageToken = util.Ptr(encodePageToken(nextOffset))
+		}
 	}
 	return list, nil
 }

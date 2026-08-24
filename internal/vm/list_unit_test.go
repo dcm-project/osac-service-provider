@@ -55,8 +55,12 @@ var _ = Describe("Service.List (Topic 4.3 VM List)", func() {
 	// TC-U-321 (REQ-VMLIST-020/040, AC-VMLIST-020): page_token round-trips
 	// through OSAC's offset correctly, across two calls.
 	It("round-trips page_token through OSAC's offset (TC-U-321)", func() {
+		items := make([]*publicv1.ComputeInstance, 50)
+		for i := range items {
+			items[i] = &publicv1.ComputeInstance{Id: "v1", Status: &publicv1.ComputeInstanceStatus{State: publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_RUNNING}}
+		}
 		f.fake.listFunc = func(*publicv1.ComputeInstancesListRequest) (*publicv1.ComputeInstancesListResponse, error) {
-			return &publicv1.ComputeInstancesListResponse{Size: 50, Total: 100}, nil
+			return &publicv1.ComputeInstancesListResponse{Size: 50, Total: 100, Items: items}, nil
 		}
 
 		first, err := f.svc.List(context.Background(), v1alpha1.ListVMsParams{})
@@ -83,6 +87,18 @@ var _ = Describe("Service.List (Topic 4.3 VM List)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(f.fake.ListCalls()[0].GetLimit()).To(Equal(int32(10)))
+	})
+
+	// TC-U-322 (REQ-VMLIST-040, AC-VMLIST-040, regression): a Size/Total
+	// mismatch never reissues the same page_token.
+	It("never reissues the same page_token on a Size/Total mismatch (TC-U-322)", func() {
+		f.fake.listFunc = func(*publicv1.ComputeInstancesListRequest) (*publicv1.ComputeInstancesListResponse, error) {
+			return &publicv1.ComputeInstancesListResponse{Items: nil, Size: 0, Total: 5}, nil
+		}
+
+		result, err := f.svc.List(context.Background(), v1alpha1.ListVMsParams{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.NextPageToken).To(BeNil(), "an empty page must never emit a next_page_token, regardless of Total")
 	})
 
 	// Supplementary (REQ-VMERR-010/030 precondition): a List RPC failure
