@@ -2171,6 +2171,29 @@ revised when Phase 2 starts — see #33)
 
 ---
 
+## DD-202: Milestone 7 (E2E suite) stays in `osac-service-provider`, not `dcm-project/utilities`, for now
+
+**Decision:** Issue #1's original Milestone 7 plan pointed at
+`dcm-project/utilities` (mirroring `kubevirt-service-provider`'s e2e
+pattern). In practice, the kind-based e2e suite (#18, #20/#29, and the
+Tier B stack #22/#27/#24) was built directly in this repo instead. Keep it
+here for now; relocate to `dcm-project/utilities` once the Phase 2
+`environment-agent` migration (#33) lands and the suite has stabilized.
+
+**Rationale:** `control-plane` now ships a versioned image and Helm chart
+that a self-contained in-repo `kind` job can pull directly (see the
+Milestone 7 e2e suite's own e2e.yaml), so an in-repo job doesn't need
+`utilities`' shared harness to stand up a realistic environment — the
+original rationale for putting it there doesn't hold as strongly as it did
+for the sibling SPs' earlier e2e work. Deferring the move also avoids
+adding a cross-repo relocation to the already in-flight PR stack; issue
+#1's Milestone 7 text is stale relative to this and will be updated to
+match.
+
+**Related:** #17, #21, #33
+
+---
+
 ## DD-148: `.golangci.yml` hardened with 10 additional linters, evidence-tested before adoption
 
 **Decision:** added `nestif`, `errorlint`, `forcetypeassert`, `predeclared`,
