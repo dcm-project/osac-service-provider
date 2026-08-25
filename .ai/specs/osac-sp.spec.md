@@ -547,6 +547,7 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 | REQ-REG-030 | The cluster registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/clusters`; the vm registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/vms` | MUST | |
 | REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object | MUST | DD-203 — `environment-agent`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these either; carried via its `additionalProperties` catch-all shape alongside its own known fields (`region_code`/`zone`/`status`/`resources`) |
 | REQ-REG-050 | Both registrations MUST execute asynchronously and MUST NOT block server startup | MUST | |
+| REQ-REG-052 | The internal readiness self-probe that gates when registration starts (REQ-REG-050) MUST keep retrying if a single probing window elapses without a successful response, rather than permanently abandoning registration; it MUST give up only when the server's shutdown context is cancelled | MUST | DD-141 |
 | REQ-REG-060 | The two registrations MUST be independent: a failure (including non-retryable 4xx) on one MUST NOT stop or delay the other | MUST | |
 | REQ-REG-070 | Registration MUST retry with exponential backoff on retryable failures (connection errors, 5xx) | MUST | |
 | REQ-REG-080 | A `409 Conflict` response (service type already served by another provider — `environment-agent`'s per-service-type exclusivity) MUST NOT be treated as fatal: it MUST be logged at WARN level and retried on the same cadence as periodic re-registration (REQ-REG-100), not exponential backoff, so this SP can acquire the slot later if the incumbent is displaced | MUST | DD-203 — restores the pre-Phase-1 design DD-050 had replaced; see REQ-REG-090's "not `409`" carve-out |
@@ -604,6 +605,15 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 - **When** registration is initiated
 - **Then** the server MUST already be accepting HTTP requests
 - **And** both registrations MUST run concurrently with request handling
+
+##### AC-REG-031: Resilient readiness gating
+
+- **Validates:** REQ-REG-052
+- **Given** the HTTP server is slow to confirm its own readiness (e.g. transient CPU contention during pod startup) and one internal probing window elapses without a successful response
+- **When** the shutdown context has not been cancelled
+- **Then** the self-probe MUST retry a fresh window rather than giving up
+- **And** registration MUST still start once the server does confirm readiness, however many windows that takes
+- **And** the self-probe MUST permanently stop only if the shutdown context is cancelled before readiness is ever confirmed
 
 ##### AC-REG-040: Independent registration outcomes
 

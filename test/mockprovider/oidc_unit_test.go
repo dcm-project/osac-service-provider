@@ -29,16 +29,13 @@ func (w *failingResponseWriter) Write([]byte) (int, error) {
 }
 
 // newOIDCTestServer starts a real httptest.Server hosting a
-// mockprovider.OIDCHandler whose discovery documents advertise that same
-// server's own /token path — mirroring how cmd/osac-mock-provider must
-// construct it from a real net.Listen address (the token URL can't be
-// known until the listener exists).
+// mockprovider.OIDCHandler. Its discovery documents advertise a
+// token_endpoint built from each request's own Host header (see
+// OIDCHandler's doc comment and DD-139), which for a plain http.Client
+// request against this server is exactly ts.URL's host:port — so
+// TC-U-135/136 below can still assert against ts.URL+"/token" verbatim.
 func newOIDCTestServer() *httptest.Server {
-	ts := httptest.NewUnstartedServer(nil)
-	tokenURL := "http://" + ts.Listener.Addr().String() + "/token"
-	ts.Config.Handler = mockprovider.NewOIDCHandler(tokenURL, slog.New(slog.DiscardHandler))
-	ts.Start()
-	return ts
+	return httptest.NewServer(mockprovider.NewOIDCHandler(slog.New(slog.DiscardHandler)))
 }
 
 var _ = Describe("OIDCHandler", func() {
@@ -155,7 +152,7 @@ var _ = Describe("OIDCHandler", func() {
 	It("logs, and does not panic, when the underlying writer fails (TC-U-141)", func() {
 		var logBuf bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
-		handler := mockprovider.NewOIDCHandler("http://example.invalid/token", logger)
+		handler := mockprovider.NewOIDCHandler(logger)
 
 		w := &failingResponseWriter{ResponseRecorder: httptest.NewRecorder()}
 		req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
@@ -165,5 +162,32 @@ var _ = Describe("OIDCHandler", func() {
 		}).NotTo(Panic())
 
 		Expect(logBuf.String()).To(ContainSubstring("failed to encode OIDC stub response"))
+	})
+
+	// TC-U-152: regression test for a real bug found via the kind-based
+	// e2e infra (osac-sp-e2e-suite TC-E2E-050/070, DD-139). The mock's
+	// OIDC listener binds a wildcard address (":9091") so other pods can
+	// reach it, but net.Listener.Addr().String() on a wildcard bind
+	// reports the unroutable "[::]:9091" — baking that into the
+	// discovery document at construction time made the mock's own token
+	// endpoint unreachable from any other pod. The fix derives
+	// token_endpoint from each request's own Host header instead.
+	It("advertises a token_endpoint built from the request's own Host header, not a fixed address (TC-U-152)", func() {
+		handler := mockprovider.NewOIDCHandler(slog.New(slog.DiscardHandler))
+
+		for _, host := range []string{"osac-mock-provider:9091", "127.0.0.1:54321"} {
+			req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+			req.Host = host
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			Expect(w.Code).To(Equal(http.StatusOK))
+			var doc struct {
+				TokenEndpoint string `json:"token_endpoint"`
+			}
+			Expect(json.NewDecoder(w.Body).Decode(&doc)).To(Succeed())
+			Expect(doc.TokenEndpoint).To(Equal("http://" + host + "/token"))
+		}
 	})
 })
