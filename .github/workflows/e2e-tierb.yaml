@@ -215,7 +215,13 @@ jobs:
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
           BAD_AUTH_OSAC_SP_URL: ${{ inputs.bad_auth == true && 'http://localhost:18083' || '' }}
-        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=10m
+        # --label-filter excludes Label("tier-a-only") specs (DD-211):
+        # Cluster/VM CRUD hardcode osac-mock-provider-only fixture IDs and
+        # rely on its non-validating Create, neither of which holds
+        # against this real backend — genuinely exercising CRUD here is
+        # Phase 2 scope (osac-aap-mock, DD-152). e2e.yaml (Phase A) runs
+        # unfiltered on purpose.
+        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --label-filter='!tier-a-only' --timeout=10m
 
       - name: Stop port-forwards
         if: always()
