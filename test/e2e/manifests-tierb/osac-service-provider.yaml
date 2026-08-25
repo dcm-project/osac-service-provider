@@ -12,11 +12,11 @@
 # termination is envoy's own job) — so, unlike Phase A's plaintext
 # osac-mock-provider, osac-sp must dial with TLS here (SP_OSAC_TLS_ENABLED)
 # and trust the same self-signed `osac-ca` CA fulfillment-service's own
-# certs are issued from (cert-manager-ca.yaml / DD-146), mounted from the
+# certs are issued from (cert-manager-ca.yaml / DD-151), mounted from the
 # `ca-bundle` ConfigMap the workflow creates for that chart's own required
 # `certs.caBundle.configMap` value.
 #
-# ffs-keycloak is *also* HTTPS-only now (DD-146 addendum: real
+# ffs-keycloak is *also* HTTPS-only now (DD-151 addendum: real
 # fulfillment-service rejects a plain-HTTP OIDC issuer). SP_OSAC_TLS_CERT_FILE
 # only configures internal/osac's gRPC transport, not the separate plain
 # net/http client internal/osac.discoveringTokenSource uses for OIDC

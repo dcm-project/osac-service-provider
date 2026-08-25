@@ -2,7 +2,7 @@
 
 `realm.json` is a minimal Keycloak realm-export, hand-assembled from
 [`fulfillment-service/docs/INSTALL.md`](https://github.com/osac-project/osac/blob/main/fulfillment-service/docs/INSTALL.md)'s
-authoritative `KeycloakRealmImport` example (see DD-145) — not a verbatim
+authoritative `KeycloakRealmImport` example (see DD-150) — not a verbatim
 copy of any single upstream file.
 
 **The `osac-admin`/`osac-controller` client secrets in this file are

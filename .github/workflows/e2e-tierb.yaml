@@ -2,10 +2,11 @@ name: E2E Tier B (kind + real OSAC stack)
 
 # Tier B of osac-service-provider#21's e2e effort — Phase 1
 # (.ai/specs/osac-sp-e2e-tier-b.spec.md): real Postgres, real Keycloak
-# (vendored realm, DD-145), and real fulfillment-service (pinned, published
-# chart, DD-146), replacing Phase A's osac-mock-provider, to close DD-132's
-# structural auth-fidelity gap. dcm-control-plane/osac-service-provider
-# wiring otherwise unchanged from .github/workflows/e2e.yaml (Phase A).
+# (vendored realm, DD-150), and real fulfillment-service (pinned, published
+# chart, DD-151), replacing Phase A's osac-mock-provider, to close the mock
+# provider's structural auth-fidelity gap (Phase A never validates auth at
+# all — see issue #21). dcm-control-plane/osac-service-provider wiring
+# otherwise unchanged from .github/workflows/e2e.yaml (Phase A).
 
 on:
   push:
@@ -62,7 +63,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      # --- cert-manager (DD-146: hard prerequisite of fulfillment-service's chart, all variants) ---
+      # --- cert-manager (DD-151: hard prerequisite of fulfillment-service's chart, all variants) ---
       - name: Install cert-manager
         run: |
           helm upgrade cert-manager oci://quay.io/jetstack/charts/cert-manager \
@@ -86,7 +87,7 @@ jobs:
           kubectl apply -f test/e2e/manifests-tierb/postgres.yaml
           kubectl rollout status deployment/ffs-postgres --timeout=2m
 
-      # --- ffs-keycloak (real Keycloak, vendored realm — DD-145) ---
+      # --- ffs-keycloak (real Keycloak, vendored realm — DD-150) ---
       - name: Create ffs-keycloak-realm ConfigMap from the vendored realm.json
         run: kubectl create configmap ffs-keycloak-realm --from-file=realm.json=test/e2e/tierb-config/realm.json
 
@@ -95,7 +96,7 @@ jobs:
           kubectl apply -f test/e2e/manifests-tierb/keycloak.yaml
           kubectl rollout status deployment/ffs-keycloak --timeout=3m
 
-      # --- ffs-fulfillment-service (real, published chart — DD-146) ---
+      # --- ffs-fulfillment-service (real, published chart — DD-151) ---
       - name: Deploy fulfillment-service secrets
         run: kubectl apply -f test/e2e/manifests-tierb/fulfillment-secrets.yaml
 

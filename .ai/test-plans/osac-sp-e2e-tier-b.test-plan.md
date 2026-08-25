@@ -38,7 +38,7 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-TB-020 | The vendored realm's `client_credentials` client issues a token carrying `organization`, `groups`, and `realm_access.roles` claims | REQ-TB-020 | Call `ffs-keycloak`'s real token endpoint directly (`client_credentials` grant, the vendored client/secret from `test/e2e/tierb-config/realm.json`) — independent of `osac-sp` — decode the returned JWT's payload (base64, no signature verification needed for this assertion) and assert all three claims are present and non-empty. Proves the realm config itself is correct in isolation, before involving `osac-sp` at all. |
+| TC-TB-020 | The vendored realm's `client_credentials` client issues a token carrying `username` and `osac-api` audience claims (not `organization`/`groups`/`realm_access.roles` — an earlier, unverified assumption corrected by DD-150) | REQ-TB-020 | Call `ffs-keycloak`'s real token endpoint directly (`client_credentials` grant, the vendored client/secret from `test/e2e/tierb-config/realm.json`) — independent of `osac-sp` — decode the returned JWT's payload (base64, no signature verification needed for this assertion) and assert `username` equals the expected service-account principal and `osac-api` is present as an audience claim. `groups` is deliberately NOT asserted: the realm's `groups` scope/mapper is present (REQ-TB-020), but Keycloak omits the claim entirely for a service account with no group memberships, per DD-150's addendum — asserting its presence would fail against correct, expected behavior. Proves the realm config itself is correct in isolation, before involving `osac-sp` at all. |
 
 ---
 

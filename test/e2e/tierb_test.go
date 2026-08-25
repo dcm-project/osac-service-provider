@@ -38,7 +38,7 @@ import (
 // assertion") — this only asserts claim shape, never anything relying on
 // the connection's authenticity. osac-sp itself (the thing whose real
 // trust behavior matters) never uses this client; see
-// tierb-config/README.md and DD-146 for how it validates the real
+// tierb-config/README.md and DD-151 for how it validates the real
 // osac-ca-issued cert instead.
 var insecureHTTPClient = &http.Client{
 	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // test-only, see comment above
@@ -53,7 +53,7 @@ const (
 
 var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func() {
 	// TC-TB-020 / REQ-TB-020
-	It("issues a client_credentials token for osac-admin carrying username and groups claims", func() {
+	It("issues a client_credentials token for osac-admin carrying username and osac-api audience claims", func() {
 		keycloakURL := os.Getenv(envKeycloakURL)
 		if keycloakURL == "" {
 			Skip("not a Tier B run: " + envKeycloakURL + " is unset")
@@ -63,10 +63,10 @@ var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func()
 
 		claims := fetchTokenClaims(keycloakURL, "osac-admin", adminSecret)
 
-		// Per DD-145: real OSAC checks `username`/`groups`, not
+		// Per DD-150: real OSAC checks `username`/`groups`, not
 		// `organization`/`realm_access.roles` as an earlier draft of this
 		// spec assumed. `groups` is deliberately NOT asserted here: a
-		// live-cluster spike (DD-145 addendum) confirmed Keycloak's
+		// live-cluster spike (DD-150 addendum) confirmed Keycloak's
 		// oidc-group-membership-mapper omits the claim entirely for a
 		// service account with no group memberships — which is also true
 		// of INSTALL.md's own reference realm (`service-account-osac-admin`

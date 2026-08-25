@@ -1,10 +1,10 @@
 # ffs-keycloak (REQ-TB-010): this repo's own plain manifest — official
-# Keycloak image, `--import-realm` against the vendored realm.json (DD-145),
+# Keycloak image, `--import-realm` against the vendored realm.json (DD-150),
 # not the unpublished/dev-only upstream Operator/chart (spec §2's vendoring
 # plan).
 #
 # HTTPS, issued by the same `osac-ca` ClusterIssuer as the rest of the
-# stack (DD-146 addendum): a live spike confirmed real fulfillment-service
+# stack (DD-151 addendum): a live spike confirmed real fulfillment-service
 # hard-rejects a plain-HTTP issuer URL ("must use the HTTPS scheme") when
 # building its JWKS cache — this isn't optional the way it might be for a
 # generic OIDC client.

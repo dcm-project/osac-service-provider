@@ -1,5 +1,5 @@
 # Values for the real, published `oci://ghcr.io/osac-project/charts/fulfillment-service`
-# chart (DD-146), installed with `--version` pinned by the workflow
+# chart (DD-151), installed with `--version` pinned by the workflow
 # (REQ-TB-050). Modeled on fulfillment-service/docs/INSTALL.md's own
 # example service-values.yaml, adapted for a throwaway `kind` CI cluster:
 # - `variant: kind` (the chart's own default; explicit here for clarity)
@@ -8,7 +8,7 @@
 #   resolves them over the network in a kind-only run)
 # - auth.issuerUrl / idp.url point at this repo's own ffs-keycloak over
 #   HTTPS (osac-ca-issued, see keycloak.yaml) — confirmed via a live spike
-#   (DD-146 addendum) that grpc-server hard-rejects a plain-HTTP issuer URL
+#   (DD-151 addendum) that grpc-server hard-rejects a plain-HTTP issuer URL
 #   when building its JWKS cache
 
 variant: kind

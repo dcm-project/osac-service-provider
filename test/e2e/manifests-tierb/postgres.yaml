@@ -41,7 +41,7 @@ spec:
           # fulfillment-service/docs/INSTALL.md: "The service requires a
           # PostgreSQL 18+ database" — confirmed the hard way via a live
           # spike (postgres:16 left grpc-server's migrator in a dirty,
-          # crash-looping state; see DD-146 addendum).
+          # crash-looping state; see DD-151 addendum).
           image: docker.io/library/postgres:18-alpine
           ports:
             - name: postgres

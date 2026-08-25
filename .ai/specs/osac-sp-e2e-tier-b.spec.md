@@ -26,7 +26,7 @@ afterward.
 that spike proved `osac-project/fulfillment-service`'s own `it` Go package
 (a live external dependency importing their internal integration-test
 harness) is technically importable. This spec deliberately does **not**
-build on that approach — see DD-143 for why — and instead vendors the
+build on that approach — see DD-149 for why — and instead vendors the
 specific, minimal pieces needed (a static Keycloak realm config; pinned,
 published image/chart tags) so this repo owns and controls its own e2e
 infrastructure rather than depending on upstream's internal test tooling,
@@ -64,7 +64,7 @@ still being reachable.
   `control-plane`+`osac-sp` deployment as-is
 - [PR #19](https://github.com/dcm-project/osac-service-provider/pull/19) —
   the spike that established `it.NewTool()` is importable (informational;
-  not depended on by this spec's chosen approach, see DD-143)
+  not depended on by this spec's chosen approach, see DD-149)
 - `osac-project/osac`'s `fulfillment-service/it/charts/keycloak/files/realm.json` —
   source of the vendored realm config (§2, Phase 1)
 - `osac-project/osac`'s `fulfillment-service/docs/INSTALL.md` — authoritative
@@ -88,10 +88,10 @@ without re-design once M2 lands, per REQ-TB-090.
 kind cluster
 ├── dcm-postgres, dcm-nats, dcm-control-plane   (unchanged from Phase A)
 ├── osac-service-provider                       (unchanged from Phase A, this repo's own manifest)
-├── cert-manager        (NEW — upstream release manifest; hard prerequisite of fulfillment-service's own chart, all variants — see DD-146)
+├── cert-manager        (NEW — upstream release manifest; hard prerequisite of fulfillment-service's own chart, all variants — see DD-151)
 ├── ffs-postgres        (NEW — plain manifest, this repo's own; 2 DBs: keycloak, service)
 ├── ffs-keycloak        (NEW — plain manifest; official Keycloak image + vendored realm.json)
-└── ffs-fulfillment-service (NEW — real published chart, `oci://ghcr.io/osac-project/charts/fulfillment-service`, pinned `--version`, `variant: kind`; replaces osac-mock-provider — see DD-146)
+└── ffs-fulfillment-service (NEW — real published chart, `oci://ghcr.io/osac-project/charts/fulfillment-service`, pinned `--version`, `variant: kind`; replaces osac-mock-provider — see DD-151)
 ```
 
 - `osac-mock-provider` (Phase A) is **removed** from the stack in Tier B
@@ -139,7 +139,7 @@ kind cluster
 | Keycloak deployment | Official Keycloak image, our own plain manifest, `--import-realm` against the vendored file | Upstream's own chart is unpublished and explicitly dev-only (own README's disclaimer); the Operator-based production path is unnecessary weight for a throwaway CI cluster |
 | Postgres (for Keycloak + fulfillment-service DBs) | Our own manifest, same pattern as `control-plane`'s Postgres | Upstream's own IT-tier Postgres chart is generic/disposable — nothing OSAC-specific to vendor |
 | `fulfillment-service`, `osac-operator`, BMFO | Pin real, versioned images (`ghcr.io/osac-project/fulfillment-service:vX.Y.Z`, etc.) and their published OCI Helm charts directly — **no source build, no `it` package Go dependency** | These are genuine, stable, versioned upstream artifacts (confirmed: 80+ real semver tags on GHCR) — treating them as external dependencies is the same posture already used for `control-plane`'s image in Phase A |
-| `osac-aap-mock` (Phase 2 only) | New, hand-written binary in this repo, `cmd/osac-aap-mock/` | No reusable upstream artifact exists (confirmed — §4/DD-144) |
+| `osac-aap-mock` (Phase 2 only) | New, hand-written binary in this repo, `cmd/osac-aap-mock/` | No reusable upstream artifact exists (confirmed — §4/DD-152) |
 
 ---
 
@@ -150,7 +150,7 @@ kind cluster
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-TB-010 | The Tier B workflow MUST deploy real Postgres, real Keycloak (official image + vendored realm import), and real `fulfillment-service` (pinned image + chart) in place of `osac-mock-provider`, leaving `control-plane`+`osac-sp` deployment unchanged from Phase A | MUST | |
-| REQ-TB-020 | The vendored Keycloak realm config MUST define `client_credentials`-capable clients (`osac-admin`, `osac-controller`) whose issued tokens carry `username` and `groups` claims plus an `osac-api` audience claim, via the same custom `clientScopes` real OSAC's own production install doc defines | MUST | Source: `fulfillment-service/docs/INSTALL.md`'s `KeycloakRealmImport` example — corrected from an earlier, unverified assumption (`organization`/`realm_access.roles`); see DD-145 |
+| REQ-TB-020 | The vendored Keycloak realm config MUST define `client_credentials`-capable clients (`osac-admin`, `osac-controller`) with the same custom `clientScopes` (`osac-api`, `username`, `groups`) real OSAC's own production install doc defines. Issued tokens for these clients MUST carry a `username` claim and an `osac-api` audience claim; the `groups` scope/mapper MUST be present in the realm config, but is not itself a guaranteed claim on every issued token — a service account with no group memberships MUST NOT be expected to carry a `groups` claim (Keycloak's `oidc-group-membership-mapper` omits the claim entirely, not an empty array, in that case) | MUST | Source: `fulfillment-service/docs/INSTALL.md`'s `KeycloakRealmImport` example — corrected from an earlier, unverified assumption (`organization`/`realm_access.roles`); further corrected (empty-`groups` semantics) after a live spike, see DD-150 |
 | REQ-TB-030 | `osac-sp`'s `SP_OSAC_OIDC_ISSUER_URL`/`SP_OSAC_OIDC_CLIENT_ID`/`_SECRET`/`SP_OSAC_FULFILLMENT_ADDRESS` MUST point at the real `ffs-keycloak`/`ffs-fulfillment-service` services, with credentials matching a real vendored client | MUST | |
 | REQ-TB-040 | The e2e suite MUST assert `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC — not just against the Phase A mock | MUST | Same assertions as `AC-E2E-030`, re-run against the real backend |
 | REQ-TB-050 | The workflow MUST pin exact `vX.Y.Z` image/chart tags for every OSAC component (never `main`/`latest`) | MUST | Upstream's own `check-floating-tags.yaml` CI guard confirms `main`/`latest` are untrusted as "current" |
