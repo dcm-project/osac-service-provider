@@ -32,7 +32,14 @@ type clusterList struct {
 // fixture's own default behavior, so no polling is needed here for status
 // convergence, only for the health checks (DD-142) which race against
 // Bootstrap's async startup instead.
-var _ = Describe("Cluster CRUD, against the real mock backend", func() {
+//
+// Label("tier-a-only") (DD-211): this spec hardcodes osac-mock-provider
+// fixture IDs (e.g. "default-hcp") that don't exist in real
+// fulfillment-service, and relies on the mock's synchronous,
+// non-validating Create — neither holds against Tier B's real backend.
+// e2e-tierb.yaml excludes this label so these specs don't run there;
+// real CRUD against Tier B is Phase 2 scope (osac-aap-mock, DD-152).
+var _ = Describe("Cluster CRUD, against the real mock backend", Label("tier-a-only"), func() {
 	// TC-E2E-090 / AC-E2E-050
 	It("creates, gets, lists, and deletes a cluster end-to-end over real HTTP", func() {
 		id := uniqueID("e2e-cluster")

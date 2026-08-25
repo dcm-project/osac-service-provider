@@ -31,7 +31,11 @@ type vmList struct {
 // internal_ip_address/external_ip_address are echoed directly from the
 // same object on every call (REQ-VMLIST-030), with no mock-side value set
 // for them (empty string is a valid response, REQ-VMGET-030).
-var _ = Describe("VM CRUD, against the real mock backend", func() {
+//
+// Label("tier-a-only") (DD-211): same rationale as cluster_crud_test.go's
+// — hardcoded mock-only fixture IDs ("default-vm"/"standard-4-16"),
+// excluded from e2e-tierb.yaml's real-backend run.
+var _ = Describe("VM CRUD, against the real mock backend", Label("tier-a-only"), func() {
 	// TC-E2E-100 / AC-E2E-060
 	It("creates, gets, lists, and deletes a vm end-to-end over real HTTP", func() {
 		id := uniqueID("e2e-vm")
