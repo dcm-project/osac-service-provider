@@ -2570,3 +2570,46 @@ fabricating fake-but-real-looking template IDs that would silently break
 again the moment Tier B's fixtures change, or (b) leaving Tier B red.
 
 **Related requirements:** REQ-E2E-090..102, REQ-MOCK-130
+
+---
+
+## DD-212: `registration_test.go`/`health_test.go`'s happy path are `Label("tier-b-only")`, pruned from Phase A's mock job
+
+**Decision:** `registration_test.go`'s `Describe("osac-sp registration
+with real control-plane", ...)` and `health_test.go`'s
+`Describe("osac-sp health, against the real backend", ...)` now carry
+Ginkgo `Label("tier-b-only")`. `e2e.yaml` (Phase A) adds
+`--label-filter='!tier-b-only'` to its `ginkgo` invocation, so these
+specs no longer run against `osac-mock-provider` at all — only against
+Tier B's real backend (`e2e-tierb.yaml`, unfiltered on this label,
+mirroring `DD-211`'s symmetric `tier-a-only` exclusion in the other
+direction).
+
+**Rationale:** implements issue #28, gated on both its dependencies
+(`#27`/Tier B, `#24`→`#37`/CRUD e2e) now being merged to `main`. Neither
+Describe block ever exercised anything mock-vs-real-specific:
+`registration_test.go`'s specs never call the OSAC backend at all — they
+only assert what `osac-sp` registered with `control-plane` — and
+`health_test.go`'s happy path only proves "a backend that always says
+yes makes `osac-sp` report healthy," already covered in-process by
+`internal/registration`/`internal/osac`'s own bufconn integration tests,
+and covered more rigorously by Tier B's real Keycloak/`fulfillment-service`
+saying yes for real reasons. Running both in `e2e.yaml` too was pure
+duplication that only earned its keep before Tier B existed. This
+supersedes `DD-153`'s note that these two files are "intentionally
+backend-agnostic and meant to run against both tiers" — that was true
+only for as long as Tier B didn't exist yet to give them non-duplicated
+signal on its own.
+
+`osac-mock-provider` itself is unaffected and still required: Cluster/VM
+CRUD's idempotency/404-after-delete contracts are only assertable against
+a backend with deterministic, synchronous completion (`REQ-MOCK-030`),
+which is exactly what real infrastructure structurally cannot offer in CI
+— the mock's value was never about registration/health duplication, only
+about CRUD.
+
+**Related requirements:** REQ-E2E-020..070
+
+**Related:** #28, DD-153 (refined, not reversed — its readiness-race
+rationale for why health checks need polling, not a single-shot check,
+still holds; only the "runs in both tiers" claim changes)

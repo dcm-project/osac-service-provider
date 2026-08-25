@@ -25,18 +25,17 @@ type health struct {
 
 // Health-check propagation (§3 of the test plan): asserts osac-sp's real
 // internal/osac.Bootstrap — real gRPC dial + real OIDC client-credentials
-// fetch against osac-mock-provider, not the bufconn fakes its own unit/
+// fetch against a real backend, not the bufconn fakes its own unit/
 // integration tests use — reports healthy, and that control-plane's own
 // real healthcheck.Monitor independently agrees.
 //
-// TODO(#28): this Describe block's happy-path assertions run identically,
-// and with no additional grounding, against Tier B's real backend
-// (e2e-tierb.yaml) — the mock here only proves "a backend that always
-// says yes makes osac-sp report healthy", already covered by internal/
-// osac's bufconn integration tests. Once #27 (Tier B) and #24 (CRUD e2e)
-// both merge, drop this Describe block from the mock job (e2e.yaml) and
-// keep it running only against the real backend.
-var _ = Describe("osac-sp health, against the real mock backend", func() {
+// Label("tier-b-only") (#28, DD-212): these happy-path assertions ran
+// identically, and with no additional grounding, against the mock here —
+// "a backend that always says yes makes osac-sp report healthy" is
+// already covered by internal/osac's bufconn integration tests. e2e.yaml
+// now excludes this label; this Describe block runs only against the real
+// backend (e2e-tierb.yaml), where it adds real, non-duplicated grounding.
+var _ = Describe("osac-sp health, against the real backend", Label("tier-b-only"), func() {
 	// TC-E2E-050 / AC-E2E-030
 	It("reports the cluster health endpoint as healthy with no failure detail", func() {
 		h := eventuallyHealthy("/api/v1alpha1/clusters/health")

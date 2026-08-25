@@ -6,13 +6,14 @@
 // note), it just self-selects at runtime.
 //
 // TC-TB-030 (osac-sp health against the real backend) deliberately has no
-// dedicated spec here: health_test.go's existing, tier-agnostic
-// "osac-sp health, against the real mock backend" Describe block already
-// asserts exactly that shape (healthy status, empty Detail) and runs
-// unconditionally against whatever OSAC_SP_URL points at — Tier B's
-// workflow just points it at the real ffs-keycloak/ffs-fulfillment-service
-// stack instead of osac-mock-provider, closing DD-132's auth-fidelity gap
-// for free, with no new assertion code needed.
+// dedicated spec here: health_test.go's existing
+// "osac-sp health, against the real backend" Describe block already
+// asserts exactly that shape (healthy status, empty Detail) against
+// whatever OSAC_SP_URL points at — Tier B's workflow points it at the
+// real ffs-keycloak/ffs-fulfillment-service stack, closing DD-132's
+// auth-fidelity gap for free, with no new assertion code needed. As of
+// DD-212 (#28), that Describe block is Label("tier-b-only") and runs only
+// here, not in Phase A's e2e.yaml.
 package e2e_test
 
 import (
