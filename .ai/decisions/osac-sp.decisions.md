@@ -2220,7 +2220,7 @@ Deliberately scoped to this repo first, not simultaneously rolled out to sibling
 
 ---
 
-## DD-149: `osac-mock-provider`'s `ClusterTemplates/Get` is implemented, correcting Phase 1's original out-of-scope call
+## DD-209: `osac-mock-provider`'s `ClusterTemplates/Get` is implemented, correcting Phase 1's original out-of-scope call
 
 **Decision:** `test/mockprovider/clustertemplates.go` adds a trivial,
 stateless `ClusterTemplatesServer` recognizing exactly one well-known
