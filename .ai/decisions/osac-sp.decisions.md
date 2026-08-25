@@ -1621,7 +1621,7 @@ repo's own convention, not that sibling's.
 
 ---
 
-## DD-130: Single `test/mockprovider` package, not one sub-package per service
+## DD-205: Single `test/mockprovider` package, not one sub-package per service
 
 **Decision:** `cmd/osac-mock-provider`'s five fake gRPC services
 (`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`,
@@ -1635,7 +1635,7 @@ service/concern (`clusters.go`, `computeinstances.go`, `subnets.go`,
 **Rationale:** every file in this package shares one concern — faking
 OSAC's backend surface for `osac-sp`'s own client code to dial — and all
 five gRPC services share the exact same generic, unexported storage engine
-(`resourceStore[T]`, see DD-131), which would otherwise need to be exported
+(`resourceStore[T]`, see DD-206), which would otherwise need to be exported
 (or duplicated) to cross sub-package boundaries for no benefit: nothing
 outside this mock ever needs to depend on, say, `mockprovider/clusters`
 without also needing the other four services and the OIDC stub to form a
@@ -1645,17 +1645,24 @@ convention for single-concern internal packages (e.g. `internal/osac`,
 shape of, say, `internal/api/server` (which is generated, not
 hand-authored).
 
-**Note on DD numbering:** this decision (and DD-131..133 below) were
+**Note on DD numbering:** this decision (and DD-206..208 below) were
 originally numbered DD-130+ on a branch cut directly from `main` while
-`main`'s own decisions file still ended at DD-070. By the time this branch
-merged, M3/M4 (Cluster/VM CRUD) had already landed on `main` and claimed
-DD-080..129 — clear of this range, so no renumbering was needed.
+`main`'s own decisions file still ended at DD-070, on the (correct, at cut
+time) assumption that M3/M4 (Cluster/VM CRUD, which had already claimed
+DD-080..129) left DD-130+ clear. It didn't stay clear: M6
+(version-translation matrix, DD-130..133 above) merged first and claimed
+the same range independently, on its own branch, unaware of this one — a
+genuine duplicate-numbering collision, caught and fixed here by renumbering
+this block to DD-205..208. Kept as a cautionary note for the numbering
+discipline this project otherwise relies on: "next available on a branch
+cut from `main`" is only actually safe once merged, not at cut time, when
+two branches claim the same range concurrently.
 
 **Related requirements:** REQ-MOCK-010, REQ-MOCK-070, REQ-MOCK-080
 
 ---
 
-## DD-131: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
+## DD-206: Generic, mutex-protected in-memory `resourceStore[T]`, not bespoke per-service storage
 
 **Decision:** All four CRUD-capable fake services (`Clusters`,
 `ComputeInstances`, `Subnets`, `VirtualNetworks`) share one generic
@@ -1691,7 +1698,7 @@ REQ-MOCK-040, REQ-MOCK-050, REQ-MOCK-060
 
 ---
 
-## DD-132: No real JWT signing for the OIDC token stub
+## DD-207: No real JWT signing for the OIDC token stub
 
 **Decision:** `test/mockprovider.OIDCHandler`'s `/token` endpoint issues
 a static, opaque bearer token string (not a real, cryptographically signed
@@ -1715,7 +1722,7 @@ which takes the identical shortcut for the same reason.
 
 ---
 
-## DD-133: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
+## DD-208: Flat `MOCK_`-prefixed env vars for the mock's own config, not a nested `internal/config`-shaped struct
 
 **Decision:** `test/mockprovider.Config` is a flat, two-field struct
 (`GRPCAddress`, `OIDCAddress`, both required/fail-fast) read via
@@ -1737,6 +1744,8 @@ keeps this binary's env vars unambiguously distinct from the real SP's own,
 since both binaries may run side by side in the same `kind` pod/namespace
 once Phase 2 wires them together.
 
+**Related requirements:** REQ-MOCK-110
+
 ---
 
 ## DD-134: `List` pagination advances by `len(results)` actually received, not the server-reported `Size` field
@@ -1751,11 +1760,9 @@ of what `resp.GetTotal()` reports.
 
 **Related requirements:** REQ-LIST-040, REQ-VMLIST-040
 
-**Related requirements:** REQ-MOCK-110
-
 ---
 
-## DD-134: `osac-sp`/`osac-mock-provider` as this repo's own plain manifests, not a `control-plane` chart contribution
+## DD-204: `osac-sp`/`osac-mock-provider` as this repo's own plain manifests, not a `control-plane` chart contribution
 
 **Decision:** Phase 2's `kind` cluster deploys `osac-service-provider` and
 `osac-mock-provider` via plain `Deployment`+`Service` YAML owned by this
@@ -1873,7 +1880,7 @@ install on non-OpenShift Kubernetes at all). Filed upstream as
 [control-plane#42](https://github.com/dcm-project/control-plane/issues/42)
 per this project's standing practice of flagging cross-repo inconsistencies
 to their owning team rather than silently working around them. Forking the
-chart was rejected for the same reason as DD-134 (this repo consumes
+chart was rejected for the same reason as DD-204 (this repo consumes
 `control-plane` as a published artifact, not a fork); blocking this PR on
 `control-plane#42` landing and releasing was rejected as directly
 contradicting "ready to run asap." The patch touches only the one field

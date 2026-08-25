@@ -73,8 +73,11 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
   handler packages, and branches from `main` (independent of the still
   -unmerged Milestone 3/4 PRs), per the same rationale as DD-126.
 - [Design Decisions](../decisions/osac-sp.decisions.md) — new decisions for
-  this work start at `DD-130` (next available on `main`); the same
-  numbering-collision-until-merge caveat DD-126 already documents applies.
+  this work were originally numbered starting at `DD-130` (next available on
+  `main` at branch-cut time); the same numbering-collision-until-merge
+  caveat DD-126 already documents applies, and did in fact occur here — M6
+  independently claimed the same range first, so this work's decisions were
+  renumbered to `DD-205..208` (see DD-205's own "Note on DD numbering").
 
 ---
 
