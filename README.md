@@ -43,3 +43,13 @@ providers — see
 [`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider),
 and [`kubevirt-service-provider`](https://github.com/dcm-project/kubevirt-service-provider)
 for reference. Details are in [#1](https://github.com/dcm-project/osac-service-provider/issues/1).
+
+## E2E CI pattern (for other SP teams)
+
+This repo built the first kind-based e2e CI tier of any DCM service
+provider — real `control-plane` + a real, independently-built SP, with only
+the actual external backend mocked (see
+[#17](https://github.com/dcm-project/osac-service-provider/issues/17)).
+[`docs/e2e-ci-pattern-for-service-providers.md`](./docs/e2e-ci-pattern-for-service-providers.md)
+documents the pattern for other SP teams to copy directly, including the
+two real mistakes made while hardening it so other repos don't repeat them.
