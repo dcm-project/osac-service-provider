@@ -2086,6 +2086,280 @@ to document the polling discipline explicitly.
 
 ---
 
+## DD-149: Tier B vendors specific OSAC config/artifacts rather than importing `fulfillment-service`'s `it` Go package
+
+**Decision:** `.ai/specs/osac-sp-e2e-tier-b.spec.md` ("Tier B") deploys real
+Postgres, real Keycloak (official image + a vendored, static realm-config
+file copied into this repo), and real `fulfillment-service`/`osac-operator`/
+BMFO (pinned, published `vX.Y.Z` image and OCI chart tags) — not by adding a
+live Go module dependency on `osac-project/fulfillment-service`'s own `it`
+integration-test package (which [#19](https://github.com/dcm-project/osac-service-provider/pull/19)'s
+spike proved is technically importable), and not by building any OSAC
+component from source.
+
+**Rationale:** requested directly — depending on another team's internal
+test-harness *code* (as opposed to their published, versioned artifacts)
+means this repo's own CI can break for reasons entirely outside its
+control, on a schedule it doesn't own, with no version pin protecting it
+(the `it` package has no stability contract; it's `fulfillment-service`'s
+own test-only tooling, not a public API). Concretely, this repo would
+inherit: `it.Tool`'s exact function signatures, its own Kind/Helm/podman
+orchestration assumptions, and its full transitive dependency graph
+(confirmed non-trivial in the spike — `osac-operator`/BMFO CRD types, etc.),
+none of which this repo has any influence over.
+
+The chosen alternative — vendor the *minimum static config* actually
+needed (Keycloak's realm/client/claim-mapper definitions, which are what
+determine JWT-claim-shape fidelity) and reference *published, versioned*
+images/charts for everything else — mirrors this repo's own existing
+precedent for depending on other DCM/OSAC components: `control-plane` is
+already consumed as a pulled image + sparse-checked-out chart at a pinned
+ref in Phase A (`osac-sp-e2e-suite.spec.md` §2), never built from source or
+imported as a Go dependency; DD-020 vendors (copies) OSAC's protos rather
+than living off an unpublished BSR module for the identical reason. Tier B
+extends that same posture to Keycloak/`fulfillment-service`/`osac-operator`/
+BMFO instead of introducing a new, inconsistent pattern.
+
+Confirmed as a real, live risk while researching this decision (not
+theoretical): `osac-project/fulfillment-service` (along with `osac-operator`,
+BMFO, and `osac-aap`) was archived and merged into a new monorepo,
+`osac-project/osac`, on 2026-08-04 — the day before this decision was
+written. A live Go dependency on the old repo's `it` package would already
+need remediation; a pinned image/chart tag and a vendored static file are
+both unaffected by the repo move.
+
+**Related requirements:** REQ-TB-010, REQ-TB-050
+
+---
+
+## DD-150: Vendored realm built from `INSTALL.md`'s authoritative `KeycloakRealmImport`, not the `it` package's test-fixture realm — corrects REQ-TB-020
+
+**Decision:** `test/e2e/tierb-config/realm.json` is a minimal Keycloak
+realm-export JSON assembled directly from
+`osac-project/osac`'s `fulfillment-service/docs/INSTALL.md`'s
+`KeycloakRealmImport` example (the `spec.realm` field there is a
+`RealmRepresentation` — the same schema a plain `--import-realm` file uses,
+confirmed by inspecting the CR), not derived from
+`fulfillment-service/it/charts/keycloak/files/realm.json` as DD-149/REQ-TB-020
+originally assumed.
+
+**Correction to REQ-TB-020:** verified directly against the real
+`it/charts/keycloak/files/realm.json` (2209 lines, fetched from `main`) that
+it contains **no** `client_credentials` service-account client at all — only
+the interactive `osac-cli` public client. `osac-admin`/`osac-controller` are
+real client IDs (confirmed via `it_tool.go`'s `adminClientId`/
+`controllerClientId` constants and independently via `INSTALL.md`'s own
+`osac login --client-id osac-admin` example), but the `it` package creates
+them **programmatically** against Keycloak's admin API at test-setup time —
+they are not in the static file, so vendoring that file alone (REQ-TB-020's
+original plan) would not have produced a usable client-credentials login.
+
+**Further correction — the actual claims OSAC checks:** REQ-TB-020 guessed
+`organization`/`groups`/`realm_access.roles` (pattern-matched from
+generic Keycloak+OPA blog content during spec-writing, not confirmed against
+OSAC's own docs). `INSTALL.md` §"Configure the Keycloak realm" states
+plainly: *"The realm must also be configured so that access tokens include
+the `username` and `groups` claims"*, via three custom `clientScopes`
+(`osac-api` — an `oidc-audience-mapper` audience claim, not a role claim;
+`username`; `groups`) assigned as `defaultDefaultClientScopes`. No
+`organization` or `realm_access.roles` claim is mentioned anywhere in the
+production install doc. REQ-TB-020 is corrected accordingly.
+
+**Vendored realm contents** (`test/e2e/tierb-config/realm.json`), copied
+near-verbatim from `INSTALL.md`'s CR example with test-only static secrets
+substituted for the doc's `openssl rand` placeholders (NFR-TB-020):
+
+- `clientScopes`: `osac-api` (audience mapper, `included.custom.audience:
+  osac-api`), `username`, `groups` — assigned via `defaultDefaultClientScopes`
+- `clients`: `osac-cli` (public, unused by this suite but included for
+  parity with the real realm shape), `osac-admin` (confidential,
+  `serviceAccountsEnabled`, the client `osac-sp` itself authenticates as —
+  same one `INSTALL.md`'s own `osac login` example uses), `osac-controller`
+  (confidential, `realm-management` roles — required by
+  `fulfillment-service`'s own chart's `auth.controllerCredentials`/`idp.credentials`,
+  not by `osac-sp`)
+- `users`: `service-account-osac-admin`, `service-account-osac-controller`
+
+**Addendum (confirmed via live `kind` spike, same day):** a real
+`client_credentials` grant against the deployed realm returns `aud:
+"osac-api"` and `username: "service-account-osac-admin"` exactly as
+expected, but **no `groups` claim at all** — Keycloak's
+`oidc-group-membership-mapper` omits the claim entirely (not an empty
+array) when the subject has zero group memberships, and this vendored
+realm's `users` entries never assign `service-account-osac-admin`/
+`service-account-osac-controller` to any group, matching `INSTALL.md`'s own
+reference realm (which does the same). `INSTALL.md`'s own verification
+steps only check the `username` claim for exactly this reason. TC-TB-020
+was corrected to not assert `groups` presence; REQ-TB-020's "carry...a
+`groups` claim" wording describes the *mapper being configured* (which it
+is, and would emit the claim for any principal that actually has group
+memberships), not a claim guaranteed present on every token this specific
+realm can issue.
+
+**Related requirements:** REQ-TB-020 (corrected wording), REQ-TB-030
+
+---
+
+## DD-151: `fulfillment-service` is installed via its real, published OCI chart (`variant: kind`), not a hand-written manifest — and requires cert-manager
+
+**Decision:** `ffs-fulfillment-service` is installed with
+`helm install ... oci://ghcr.io/osac-project/charts/fulfillment-service --version vX.Y.Z`
+(pinned, REQ-TB-050), using the chart's built-in `variant: kind` mode — not a
+hand-written plain `Deployment`/`Service` manifest as originally implied by
+this spec's Phase 1 architecture diagram's `ffs-fulfillment-service (NEW —
+pinned image/chart from ghcr.io/osac-project/*, replaces osac-mock-provider)`
+line, which undersold how much the chart itself already handles.
+
+**New, previously-undocumented prerequisite:** the chart's own README lists
+_cert-manager_ as a hard prerequisite regardless of `variant`
+(`certs.issuerRef`/`certs.caBundle.configMap` have no default — "Required" in
+the chart's own parameter table). This was not called out anywhere in
+`osac-sp-e2e-tier-b.spec.md`'s original architecture (§2) — a genuine spec
+gap, not a Phase-1-vs-Phase-2 scoping choice. NFR-TB-010's resource budget
+must additionally account for cert-manager's 3 pods (controller, webhook,
+cainjector), still comfortably within the 16 GB/4 vCPU free-tier budget.
+
+**Rationale for the chart over a hand-written manifest:** matches this
+spec's own §2 vendoring-plan table (`fulfillment-service` row: "Pin real,
+versioned images... and their published OCI Helm charts directly"), and the
+`control-plane` precedent already established in Phase A
+(`osac-sp-e2e-suite.spec.md` §2) — pulled chart, not hand-authored manifest,
+for anything with its own official chart.
+
+**Resolved via live `kind` spike (this same day):** `fulfillment-grpc-server`
+hard-rejects a plain-HTTP issuer at JWKS-cache construction time —
+`failed to create JWKS cache: issuer URL '...' must use the HTTPS scheme` —
+so `ffs-keycloak` was switched to also terminate TLS, using a `cert-manager`
+`Certificate` issued by the same self-signed `osac-ca` `ClusterIssuer` the
+chart's own components trust via `certs.caBundle`. `auth.issuerUrl`/`idp.url`
+now both point at `https://ffs-keycloak:8443/realms/osac`.
+
+**Second-order finding, same spike:** enabling `KC_HTTPS_CERTIFICATE_FILE`/
+`KC_HTTPS_CERTIFICATE_KEY_FILE` on Keycloak 26.3 also switches its
+_management interface_ (port 9000 — `/health/ready`, `/health/live`) from
+HTTP to HTTPS, undocumented in the parameter's own description. The
+`readinessProbe`/`livenessProbe` in `test/e2e/manifests-tierb/keycloak.yaml`
+must set `scheme: HTTPS`, or the pod flips permanently `Unready` with
+"connection refused" once TLS is turned on — this is not optional plumbing,
+it's a hard coupling in Keycloak's own Quarkus runtime between "any HTTPS
+cert configured" and "management interface moves to HTTPS too."
+
+**Third finding, from the `e2e-tierb.yaml` workflow's own first CI runs**
+(not reproducible in the earlier interactive spike, which happened to
+have leftover Gateway API CRDs registered on that cluster from prior
+troubleshooting): `helm install` fails outright in a clean cluster with
+`no matches for kind "TLSRoute" in version "gateway.networking.k8s.io/v1alpha3"`,
+so installation was switched to
+`helm template | yq filter (drop TLSRoute) | kubectl apply`. That filter
+must also drop null documents (`select(. != null)`) — some of the chart's
+templates emit a bare `---` separator with no body for a
+conditionally-skipped block, which `kubectl apply` otherwise rejects
+outright with `apiVersion not set, kind not set` (reproduced in
+isolation to confirm root cause).
+
+**Actual root cause of the persistent CI failure** (took 5 CI iterations
+to isolate, including three disproven theories along the way — yq
+version, kubectl 1.35-vs-1.36 client-side validation strictness, and
+"stderr redirection alone fixes it" — each ruled out or falsified by a
+subsequent CI run): `helm template`'s OCI pull status (`Pulled: ...`,
+`Digest: ...`) lands on **stdout or stderr depending on the installed
+Helm build** — this repo's local Helm v4.1.1 writes it to stderr (why
+every interactive local repro looked clean), but `azure/setup-helm@v4`'s
+unpinned `version: latest` in CI resolves to a build that writes it to
+stdout, where it prepends a bogus first YAML document with no
+`apiVersion`/`kind` that `kubectl apply` rejects outright. A stdout/stderr
+redirect fix (the natural first attempt) is therefore *not* portable
+across Helm versions/environments. Fixed by stripping both lines by
+content (`grep -Ev '^(Pulled|Digest): '`) after merging stdout+stderr,
+which is invariant to which stream a given Helm build chooses.
+
+**Process lesson for this repo:** a fix validated only by reasoning
+about "which stream should X go to" and confirming via local
+reproduction, without accounting for tool-version drift between the
+local dev machine and CI's freshly-resolved `latest` action inputs, can
+look conclusively correct locally and still fail in CI for an unrelated
+reason. Prefer content-based filtering over stream-based redirection
+when post-processing third-party CLI output whose stream discipline
+isn't part of its documented/stable contract.
+
+**Related requirements:** REQ-TB-010, REQ-TB-050
+
+---
+
+## DD-152: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
+
+**Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)
+will introduce a new binary, `cmd/osac-aap-mock/`, implementing enough of
+AAP's REST surface (`GetTemplate`, `LaunchJobTemplate`/
+`LaunchWorkflowTemplate`, `GetJob`, `CancelJob`) for real `osac-operator`/
+BMFO reconciliation to reach a terminal state — built from scratch, the
+same way `osac-mock-provider` was for OSAC's own gRPC/OIDC surface
+(DD-130–133), not adapted from any existing OSAC-provided fake.
+
+**Rationale:** confirmed by direct source investigation across
+`osac-operator`, BMFO, and the wider `osac-project` org that no reusable
+provisioning-layer test double exists anywhere upstream:
+
+- The `ProvisioningProvider`/`AAPClient` interfaces
+  (`osac-operator/pkg/provisioning`) are genuinely public and cross-repo
+  (BMFO imports them as a real Go module dependency) — so the *interface
+  contract* `osac-aap-mock` must satisfy is stable and well-defined.
+- Every concrete fake implementing those interfaces
+  (`noopProvisioningProvider`, `mockProvisioningProvider`,
+  `mockAAPClient`, etc.) is unexported and defined inline in `_test.go`
+  files, scattered and duplicated per controller test — Go tooling
+  excludes `_test.go` files from normal builds, so none of these are
+  importable by any external module regardless of intent.
+- No runtime dry-run/test-mode config flag exists in either operator's
+  production code — `osac-operator/cmd/main.go`'s
+  `createAAPProviderFromEnv` unconditionally constructs a real AAP client
+  from env vars pointing at a URL.
+- No dedicated AAP/Ansible-mock repo or component exists anywhere in the
+  `osac-project` org; the only place real AAP is ever exercised is the
+  separate, heavyweight `osac-test-infra` full-stack pipelines (real
+  KVM/libvirt), which is precisely the "genuinely impossible in CI" tier
+  Tier B's Phase 2 is designed to never require.
+
+Because `createAAPProviderFromEnv` wires the AAP client from a URL at
+runtime (not compiled in), real `osac-operator`/BMFO can run completely
+unmodified against `osac-aap-mock` — no upstream code changes needed, only
+a config value pointing at our own component instead of a real AAP
+instance.
+
+**Related requirements:** REQ-TB-080
+
+---
+
+## DD-153: `e2e-tierb.yaml`/`manifests-tierb` needed the same two Phase-A CI fixes (DD-144, DD-147) independently applied
+
+**Decision:** after retargeting this PR from the now-squash-merged
+`e2e/kind-control-plane-infra` (#29) directly to `main`, `e2e-tierb`'s CI
+run was still red on its pre-existing head commit, for the exact two
+reasons DD-144 and DD-147 already fixed in the sibling `e2e.yaml` (Phase
+A) — but never ported to this PR's own Tier B-specific files, since
+`manifests-tierb/osac-service-provider.yaml` and `e2e-tierb.yaml` are
+separate files from Phase A's, unaffected by a `main`-merge alone:
+
+1. Both `osac-service-provider` Deployments in
+   `manifests-tierb/osac-service-provider.yaml` now set
+   `DCM_NATS_URL=nats://dcm-nats:4222` (DD-144's exact fix, reused
+   verbatim) — confirmed via the failing run's captured pod log
+   (`"env: environment variable \"DCM_NATS_URL\" should not be empty"`),
+   same M5 fail-fast gap, same missing manifest field.
+2. `e2e-tierb.yaml`'s `CONTROL_PLANE_REF`/`CONTROL_PLANE_IMAGE_TAG` are now
+   pinned to DD-147's exact commit/tag (`c04802d0`/`c04802d`), since this
+   workflow installs `control-plane`'s chart independently of `e2e.yaml`
+   and was still floating on `main` (i.e. still exposed to control-plane#51).
+
+**Rationale:** these are config-only ports of already-validated fixes, not
+new decisions — recorded here (rather than amending DD-144/147 in place)
+so the CI history for *why this PR's checks went from red to green* stays
+traceable to this branch's own timeline.
+
+**Related requirements:** REQ-TB-030, REQ-PUBLISH-010 (M5)
+
+---
+
 ## DD-143: `osac-mock-provider`'s `Clusters/GetKubeconfig` is implemented, correcting Phase 1's original out-of-scope call
 
 **Decision:** `test/mockprovider/clusters.go`'s `ClustersServer` now

@@ -55,7 +55,7 @@ test-cover:
 lint:
 	golangci-lint run ./...
 
-check: fmt vet lint check-aep test
+check: fmt vet lint check-aep check-pinned-tags test
 
 tidy:
 	go mod tidy
@@ -108,6 +108,9 @@ generate: generate-api generate-proto
 check-aep:
 	npx --yes @stoplight/spectral-cli lint --fail-severity=warn ./api/v1alpha1/openapi.yaml
 
+check-pinned-tags: # TC-TB-040
+	./test/e2e/check-pinned-tags.sh
+
 check-container-engine:
 	@if [ -z "$(CONTAINER_ENGINE)" ]; then \
 		echo "Error: No supported container engine found. Please install podman or docker, or set CONTAINER_ENGINE explicitly." >&2; \
@@ -152,4 +155,4 @@ e2e-apply:
 e2e-test:
 	cd test/e2e && go run github.com/onsi/ginkgo/v2/ginkgo -r -v
 
-.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-container-engine image-build image-build-mock-provider e2e-cluster-up e2e-cluster-down e2e-images e2e-load e2e-apply e2e-test
+.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-pinned-tags check-container-engine image-build image-build-mock-provider e2e-cluster-up e2e-cluster-down e2e-images e2e-load e2e-apply e2e-test
