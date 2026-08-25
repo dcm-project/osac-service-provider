@@ -20,12 +20,14 @@ a *mocked provider backend only*. It validates the `osac-sp` ↔
 (`FLPATH-4760`, OCP + real `fulfillment-service`) is `control-plane`'s /
 QE's, tracked separately, and gated on Milestone 4/5 landing.
 
-**What's asserted in this phase, concretely:** registration success and
-health-check propagation — the two behaviors that exist on `main` today
-(Milestone 1/2). CRUD dispatch (Milestone 3/4) and NATS status-event
-round-trips (Milestone 5) are **not yet assertable** because those
-milestones' PRs are still unmerged; §6 tracks them as explicit follow-ups
-rather than silently deferring them.
+**What's asserted in this phase, concretely:** registration success,
+health-check propagation, and Cluster/VM CRUD dispatch (Milestone 3/4,
+REQ-E2E-090..102) — exercised over real HTTP into the real
+`osac-mock-provider` gRPC backend, not the bufconn fakes those milestones'
+own unit/integration tests use. NATS status-event round-trips (Milestone 5)
+remain **not yet assertable**, since that milestone's own async publish
+path has no `osac-sp`-side REST surface to assert against over HTTP; §6
+tracks it as an explicit follow-up rather than silently deferring it.
 
 **Reference documents:**
 
@@ -103,6 +105,12 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | REQ-E2E-060 | The e2e suite MUST assert that `osac-sp`'s own two health endpoints report `status: healthy` against the real `osac-mock-provider` (real gRPC dial + real OIDC token fetch, not bufconn) | MUST | Exercises `internal/osac.Bootstrap` end-to-end for the first time outside its own unit/integration tests; the `Health` schema (`api/v1alpha1/openapi.yaml`) has no `connected` field — `status`/`detail` are the only signal |
 | REQ-E2E-070 | The job MUST tear down the `kind` cluster on both success and failure, and MUST upload each component's logs as a build artifact on failure | MUST | Matches `fulfillment-service`'s own IT harness convention (verified in the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19)) |
 | REQ-E2E-080 | The e2e suite MUST run as a separate nested Go module (own `go.mod`) so its dependencies (a `control-plane` REST client, `k8s.io/client-go` if used for readiness polling) never enter the main module's `go.mod`/`go.sum` | MUST | Same isolation rationale as the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19) |
+| REQ-E2E-090 | The e2e suite MUST exercise a full Cluster CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend (not the bufconn fakes Milestone 3's own unit/integration tests use), asserting `Create`'s response reaches the mock's terminal ready status (`ACTIVE`) and the subsequent `Get`'s response additionally carries a non-empty `kubeconfig` — `Create` itself never populates `kubeconfig` (`osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-050; only `Get` does, conditionally on `ACTIVE`, REQ-GET-020) — without any polling for convergence, since the real mock resolves `Create` synchronously to `CLUSTER_STATE_READY` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 3 (Cluster CRUD) |
+| REQ-E2E-091 | Cluster `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-DELETE-020 | MUST | Milestone 3 |
+| REQ-E2E-092 | Cluster `Create` MUST be idempotent when exercised over real HTTP against the real mock backend: a second `Create` for an `id` that already exists MUST return `201` with the existing cluster's current state (not an error), mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-040/DD-100 — this is the one scenario `osac-mock-provider`'s own `ALREADY_EXISTS` behavior (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-020) was purpose-built to make testable against a real backend, not a bufconn fake | MUST | Milestone 3 |
+| REQ-E2E-100 | The e2e suite MUST exercise a full VM CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend, asserting the created object reaches the mock's terminal ready status (`RUNNING`) without any polling for convergence — the real mock resolves `Create` synchronously to `COMPUTE_INSTANCE_STATE_RUNNING` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 4 (VM CRUD) |
+| REQ-E2E-101 | VM `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMDELETE-020 | MUST | Milestone 4 |
+| REQ-E2E-102 | VM `Create` MUST be idempotent when exercised over real HTTP against the real mock backend: a second `Create` for an `id` that already exists MUST return `201` with the existing VM's current state (not an error), mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMCREATE-070 (itself mirroring Milestone 3's DD-100) — same `osac-mock-provider` `ALREADY_EXISTS` contract as REQ-E2E-092, exercised through the VM surface instead of Cluster's | MUST | Milestone 4 |
 
 ---
 
@@ -146,6 +154,43 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 - **Then** the job fails (does not hang to its outer CI timeout) and uploads
   `kubectl logs`/`describe` output for every component as a build artifact
 
+##### AC-E2E-050: Cluster CRUD round-trips end-to-end against the real mock backend
+
+- **Validates:** REQ-E2E-090, REQ-E2E-091
+- **Given** the healthy stack from AC-E2E-010
+- **When** the e2e suite `POST`s a Cluster Create, then `Get`s, `List`s, and
+  `Delete`s it, then repeats `Delete` on the same (now-deleted) id
+- **Then** `Create`/`Get` report `ACTIVE` with `Get`'s response additionally
+  carrying a non-empty, valid-base64 `kubeconfig`; `List` contains the id
+  before deletion; both `Delete` calls return `204`; a `Get` after deletion
+  returns `404`
+
+##### AC-E2E-051: Cluster `Create` is idempotent against the real mock backend's `ALREADY_EXISTS`
+
+- **Validates:** REQ-E2E-092
+- **Given** the healthy stack from AC-E2E-010
+- **When** the e2e suite `POST`s a Cluster Create twice for the same id
+- **Then** both calls return `201` with identical `id`/`status`, and a
+  subsequent `List` shows exactly one entry for that id
+
+##### AC-E2E-060: VM CRUD round-trips end-to-end against the real mock backend
+
+- **Validates:** REQ-E2E-100, REQ-E2E-101
+- **Given** the healthy stack from AC-E2E-010
+- **When** the e2e suite `POST`s a VM Create, then `Get`s, `List`s, and
+  `Delete`s it, then repeats `Delete` on the same (now-deleted) id
+- **Then** `Create`/`Get` report `RUNNING`; `List` contains the id before
+  deletion; both `Delete` calls return `204`; a `Get` after deletion returns
+  `404`
+
+##### AC-E2E-061: VM `Create` is idempotent against the real mock backend's `ALREADY_EXISTS`
+
+- **Validates:** REQ-E2E-102
+- **Given** the healthy stack from AC-E2E-010
+- **When** the e2e suite `POST`s a VM Create twice for the same id
+- **Then** both calls return `201` with identical `id`/`status` — same
+  `ALREADY_EXISTS` contract as AC-E2E-051, exercised through the VM surface
+
 ---
 
 ## 5. Non-Functional Requirements
@@ -159,10 +204,14 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 
 ## 6. Explicitly out of scope (this phase)
 
-- **CRUD dispatch assertions** (Cluster/ComputeInstance/Subnet/VirtualNetwork
-  create-via-`control-plane`) — Milestone 3/4 aren't merged to `main` yet;
-  this branch is stacked on `main`+Phase 1 only. Follow-up once M3/M4 land.
+- **Subnet/VirtualNetwork CRUD dispatch assertions** — Cluster/VM CRUD
+  (REQ-E2E-090..102) covers Milestone 3/4's own directly-exposed REST
+  surfaces; `Subnet`/`VirtualNetwork` are only ever created indirectly as
+  part of VM Default Network Provisioning (M4 §4.5), with no dedicated
+  `osac-sp` REST endpoint of their own to assert against here.
 - **NATS status-event round-trip** — Milestone 5, not yet designed.
+- **Version-matrix (Milestone 6) validation over real HTTP** — a separate
+  follow-up; not part of this phase's REQ-E2E-090..102 CRUD coverage.
 - **Real `fulfillment-service` + real Keycloak** (Tier B, closing the
   auth-claims-fidelity gap identified after Phase 1 — see
   [#19](https://github.com/dcm-project/osac-service-provider/pull/19)'s

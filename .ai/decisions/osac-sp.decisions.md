@@ -2491,3 +2491,82 @@ Each candidate was run against this repo's actual code before being adopted, not
 Deliberately scoped to this repo first, not simultaneously rolled out to sibling SPs — this repo's `.golangci.yml` already functions as the de facto shared template (byte-identical across 4 other repos), so validating the change here first, then propagating, is lower-risk than a coordinated multi-repo change.
 
 **Related requirements:** none (tooling/process decision, no REQ/AC).
+
+---
+
+## DD-209: `osac-mock-provider`'s `ClusterTemplates/Get` is implemented, correcting Phase 1's original out-of-scope call
+
+**Decision:** `test/mockprovider/clustertemplates.go` adds a trivial,
+stateless `ClusterTemplatesServer` recognizing exactly one well-known
+template id (`default-hcp`, matching the e2e suite's own
+`validClusterCreateBody`), registered on `cmd/osac-mock-provider`'s
+`grpc.Server` alongside the other five fakes (REQ-MOCK-130).
+
+**Rationale:** same category of gap as DD-143's `Clusters/GetKubeconfig`
+correction, found the same way — while building this suite's own Cluster/VM
+CRUD coverage (Milestone 3/4, REQ-E2E-090..102) against a combined branch
+before either milestone's PR merged. `osac-mock-provider` (Phase 1 of the
+e2e infra) was built before Milestone 3 existed, so it had no way to
+anticipate that `internal/cluster.Service.Create`'s `resolveNodeSetKey`
+(M3 REQ-CREATE-080) would call `ClusterTemplates/Get` on every real Cluster
+Create. Without this fix, every real e2e Cluster Create against the mock
+fails gRPC `UNIMPLEMENTED`, surfaced by `osac-sp` as a generic
+500/`INTERNAL` — invisible from `internal/cluster`'s own bufconn-backed
+unit/integration tests, which fake `ClusterTemplates` directly and so never
+exercise the mock binary's actual (missing) implementation.
+
+**Related requirements:** REQ-MOCK-130, REQ-E2E-090, REQ-E2E-100
+
+---
+
+## DD-210: Default VM network resources (`VirtualNetwork`/`Subnet`) must set a non-empty `metadata.name`
+
+**Decision:** `internal/vm/network.go`'s `provisionDefaultVirtualNetwork`/
+`provisionDefaultSubnet` now set `metadata.name` to a fixed constant
+(`dcm-default-network` / `dcm-default-subnet`) on the objects they create,
+in addition to the ownership labels they already set (REQ-VMNET-020/030).
+
+**Rationale:** discovered the same way as DD-209 and DD-143 before it —
+running this suite's own Cluster/VM CRUD coverage against a real backend
+for the first time surfaced a gap invisible to both unit tests (bufconn
+fakes, which never validate field presence) and `osac-mock-provider`
+(Tier A, which also never validates it). Real fulfillment-service rejects
+an empty `metadata.name` (`must be at least 1 characters`, plus a
+`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$` regex failure for the same empty
+value) — the very first VM Create in a job always hits this, since it's
+the one that provisions the shared default network. This is a real,
+latent product bug independent of the Tier B scoping question in DD-211:
+it would also affect a genuine Phase 2 real-backend deployment, not just
+this test suite.
+
+**Related requirements:** REQ-VMNET-020, REQ-VMNET-030
+
+---
+
+## DD-211: Cluster/VM CRUD e2e specs are Tier-A-only (`Label("tier-a-only")`), excluded from Tier B's real-backend run
+
+**Decision:** `cluster_crud_test.go`/`vm_crud_test.go`'s `Describe` blocks
+carry Ginkgo `Label("tier-a-only")`. A follow-up change to
+`.github/workflows/e2e-tierb.yaml` (on `main`, since that file doesn't
+exist on this branch) adds `--label-filter='!tier-a-only'` to its `ginkgo`
+invocation, so these specs run against `osac-mock-provider` (Phase A,
+`e2e.yaml`) only, never against Tier B's real fulfillment-service.
+`e2e.yaml` itself passes no filter — Tier A explicitly wants every spec
+that's backend-agnostic or mock-only.
+
+**Rationale:** `e2e-tierb.yaml`'s `ginkgo -r -v` runs the entire
+`test/e2e` module unfiltered (by design, per DD-153 — `health_test.go`/
+`registration_test.go` are intentionally backend-agnostic and meant to run
+against both tiers). Once this PR added Cluster/VM CRUD specs to that same
+module, they were swept into Tier B's real-backend run for the first time
+and failed on `template "default-hcp" not found` — real fulfillment-service
+has no such template; these specs hardcode `osac-mock-provider`-only
+fixture IDs (`default-hcp`, `default-vm`, `standard-4-16`) and rely on the
+mock's synchronous, non-validating Create. Making CRUD genuinely work
+against Tier B requires real OSAC templates/instance types, which is
+explicitly out of scope until Phase 2's `osac-aap-mock` (DD-152) exists —
+so for now, scope these specs out via a label rather than either (a)
+fabricating fake-but-real-looking template IDs that would silently break
+again the moment Tier B's fixtures change, or (b) leaving Tier B red.
+
+**Related requirements:** REQ-E2E-090..102, REQ-MOCK-130
