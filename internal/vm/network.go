@@ -24,6 +24,13 @@ const (
 	defaultSubnetCIDR = "10.200.1.0/24"
 
 	ownerReferenceAnnotation = "osac.openshift.io/owner-reference"
+
+	// defaultVNetName/defaultSubnetName satisfy real OSAC's
+	// `metadata.name` validation (non-empty, DNS-1123-ish) — see DD-210.
+	// osac-mock-provider never validated this field, so its absence went
+	// undetected until Tier B's real fulfillment-service rejected it.
+	defaultVNetName   = "dcm-default-network"
+	defaultSubnetName = "dcm-default-subnet"
 )
 
 // defaultNetworkFilter is the CEL filter applied to the default-subnet
@@ -71,7 +78,7 @@ func (s *Service) resolveDefaultSubnet(ctx context.Context) (string, error) {
 func (s *Service) provisionDefaultVirtualNetwork(ctx context.Context) (string, error) {
 	resp, err := s.virtualNetworks.Create(ctx, &publicv1.VirtualNetworksCreateRequest{
 		Object: &publicv1.VirtualNetwork{
-			Metadata: &publicv1.Metadata{Labels: defaultNetworkLabels()},
+			Metadata: &publicv1.Metadata{Name: defaultVNetName, Labels: defaultNetworkLabels()},
 			Spec: &publicv1.VirtualNetworkSpec{
 				Ipv4Cidr:     util.Ptr(defaultVNetCIDR),
 				Capabilities: &publicv1.VirtualNetworkCapabilities{EnableIpv4: true},
@@ -102,6 +109,7 @@ func (s *Service) provisionDefaultSubnet(ctx context.Context, vnetID string) (st
 	resp, err := s.subnets.Create(ctx, &publicv1.SubnetsCreateRequest{
 		Object: &publicv1.Subnet{
 			Metadata: &publicv1.Metadata{
+				Name:        defaultSubnetName,
 				Labels:      defaultNetworkLabels(),
 				Annotations: map[string]string{ownerReferenceAnnotation: vnetID},
 			},
