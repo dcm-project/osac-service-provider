@@ -1,5 +1,6 @@
 BINARY_NAME := osac-service-provider
 MOCK_BINARY_NAME := osac-mock-provider
+AAP_MOCK_BINARY_NAME := osac-aap-mock
 
 # CONTAINER_ENGINE: container runtime command. Set to override; otherwise auto-detect podman or docker.
 CONTAINER_ENGINE ?= $(shell \
@@ -17,6 +18,11 @@ CONTAINER_IMAGE_NAME ?= quay.io/dcm-project/${BINARY_NAME}
 # to override.
 MOCK_CONTAINER_IMAGE_NAME ?= quay.io/dcm-project/${MOCK_BINARY_NAME}
 
+# AAP_MOCK_CONTAINER_IMAGE_NAME: FQDN (without tag) of the AAP mock's own
+# container image (Tier B Phase 2, osac-service-provider#44). Set to
+# override.
+AAP_MOCK_CONTAINER_IMAGE_NAME ?= quay.io/dcm-project/${AAP_MOCK_BINARY_NAME}
+
 # CONTAINER_IMAGE_TAG: Container image tag. Set to override; otherwise git short hash is used
 CONTAINER_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
@@ -26,11 +32,17 @@ build:
 build-mock-provider:
 	go build -o bin/$(MOCK_BINARY_NAME) ./cmd/$(MOCK_BINARY_NAME)
 
+build-aap-mock:
+	go build -o bin/$(AAP_MOCK_BINARY_NAME) ./cmd/$(AAP_MOCK_BINARY_NAME)
+
 run:
 	go run ./cmd/$(BINARY_NAME)
 
 run-mock-provider:
 	go run ./cmd/$(MOCK_BINARY_NAME)
+
+run-aap-mock:
+	go run ./cmd/$(AAP_MOCK_BINARY_NAME)
 
 clean:
 	rm -rf bin/
@@ -132,6 +144,9 @@ image-build: check-container-engine
 image-build-mock-provider: check-container-engine
 	$(CONTAINER_ENGINE) build -f Containerfile.osac-mock-provider -t $(MOCK_CONTAINER_IMAGE_NAME):$(CONTAINER_IMAGE_TAG) .
 
+image-build-aap-mock: check-container-engine
+	$(CONTAINER_ENGINE) build -f Containerfile.osac-aap-mock -t $(AAP_MOCK_CONTAINER_IMAGE_NAME):$(CONTAINER_IMAGE_TAG) .
+
 # e2e targets (Phase 2 of osac-service-provider#17 / FLPATH-4759): local
 # helpers for the pieces .github/workflows/e2e.yaml also does. The
 # workflow is the canonical, full orchestration (kind create, image
@@ -164,4 +179,4 @@ e2e-apply:
 e2e-test:
 	cd test/e2e && go run github.com/onsi/ginkgo/v2/ginkgo -r -v
 
-.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover test-realbackend-environment-agent lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-pinned-tags check-container-engine image-build image-build-mock-provider e2e-cluster-up e2e-cluster-down e2e-images e2e-load e2e-apply e2e-test
+.PHONY: build build-mock-provider build-aap-mock run run-mock-provider run-aap-mock clean fmt vet test test-cover test-realbackend-environment-agent lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-pinned-tags check-container-engine image-build image-build-mock-provider image-build-aap-mock e2e-cluster-up e2e-cluster-down e2e-images e2e-load e2e-apply e2e-test

@@ -1,0 +1,26 @@
+# Build stage
+FROM registry.access.redhat.com/ubi9/go-toolset:1.25.5 AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+USER root
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o osac-aap-mock ./cmd/osac-aap-mock
+
+# Runtime stage
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+WORKDIR /app
+
+COPY --from=builder /app/osac-aap-mock .
+
+# MOCK_AAP_ADDRESS is required (REQ-TB-080, no built-in default) and must
+# be supplied at runtime — e.g. `-e MOCK_AAP_ADDRESS=:9093`, matching the
+# port documented below.
+EXPOSE 9093
+
+ENTRYPOINT ["./osac-aap-mock"]

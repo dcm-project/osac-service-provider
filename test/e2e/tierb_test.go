@@ -16,6 +16,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -24,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -49,6 +51,10 @@ const (
 	envKeycloakURL      = "KEYCLOAK_URL"       // e.g. http://localhost:18082/realms/osac
 	envTierBAdminSecret = "TIERB_ADMIN_SECRET" // osac-admin's client secret (tierb-config/realm.json)
 	envBadAuthOSACSPURL = "BAD_AUTH_OSAC_SP_URL"
+	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
+	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
+	// deploys that stack, distinct from Phase 1's envKeycloakURL gate.
+	envPhase2Enabled = "TIERB_PHASE2_ENABLED"
 )
 
 var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func() {
@@ -102,6 +108,146 @@ var _ = Describe("Tier B: a real auth failure is genuinely detectable", func() {
 			"a wrong client secret must surface as a token-fetch failure, not an opaque connectivity error")
 	})
 })
+
+// clusterOrderName/clusterOrderFixture match
+// manifests-tierb/clusterorder-fixture.yaml's own metadata.name/apply path.
+const (
+	clusterOrderName    = "tierb-cluster-order"
+	clusterOrderFixture = "manifests-tierb/clusterorder-fixture.yaml"
+)
+
+// clusterOrderStatus mirrors just the fields of osac-operator's real
+// ClusterOrderStatus (api/v1alpha1/clusterorder_types.go) this suite
+// asserts on or reports in failure messages.
+type clusterOrderStatus struct {
+	Phase      string `json:"phase"`
+	Conditions []struct {
+		Type    string `json:"type"`
+		Status  string `json:"status"`
+		Reason  string `json:"reason"`
+		Message string `json:"message"`
+	} `json:"conditions"`
+	ProvisioningJobs []map[string]any `json:"provisioningJobs"`
+}
+
+// phase2CRDs are the 4 vendored CRDs (manifests-tierb/crds/) TC-TB-060
+// asserts exist before any Phase 2 reconciliation is exercised.
+var phase2CRDs = []string{
+	"clusterorders.osac.openshift.io",
+	"hostedclusters.hypershift.openshift.io",
+	"tenants.osac.openshift.io",
+	"baremetalinstances.osac.openshift.io",
+}
+
+var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exercised", func() {
+	BeforeEach(func() {
+		if os.Getenv(envPhase2Enabled) == "" {
+			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
+		}
+	})
+
+	// TC-TB-060 / REQ-TB-070 / AC-TB-030 (given clause). The workflow's own
+	// `kubectl rollout status`/`helm install` steps already fail the job
+	// before this suite even starts if any of this isn't true — this
+	// re-asserts it here too so the fact is visible as a named, traceable
+	// spec result rather than only as an opaque earlier CI step.
+	It("has osac-operator, BMFO, and osac-aap-mock all Ready, and all 4 vendored CRDs registered", func() {
+		for _, dep := range []string{"osac-operator", "bmf-operator-controller-manager", "osac-aap-mock"} {
+			Expect(deploymentReady(dep)).To(BeTrue(), "deployment/%s is not Ready", dep)
+		}
+		for _, crd := range phase2CRDs {
+			out, err := exec.Command("kubectl", "get", "crd", crd).CombinedOutput() //nolint:gosec // fixed allowlist, not user input
+			Expect(err).NotTo(HaveOccurred(), "CRD %q not registered: %s", crd, out)
+		}
+	})
+
+	// TC-TB-100 / REQ-TB-070. Deliberately thin (DD-215, #46): proves the
+	// chart/RBAC/CRD install is sound on its own, without claiming any
+	// BareMetalInstance reconciliation fidelity — nothing in this suite
+	// ever creates one.
+	It("keeps BMFO healthy with zero BareMetalInstance CRs present (deploy-only regression check)", func() {
+		Expect(deploymentReady("bmf-operator-controller-manager")).To(BeTrue(), "deployment/bmf-operator-controller-manager is not Ready")
+
+		out, err := exec.Command("kubectl", "get", "baremetalinstances.osac.openshift.io", "-A", "-o", "name").CombinedOutput() //nolint:gosec // fixed args, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalinstances failed: %s", out)
+		Expect(strings.TrimSpace(string(out))).To(BeEmpty(), "expected zero BareMetalInstance CRs, found: %s", out)
+	})
+})
+
+// deploymentReady reports whether the named Deployment (in the current
+// kubectl context's default namespace) has all replicas Available.
+func deploymentReady(name string) bool {
+	out, err := exec.Command("kubectl", "get", "deployment", name, //nolint:gosec // fixed allowlist, not user input
+		"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}").CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), "kubectl get deployment %s failed: %s", name, out)
+	return strings.TrimSpace(string(out)) == "True"
+}
+
+var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal state", func() {
+	// TC-TB-080/090 / REQ-TB-070, REQ-TB-080, REQ-TB-100 / AC-TB-030
+	// (ClusterOrder-only, direct-CR-create scope this landing — DD-215,
+	// DD-217).
+	It("drives a directly-created ClusterOrder to Ready via real osac-operator + osac-aap-mock", func() {
+		if os.Getenv(envPhase2Enabled) == "" {
+			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
+		}
+
+		// TC-TB-080: create the fixture directly against the cluster's
+		// own API server.
+		applyOut, err := exec.Command("kubectl", "apply", "-f", clusterOrderFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", clusterOrderFixture, applyOut)
+
+		// Confirm osac-operator's ClusterOrderReconciler has picked the
+		// object up (a non-empty .status.phase appears) before starting
+		// the longer terminal-state wait below — isolates "never
+		// reconciled at all" failures from "reconciled but never reached
+		// Ready" ones for easier CI triage.
+		var status clusterOrderStatus
+		Eventually(func() string {
+			status = getClusterOrderStatus()
+			return status.Phase
+		}, 60*time.Second, 2*time.Second).ShouldNot(BeEmpty(),
+			"osac-operator never set .status.phase — reconciler may not be running or the CRD wasn't accepted")
+
+		// TC-TB-090: the actual Phase 2 deliverable — real osac-operator
+		// reconciliation + osac-aap-mock drive the CR to Ready. osac-aap-mock
+		// reports jobs "successful" on the very first poll (DD-213), and
+		// osac-operator's own status-poll interval defaults to 30s
+		// (pkg/provisioning.DefaultStatusPollInterval) — 3 minutes is
+		// several poll cycles of headroom, not a realistic expected runtime,
+		// chosen to stay well inside NFR-TB-010's whole-job 25-minute budget
+		// even on a full timeout.
+		Eventually(func() string {
+			status = getClusterOrderStatus()
+			return status.Phase
+		}, 3*time.Minute, 5*time.Second).Should(Equal("Ready"),
+			"ClusterOrder %q never reached Ready; last observed status: %+v", clusterOrderName, status)
+	})
+})
+
+// getClusterOrderStatus shells out to kubectl to fetch the ClusterOrder
+// fixture's current .status — this suite has no Kubernetes client-go
+// dependency (REQ-E2E-080 keeps this module's own go.mod minimal), and the
+// CI runner already has kubectl configured against the kind cluster for
+// every other step in .github/workflows/e2e-tierb.yaml.
+func getClusterOrderStatus() clusterOrderStatus {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("kubectl", "get", "clusterorder", clusterOrderName, "-o", "jsonpath={.status}") //nolint:gosec // fixed args, not user input
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		Fail(fmt.Sprintf("kubectl get clusterorder %s failed: %v: %s", clusterOrderName, err, stderr.String()))
+	}
+
+	raw := strings.TrimSpace(stdout.String())
+	if raw == "" {
+		return clusterOrderStatus{}
+	}
+
+	var status clusterOrderStatus
+	Expect(json.Unmarshal([]byte(raw), &status)).To(Succeed(), "unparseable ClusterOrder status: %s", raw)
+	return status
+}
 
 // fetchTokenClaims performs a real client_credentials grant directly
 // against Keycloak's token endpoint (independent of osac-sp, per the test

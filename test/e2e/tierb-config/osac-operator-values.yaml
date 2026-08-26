@@ -1,0 +1,33 @@
+# Phase 2 (osac-sp-e2e-tier-b.spec.md §3, REQ-TB-070) values for the
+# osac-operator chart. See DD-214 for the full rationale behind each
+# override below.
+image:
+  tag: "0.0.12" # REQ-TB-050 — pin, never `main`/`latest` (DD-149 monorepo pivot)
+
+# Only ClusterOrder reconciliation is exercised this phase (DD-215:
+# BareMetalInstance is owned by BMFO, not this operator, and is tracked
+# separately in #46). Disabling the rest avoids pulling in CRD
+# requirements (KubeVirt, OVN-K) this phase has no use for and no CRDs
+# vendored to satisfy.
+controllers:
+  clusterOrder: true
+  computeInstance: false
+  tenant: false
+  networking: false
+  bareMetalInstance: false
+  storage: false # also skips the label-storageclass pre-install hook (avoids pulling quay.io/openshift/origin-cli:4.20.0, ~164 MB)
+
+# Points osac-operator's AAP client at this phase's own fake (REQ-TB-080).
+# The token value is a placeholder: osac-aap-mock never validates it
+# (NFR-TB-030, TC-U-569) — this is NOT a real credential.
+aap:
+  url: "http://osac-aap-mock:9093"
+  token: "tierb-aap-mock-token"
+  insecureSkipVerify: "true"
+
+# The chart's default (`default-ca`) doesn't exist on this cluster; Phase 1
+# already defines `osac-ca` (DD-151, test/e2e/manifests-tierb/cert-manager-ca.yaml).
+certs:
+  issuerRef:
+    kind: ClusterIssuer
+    name: osac-ca

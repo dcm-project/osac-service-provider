@@ -2717,3 +2717,205 @@ fabricating fake-but-real-looking template IDs that would silently break
 again the moment Tier B's fixtures change, or (b) leaving Tier B red.
 
 **Related requirements:** REQ-E2E-090..102, REQ-MOCK-130
+
+---
+
+## DD-212: `osac-aap-mock` hand-rolls its own response structs, not an import of `osac-operator/pkg/aap`
+
+**Decision:** `cmd/osac-aap-mock/` defines its own request/response types
+matching the JSON shapes `osac-operator/pkg/aap.Client` sends/expects
+(confirmed by reading `client.go` directly — issue #44's own comment
+already did this research), rather than importing
+`github.com/osac-project/osac/osac-operator/pkg/aap` for its `Job`/
+`Template`/`Launch*Response` struct definitions.
+
+**Rationale:** matches `DD-152`'s already-recorded posture for
+`osac-mock-provider` ("built from scratch... not adapted from any existing
+OSAC-provided fake") and this repo's general stance of not taking a live Go
+dependency on OSAC's internal types beyond the vendored proto layer
+(`DD-020`). The import-path alternative would also mean pinning to the
+monorepo's multi-module tag scheme
+(`github.com/osac-project/osac/osac-operator@osac-operator/vX.Y.Z`, `DD-149`)
+purely for struct shapes this mock already needs to hand-verify against
+source regardless — no meaningful risk reduction for a new, non-trivial
+dependency.
+
+**Related requirements:** REQ-TB-080
+
+---
+
+## DD-213: `osac-aap-mock`'s jobs are always immediately `"successful"` — no pending/running simulation
+
+**Decision:** `GetJob` on `osac-aap-mock` always reports a launched job's
+status as `"successful"` from the very first poll — there is no
+`pending`/`waiting`/`running` transition window, and no artificial delay.
+
+**Rationale:** `osac-operator/pkg/provisioning/aap_provider.go`'s
+`mapAAPStatusToJobState` maps AAP's `"successful"` string directly to
+`v1alpha1.JobStateSucceeded` (terminal) — reporting this on the first poll
+is the minimum needed to satisfy REQ-TB-100's terminal-state proof, and
+keeps the CI-side polling loop (`ClusterOrderReconciler.StatusPollInterval`)
+from adding wall-clock time against NFR-TB-010's 25-minute budget for no
+test-value gain: AC-TB-030 exists to prove real OSAC reconciliation logic
+runs correctly against a real terminal AAP outcome, not to exercise AAP's
+own job-lifecycle *timing* (never a stated goal of Phase 2, and NFR-TB-030
+already scopes `osac-aap-mock` as a hardware/Ansible boundary replacement,
+not a fidelity simulation of AAP itself). Mirrors `osac-mock-provider`'s own
+precedent of a synchronous, non-validating `Create` (`DD-211`'s framing).
+
+**Related requirements:** REQ-TB-080, REQ-TB-100, NFR-TB-010, NFR-TB-030
+
+---
+
+## DD-214: Phase 2 Helm values explicitly disable unused `osac-operator` controllers and retarget its `ClusterIssuer`
+
+**Decision:** `osac-operator`'s chart install for Phase 2 explicitly sets:
+
+```yaml
+controllers:
+  clusterOrder: true # REQ-TB-070 scope
+  computeInstance: false # avoids kubevirt.io CRD requirement
+  tenant: false # avoids k8s.ovn.org CRD requirement
+  networking: false
+  bareMetalInstance: false # BMFO owns BareMetalInstance reconciliation, not osac-operator
+  storage: false # also skips the label-storageclass pre-install hook (avoids pulling quay.io/openshift/origin-cli:4.20.0, ~164 MB)
+certs:
+  issuerRef:
+    name: osac-ca # chart default `default-ca` doesn't exist; Phase 1 already defines `osac-ca` (DD-151)
+```
+
+**Rationale:** read `osac-operator/cmd/main.go` directly — each controller
+independently gates its own scheme registration
+(`hypershiftv1beta1`/`kubevirtv1`/`ovnv1.AddToScheme` only run if the
+matching flag is enabled), but `enableAllIfNoneSet()` defaults every
+controller to `true` when none are explicitly set, and the chart's own
+`values.yaml` defaults match that. Leaving any of these implicit would pull
+in CRD requirements (KubeVirt, OVN-K) this phase has no use for and no
+CRDs vendored to satisfy — explicit `false` keeps the CRD surface to exactly
+the 4 already identified (`ClusterOrder`, `HostedCluster`, `Tenant`,
+`BareMetalInstance`), no HyperShift/KubeVirt/OVN-K operators needed. The
+chart also unconditionally renders a `cert-manager.io/v1 Certificate` for
+its console-proxy `APIService` (not gated by any values flag) — a new
+dependency not previously documented, but already satisfied by Phase 1's
+existing cert-manager install and `osac-ca` `ClusterIssuer`
+(`test/e2e/manifests-tierb/cert-manager-ca.yaml`, `DD-151`); only the
+issuer name needs overriding.
+
+**Related requirements:** REQ-TB-070
+
+---
+
+## DD-215: `BareMetalInstance`'s terminal-state proof is out of scope this phase — split to #46
+
+**Decision:** `REQ-TB-100`/`AC-TB-030`'s real-terminal-state proof covers
+`ClusterOrder` only in this landing. BMFO is still deployed (satisfying
+`REQ-TB-070`'s "deploy real BMFO" half — proves no CRD/RBAC/chart-install
+regression), but no `BareMetalInstance` CR is created and no AAP/inventory
+backend is wired to it.
+
+**Rationale:** spiked directly against
+`bare-metal-fulfillment-operator/internal/controller/baremetalinstance_controller.go`:
+a `BareMetalInstance` only reaches AAP *after* an `Allocating` phase driven
+by a separate host-management/inventory backend
+(`internal/management`/`internal/inventory`). The only two backends BMFO
+registers are `openstack` (real Ironic via `gophercloud`) and `metal3`
+(reads/writes real `BareMetalHost` CRs, but power operations — confirmed in
+`internal/management/metal3.go`'s reboot-annotation handling — depend on the
+actual `metal3-io/baremetal-operator` driving real Ironic + a BMC). No
+lightweight/fake backend type is registered anywhere in BMFO
+(`NewClientForTest`/`NewMetal3ClientForTest` are Go unit-test helpers, not a
+runtime-selectable config option). Standing up either real OpenStack Ironic
+or Metal3+Ironic+virtual-BMC (e.g. `sushy-tools`) inside `kind` is
+substantial, separate scope from an AAP-layer fake — `osac-aap-mock` cannot
+substitute for infrastructure that sits entirely upstream of where it's
+invoked. Tracked as [#46](https://github.com/dcm-project/osac-service-provider/issues/46).
+
+**Related requirements:** REQ-TB-070, REQ-TB-100
+
+---
+
+## DD-216: BMFO's two non-optional chart secrets (`osac-inventory-config`, `osac-management-config`) are stubbed empty
+
+**Decision:** Phase 2 creates two empty/placeholder Secrets,
+`osac-inventory-config` and `osac-management-config` (the chart's default
+names, `values.yaml`'s `secrets.inventoryConfig`/`secrets.managementConfig`),
+before installing the BMFO chart.
+
+**Rationale:** read the chart's `templates/deployment.yaml` directly — its
+`inventory-config`/`management-config` volumes reference these two Secrets
+without `optional: true` (unlike `clouds`/`profiles`/`bcm-certs`, which are
+all marked optional). Without them, the controller-manager pod fails at
+mount time and never starts, regardless of whether `BareMetalInstance`
+reconciliation is exercised (`DD-215`) — this is a hard pod-start
+requirement, not a lazy-read dependency. Content is irrelevant for this
+phase's scope (no inventory/management backend is configured, `DD-215`),
+so empty stub Secrets are sufficient; a one-line comment at the manifest
+site notes why, so this isn't mistaken for real BCM/inventory config.
+
+**Related requirements:** REQ-TB-070
+
+---
+
+## DD-217: `fulfillment-service` `Hub` registration researched but deferred to #47 — this phase creates `ClusterOrder` directly instead
+
+**Decision:** getting `fulfillment-service` to create real `ClusterOrder` CRs
+on this same `kind` cluster (the link a fully-faithful `REQ-TB-100`/
+`AC-TB-030` would need) requires registering a `Hub` via
+`fulfillment-service`'s own CLI — researched and documented below, but not
+implemented in this phase. This phase's e2e suite creates the `ClusterOrder`
+CR directly instead; the Hub/CLI mechanism is handed off to
+[#47](https://github.com/dcm-project/osac-service-provider/issues/47).
+
+**What was confirmed (for #47's head start):**
+`fulfillment-service/it/it_tool.go` (upstream's own integration-test
+harness) registers a same-cluster Hub by loading a kubeconfig and rewriting
+every cluster entry's `Server` field to `https://kubernetes.default.svc`
+(the in-cluster API server address) before registering it — so
+`fulfillment-service`'s own reconciliation loop
+(`internal/controllers/cluster/cluster_reconciler_function.go`'s
+`buildSpec`, which constructs and creates the real `ClusterOrder` CR from a
+DB-backed `Cluster` record) targets the cluster it's already running in.
+The equivalent, non-`it`-package way to do this is `fulfillment-service`'s
+own CLI (`internal/cmd/cli/login`, `internal/cmd/cli/create/hub`): a
+stateful, two-step flow (`login --address ... --private --issuer ...
+--flow credentials --client-id osac-admin --client-secret ...` persists
+connection/auth config, then `create hub --id ... --kubeconfig ...
+--namespace ...` uses it to call the private `Hubs` gRPC API).
+
+**Why deferred rather than attempted here:** several details need live-CI
+verification before they can be trusted blind in a single PR — whether
+`--plaintext` is required for this cluster's in-cluster gRPC (no TLS
+termination configured anywhere in Phase 1's wiring), which image/tag runs
+the CLI from (a one-off Job vs. `kubectl exec` into the running server
+pod), and whether the CLI's config persists correctly across two separate
+invocations. Given how many new moving pieces that is on top of #44's
+already-large scope (a new binary, 4 new CRDs, two new operators), this is
+lower-risk to verify iteratively in its own smaller, focused PR — same
+judgment call as `DD-215`'s `BareMetalInstance` split, applied here to a
+different (dispatch-chain, not infra-availability) kind of gap.
+
+**Related requirements:** REQ-TB-100
+
+---
+
+## DD-218: Phase 2's CRDs are `kubectl apply`'d directly; `osac-operator-crds`/BMFO's own CRD charts are not used
+
+**Decision:** `e2e-tierb.yaml` installs the 4 vendored CRD YAMLs
+(`test/e2e/manifests-tierb/crds/`, DD-149-adjacent vendoring precedent) via
+a plain `kubectl apply -f`, rather than `helm install`ing the monorepo's own
+separately-published `osac-operator-crds`/`bare-metal-fulfillment-operator-crds`
+charts (confirmed to exist on `ghcr.io/osac-project/charts/`, same
+`0.0.12` release line as the operator charts themselves).
+
+**Rationale:** the vendored copies were already sourced from
+`fulfillment-service/it/crds/` for their fixture-grade `ClusterOrder`/
+`HostedCluster` variants (no schema, deliberately loose — see
+`manifests-tierb/crds/README.md`), and reusing the same file set for all 4
+(including the real, `controller-gen`-generated `Tenant`/`BareMetalInstance`
+schemas) avoids depending on two additional chart installs whose only
+content is CRD manifests anyway. Confirmed via `helm pull` that neither the
+`osac-operator` nor `bare-metal-fulfillment-operator` chart bundles CRDs
+itself (no `crds/` directory in either), so there's no double-install/schema-
+drift risk from skipping the dedicated CRD charts.
+
+**Related requirements:** REQ-TB-070

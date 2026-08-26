@@ -160,10 +160,10 @@ kind cluster
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-TB-070 | The Tier B workflow MUST additionally deploy real `osac-operator` and real BMFO (pinned images/charts), configured to reconcile `ClusterOrder`/`BareMetalInstance` CRs on the same `kind` cluster's own API server | MUST | Requires installing the 4 CRD schemas `fulfillment-service`'s own `it` package uses (`ClusterOrder`, `HostedCluster`, `Tenant`, `BareMetalInstance`) |
-| REQ-TB-080 | `cmd/osac-aap-mock/` MUST implement `GetTemplate`, `LaunchJobTemplate`/`LaunchWorkflowTemplate`, `GetJob`, and `CancelJob` against `osac-operator/pkg/aap.Client`'s real REST contract, sufficient for real reconciliation loops to drive a `ClusterOrder`/`BareMetalInstance` to a terminal success state | MUST | Exact request/response shapes are an open item — research `osac-operator/pkg/aap.Client`'s implementation before Phase 2 implementation begins (§6) |
+| REQ-TB-070 | The Tier B workflow MUST additionally deploy real `osac-operator` and real BMFO (pinned images/charts) on the same `kind` cluster's own API server. `osac-operator` MUST be configured to reconcile `ClusterOrder` CRs for real, through `osac-aap-mock`. BMFO's deployment MUST succeed (proving no CRD/RBAC/chart-install regressions), but its `BareMetalInstance` reconciliation is deploy-only for this phase — see the REQ-TB-100 note | MUST | Requires installing the 4 CRD schemas `fulfillment-service`'s own `it` package uses (`ClusterOrder`, `HostedCluster`, `Tenant`, `BareMetalInstance`) |
+| REQ-TB-080 | `cmd/osac-aap-mock/` MUST implement `GetTemplate`, `LaunchJobTemplate`/`LaunchWorkflowTemplate`, `GetJob`, and `CancelJob` against `osac-operator/pkg/aap.Client`'s real REST contract, sufficient for real reconciliation loops to drive a `ClusterOrder` to a terminal success state | MUST | Exact request/response shapes resolved directly from source before implementation — see DD-212..214 |
 | REQ-TB-090 | Phase 2 implementation MUST NOT begin until `osac-sp` itself has real `Create`/`Get` CRUD dispatch for at least one resource type (M2+) — there is nothing for Phase 2's assertions to exercise before then | MUST | Gate, not a deferral-without-reason |
-| REQ-TB-100 | The e2e suite MUST assert that an `osac-sp`-initiated `Create` results in the corresponding CR reaching a real terminal `Ready`/`Complete` status, driven entirely by real OSAC reconciliation logic through `osac-aap-mock` | MUST | Closes the fidelity gap identified in this spec's motivating discussion — the actual deliverable Phase 2 exists for |
+| REQ-TB-100 | The e2e suite MUST create a `ClusterOrder` CR and assert it reaches a real terminal `Ready`/`Complete` status, driven entirely by real OSAC reconciliation logic through `osac-aap-mock` | MUST | **Scope correction (this landing, DD-215/DD-217):** originally worded to (a) cover `BareMetalInstance` too, and (b) drive the CR via an `osac-sp`-initiated `Create` through `fulfillment-service`'s real dispatch chain (its own `Hub` mechanism). (a) is split to [#46](https://github.com/dcm-project/osac-service-provider/issues/46) — `BareMetalInstance` needs a real host-allocation backend `osac-aap-mock` can't substitute for. (b) is split to [#47](https://github.com/dcm-project/osac-service-provider/issues/47) — `fulfillment-service`'s `Hub` registration is a stateful, multi-step CLI flow with several details (TLS mode, image/tag, cross-invocation config persistence) that need their own live-CI verification pass rather than a first attempt inside this already-large PR. This phase creates the `ClusterOrder` CR directly against the cluster's own API server instead, proving real `osac-operator` reconciliation + `osac-aap-mock` reach `Ready` — the actually-novel thing this phase introduces |
 
 ---
 
@@ -189,17 +189,19 @@ kind cluster
   unhealthy` with an auth-failure detail — proving this tier can catch what
   Phase A structurally cannot
 
-##### AC-TB-030 (Phase 2): A real cluster/VM create reaches a real terminal state
+##### AC-TB-030 (Phase 2): A real `ClusterOrder` reaches a real terminal state
 
 - **Validates:** REQ-TB-070, REQ-TB-080, REQ-TB-100
-- **Given** the full Phase 2 stack (real `osac-operator`/BMFO +
-  `osac-aap-mock`)
-- **When** the e2e suite drives an `osac-sp` `Create` call for a
-  cluster/VM-backed resource
-- **Then** the corresponding `ClusterOrder`/`BareMetalInstance` CR, real
-  OSAC controllers, and `osac-aap-mock` cooperate to drive that CR to a
-  real terminal `Ready`/`Complete` status, observable via the Kind
-  cluster's own API server
+- **Given** the Phase 2 stack (real `osac-operator` + `osac-aap-mock`; BMFO
+  also deployed per REQ-TB-070 but not exercised to a terminal state this
+  phase — see REQ-TB-100's note and [#46](https://github.com/dcm-project/osac-service-provider/issues/46))
+- **When** the e2e suite creates a `ClusterOrder` CR directly against the
+  `kind` cluster's own API server (not yet routed through an
+  `osac-sp`-initiated `Create` + `fulfillment-service`'s `Hub` dispatch —
+  see REQ-TB-100's note and [#47](https://github.com/dcm-project/osac-service-provider/issues/47))
+- **Then** real `osac-operator` reconciliation and `osac-aap-mock` cooperate
+  to drive that CR to a real terminal `Ready` status, observable via the
+  Kind cluster's own API server
 
 ---
 
@@ -215,16 +217,13 @@ kind cluster
 
 ## 6. Open items (must resolve before Phase 2 implementation starts)
 
-- **Exact `aap.Client` REST contract**: `osac-operator/pkg/aap.Client`'s
-  hand-rolled AAP client's exact request/response JSON shapes for
-  `GetTemplate`/`LaunchJobTemplate`/`LaunchWorkflowTemplate`/`GetJob`/`CancelJob`
-  need to be read directly from source before `osac-aap-mock` can be
-  designed in detail — not yet done as of this spec's writing (deliberately
-  deferred per REQ-TB-090's gate).
-- **CRD schema sourcing**: confirm the 4 CRD YAMLs
-  (`fulfillment-service/it`'s `AddCrdFile` list) are available as
-  standalone files we can vendor/reference without needing
-  `osac-operator`'s/BMFO's own source trees checked out.
+- ~~**Exact `aap.Client` REST contract**~~ — resolved: read directly from
+  `osac-operator/pkg/aap/client.go` and `pkg/provisioning/aap_provider.go`
+  (job-status-to-`JobState` mapping) in the monorepo; `osac-aap-mock`
+  implements that contract (DD-212/213).
+- ~~**CRD schema sourcing**~~ — resolved: all 4 are vendored verbatim from
+  `fulfillment-service/it/crds/` into `test/e2e/manifests-tierb/crds/` (see
+  that directory's own `README.md` for which are real vs. fixture-grade).
 - **Realm secret rotation risk**: the vendored `realm.json`'s client
   secrets are static and checked into git — acceptable for a throwaway
   `kind` cluster (NFR-TB-020), but worth a one-line comment at the vendor
