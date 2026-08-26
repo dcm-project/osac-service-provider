@@ -48,12 +48,27 @@ other rather than silently diverging.
 
 **Time-sensitive fact this spec depends on:** `osac-project/fulfillment-service`,
 `osac-operator`, `bare-metal-fulfillment-operator` (BMFO), and `osac-aap`
-were all archived on 2026-08-04 and merged into a new monorepo,
+were all archived on 2026-08-15 (corrected — a prior draft of this note
+said 2026-08-04; re-verified directly via `gh api /repos/osac-project/<repo>`,
+all four show `archived: true`, `pushed_at` within the same
+2026-08-15T17:54–18:06Z window) and merged into a new monorepo,
 **`osac-project/osac`**, as subdirectories of the same name. Content was
 byte-identical to the archived repos at merge time (verified). All source
 references, sparse-checkouts, and image/chart names below already assume
 the monorepo location; nothing in this spec depends on the archived repos
 still being reachable.
+
+**Also confirmed (2026-08-26):** the monorepo's own CI publishes to the
+*same* registry coordinates the archived repos used
+(`ghcr.io/osac-project/osac-operator`,
+`ghcr.io/osac-project/bare-metal-fulfillment-operator`,
+`oci://ghcr.io/osac-project/charts/*` — hardcoded literals in the
+monorepo's workflows, not derived from its own repo name), and keeps
+releasing new versions there (e.g. `bare-metal-fulfillment-operator/v0.0.12`,
+2026-08-21 — genuinely post-archival). Phase 2 implementation MUST pin
+against the monorepo's own releases, not whatever version the archived
+repos last published before the freeze — those are permanently frozen at
+`v0.0.10` for both operators and will never receive another update.
 
 **Reference documents:**
 
