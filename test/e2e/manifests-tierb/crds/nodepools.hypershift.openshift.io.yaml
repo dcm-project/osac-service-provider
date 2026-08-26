@@ -1,0 +1,38 @@
+# Fixture-grade — not sourced from an upstream `it/crds/` copy (neither
+# fulfillment-service's nor osac-operator's own repo vendor this one; see
+# this directory's README.md). Authored here, same posture as the existing
+# fixture-grade hostedclusters.hypershift.openshift.io.yaml: real HyperShift
+# NodePool CRs have a large, HyperShift-owned schema this suite has no
+# business validating, so this is intentionally schema-less
+# (x-kubernetes-preserve-unknown-fields), matching upstream's own comment on
+# clusterorders.osac.openshift.io.yaml ("a fake CRD ... not validated").
+#
+# Needed because osac-operator's ClusterOrderReconciler always registers a
+# watch on NodePool (regardless of which osac-operator controllers.* flags
+# are enabled) — without this CRD present, that EventSource never finishes
+# starting and the main "clusterorder" controller never begins reconciling
+# at all (confirmed live: the pod stays Running, so this failure mode is
+# silent unless you specifically check controller-manager logs for
+# "Starting Controller" — see issue #47's spike plan for the full trace).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: nodepools.hypershift.openshift.io
+spec:
+  group: hypershift.openshift.io
+  names:
+    kind: NodePool
+    listKind: NodePoolList
+    plural: nodepools
+    singular: nodepool
+  scope: Namespaced
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+      subresources:
+        status: {}

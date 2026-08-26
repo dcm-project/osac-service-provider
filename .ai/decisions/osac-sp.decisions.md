@@ -2932,3 +2932,62 @@ itself (no `crds/` directory in either), so there's no double-install/schema-
 drift risk from skipping the dedicated CRD charts.
 
 **Related requirements:** REQ-TB-070
+
+## DD-219: Three more CRDs vendored after a live spike found `osac-operator`/BMFO fail to reconcile or even start without them
+
+**Decision:** `test/e2e/manifests-tierb/crds/` gains `osac.openshift.io_computeinstances.yaml`,
+`nodepools.hypershift.openshift.io.yaml`, and `osac.openshift.io_baremetalpools.yaml`,
+on top of DD-218's original 4.
+
+**Rationale:** a live spike for issue #47 (building the full Phase 2 stack by
+hand on a real cluster) and this PR's own CI run both hit the same three
+gaps independently:
+
+- `osac-operator`'s startup migration (`migrate-subnetrefs`) unconditionally
+  lists `ComputeInstance`s and crash-loops without the CRD present, even
+  with `controllers.computeInstance: false` — DD-214's controller-disable
+  flags don't prevent this because it runs before the controller-manager
+  even starts controllers.
+- `osac-operator`'s `ClusterOrderReconciler` always registers a watch on
+  `NodePool` (again, regardless of `controllers.*` flags), and without that
+  CRD present the watch's `EventSource` never finishes starting — this is
+  the most dangerous of the three because it's *silent*: the pod stays
+  `Running`, and the main `clusterorder` controller (as opposed to the
+  separate `clusterorder-feedback` one) simply never begins reconciling
+  anything. No upstream fixture exists for this one (neither
+  `fulfillment-service/it/crds/` nor `osac-operator`'s own repo vendor it),
+  so it's authored here from scratch, same fixture-grade
+  (`x-kubernetes-preserve-unknown-fields`) posture as the existing
+  `hostedclusters.hypershift.openshift.io.yaml`.
+- BMFO's manager does a hard `unable to start manager` failure at startup
+  without the `BareMetalPool` CRD present — a real, `controller-gen`-generated
+  schema, sourced the same way `osac.openshift.io_baremetalinstances.yaml`
+  was (BMFO's own `config/crd/bases/`).
+
+**Related requirements:** REQ-TB-070, REQ-TB-100
+
+## DD-220: `hub-access-hosted-clusters` ClusterRole gap is a known, unresolved risk for AC-TB-030's terminal-state assertion
+
+**Decision:** not fixed in this PR — flagged here so it isn't mistaken for a
+settled fact, and so #47 (or whoever hits this next) doesn't have to
+rediscover it.
+
+**Finding:** even with DD-219's three CRDs applied, a live spike found
+`osac-operator`'s `ClusterOrderReconciler` gets stuck indefinitely retrying
+`rolebindings.rbac.authorization.k8s.io "{namespace}-hub-access-hosted-clusters"
+not found` on every reconcile of a freshly-created `ClusterOrder` — traced to
+`clusterorder_controller.go`'s `newHubAccessRoleBinding` component and
+`clusterorder_names.go`'s `hubAccessClusterRoleName()`, whose own doc comment
+says the `{namespace}-` prefix "account[s] for the kustomize prefix
+transformer ... in CI/production overlays" — i.e. this `ClusterRole` is
+expected to be pre-created by a kustomize overlay used in upstream's own
+CI/production, and isn't shipped by the public Helm chart at all.
+
+**Why not fixed here:** root cause needs more investigation than this PR's
+scope affords — specifically, whether the fix is a minimal fixture
+`ClusterRole` (matching the vendoring posture of DD-219) or an upstream ask
+for the Helm chart to ship it. If AC-TB-030's terminal-state assertion times
+out in this PR's own CI run even after DD-219's fixes, this is the next
+thing to check.
+
+**Related requirements:** REQ-TB-100, AC-TB-030

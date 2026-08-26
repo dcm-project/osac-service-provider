@@ -199,7 +199,7 @@ jobs:
           kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=osac-service-provider-bad-auth --timeout=120s
 
       # --- Phase 2: real osac-operator + BMFO + osac-aap-mock (REQ-TB-070..100) ---
-      - name: Install vendored CRDs (ClusterOrder, HostedCluster, Tenant, BareMetalInstance)
+      - name: Install vendored CRDs (ClusterOrder, HostedCluster, NodePool, Tenant, BareMetalInstance, BareMetalPool, ComputeInstance)
         run: kubectl apply -f test/e2e/manifests-tierb/crds/
 
       - name: Deploy BMFO stub secrets (DD-216)
