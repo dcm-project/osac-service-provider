@@ -140,14 +140,8 @@ jobs:
         env:
           CONTROL_PLANE_URL: http://localhost:18080
           OSAC_SP_URL: http://localhost:18081
-        # --label-filter excludes Label("tier-b-only") specs (#28, DD-212):
-        # registration_test.go never calls the OSAC backend at all, and
-        # health_test.go's happy path only proves "a backend that always
-        # says yes makes osac-sp report healthy" — both already covered
-        # in-process by internal/registration and internal/osac's own
-        # integration tests, so running them here too was pure
-        # duplication once Tier B (e2e-tierb.yaml) existed to run them
-        # against a real backend for real grounding.
+        # --label-filter excludes Label("tier-b-only") specs, now Tier
+        # B-only (#28, DD-212).
         run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --label-filter='!tier-b-only' --timeout=10m
 
       - name: Stop port-forwards
