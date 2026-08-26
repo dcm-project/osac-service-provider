@@ -1,9 +1,14 @@
 # Tier B Phase 2 CRDs (`osac-sp-e2e-tier-b.spec.md` §3, REQ-TB-070)
 
-Verbatim copies of the 4 CRD YAMLs `fulfillment-service`'s own `it` (Go
-integration-test) package vendors for its tests, sourced from
+The first 4 are verbatim copies of the CRD YAMLs `fulfillment-service`'s own
+`it` (Go integration-test) package vendors for its tests, sourced from
 [`osac-project/osac/fulfillment-service/it/crds/`](https://github.com/osac-project/osac/tree/main/fulfillment-service/it/crds)
-(see issue #44's research comment for how this was confirmed).
+(see issue #44's research comment for how this was confirmed). The remaining
+4 (DD-219/DD-220-adjacent) were added after a live spike and this repo's own
+CI both hit startup-time gaps DD-218's original 4 didn't cover — either
+copied from `osac-operator`'s/BMFO's own `config/crd/bases/` (real,
+`controller-gen`-generated schemas) where no `it/crds/` fixture existed, or
+authored from scratch in the same fixture-grade style where neither existed.
 
 | File | CRD `kind` | Real or fixture-grade? |
 |---|---|---|
@@ -14,8 +19,9 @@ integration-test) package vendors for its tests, sourced from
 | `osac.openshift.io_baremetalinstances.yaml` | `BareMetalInstance` | Real, `controller-gen`-generated production schema |
 | `osac.openshift.io_baremetalpools.yaml` | `BareMetalPool` | Real, `controller-gen`-generated production schema — BMFO's manager fails `unable to start manager` at startup without it, regardless of which controllers are enabled |
 | `osac.openshift.io_computeinstances.yaml` | `ComputeInstance` | Real, `controller-gen`-generated production schema — `osac-operator`'s startup migration (`migrate-subnetrefs`) unconditionally lists `ComputeInstance`s and fails hard without this CRD, even with `controllers.computeInstance: false` |
+| `baremetalhosts.metal3.io.yaml` | `BareMetalHost` | Fixture-grade, authored here — BMFO's `metal3` inventory backend (selected in `bmfo-secrets.yaml`) does a CRD-discovery check at startup for this API group; no `BareMetalHost` objects are ever created this phase |
 
-All 7 are installed regardless of which osac-operator/BMFO controllers are
+All 8 are installed regardless of which osac-operator/BMFO controllers are
 actually enabled (DD-214) — `osac-operator`'s and BMFO's managers reference
 these types even for controllers this phase leaves disabled, and a missing
 CRD kind is a harder failure mode to diagnose than one extra unused CRD (in

@@ -2849,7 +2849,7 @@ invoked. Tracked as [#46](https://github.com/dcm-project/osac-service-provider/i
 
 ## DD-216: BMFO's two non-optional chart secrets (`osac-inventory-config`, `osac-management-config`) are stubbed empty
 
-**Decision:** Phase 2 creates two empty/placeholder Secrets,
+**Decision:** Phase 2 creates two placeholder Secrets,
 `osac-inventory-config` and `osac-management-config` (the chart's default
 names, `values.yaml`'s `secrets.inventoryConfig`/`secrets.managementConfig`),
 before installing the BMFO chart.
@@ -2860,10 +2860,15 @@ without `optional: true` (unlike `clouds`/`profiles`/`bcm-certs`, which are
 all marked optional). Without them, the controller-manager pod fails at
 mount time and never starts, regardless of whether `BareMetalInstance`
 reconciliation is exercised (`DD-215`) — this is a hard pod-start
-requirement, not a lazy-read dependency. Content is irrelevant for this
-phase's scope (no inventory/management backend is configured, `DD-215`),
-so empty stub Secrets are sufficient; a one-line comment at the manifest
-site notes why, so this isn't mistaken for real BCM/inventory config.
+requirement, not a lazy-read dependency.
+
+**Correction (2026-08-26):** this entry originally said the Secrets could be
+left fully empty because "content is irrelevant for this phase's scope."
+That was wrong — passing the mount doesn't mean passing BMFO's own startup
+code, which reads and parses these files by name (`cmd/main.go`) and then
+constructs a real inventory/management client from their `type` field before
+the manager can start at all. An empty Secret satisfies the volume mount but
+not the file-read/parse step one layer up; DD-221 covers the actual fix.
 
 **Related requirements:** REQ-TB-070
 
@@ -2991,3 +2996,29 @@ out in this PR's own CI run even after DD-219's fixes, this is the next
 thing to check.
 
 **Related requirements:** REQ-TB-100, AC-TB-030
+
+## DD-221: BMFO's stub inventory/management config (DD-216) selects the `metal3` backend type, not truly empty content
+
+**Decision:** `bmfo-secrets.yaml`'s two Secrets use keys named exactly
+`inventory.yaml`/`management.yaml` (not an arbitrary key name) containing
+`type: metal3` config pointing at the `default` namespace, plus a new
+fixture-grade `baremetalhosts.metal3.io.yaml` CRD.
+
+**Rationale:** this repo's own CI run (not just the #47 spike) hit DD-216's
+gap directly — `cmd/main.go` reads these files from hardcoded default paths
+(`/etc/osac/inventory/inventory.yaml`, `/etc/osac/management/
+management.yaml`) regardless of the Secret's own key name, so DD-216's
+original `config.yaml` key was never actually read. Once read, the content
+is unmarshalled into a `Config{Type, Options, ...}` struct and fed to a
+per-backend client factory — `metal3` was chosen over BMFO's other two
+backends (`bcm`, `openstack`) because it's the only one whose client
+constructor doesn't also require a live external endpoint to succeed. Its
+inventory-side constructor does a CRD-discovery check for
+`metal3.io/v1alpha1` (not an actual object read), satisfied by the new
+fixture-grade `BareMetalHost` CRD; its management-side constructor has no
+such check at all. No `BareMetalHost` objects are ever created this phase,
+so `FindFreeHost`/`AssignHost`/power-control calls are never exercised —
+this only gets BMFO's manager past startup into a `Ready` pod for
+TC-TB-100, consistent with DD-215's terminal-state deferral to #46.
+
+**Related requirements:** REQ-TB-070, REQ-TB-100
