@@ -212,6 +212,9 @@ jobs:
             --values test/e2e/tierb-config/osac-operator-values.yaml
           kubectl rollout status deployment/osac-operator --timeout=3m
 
+      - name: Fill osac-operator's hub-access-hosted-clusters RBAC gap (DD-222)
+        run: kubectl apply -f test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml
+
       - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-215)
         run: |
           helm install bmf-operator oci://ghcr.io/osac-project/charts/bare-metal-fulfillment-operator \

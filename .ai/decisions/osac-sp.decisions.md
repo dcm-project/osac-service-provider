@@ -2973,10 +2973,6 @@ gaps independently:
 
 ## DD-220: `hub-access-hosted-clusters` ClusterRole gap is a known, unresolved risk for AC-TB-030's terminal-state assertion
 
-**Decision:** not fixed in this PR — flagged here so it isn't mistaken for a
-settled fact, and so #47 (or whoever hits this next) doesn't have to
-rediscover it.
-
 **Finding:** even with DD-219's three CRDs applied, a live spike found
 `osac-operator`'s `ClusterOrderReconciler` gets stuck indefinitely retrying
 `rolebindings.rbac.authorization.k8s.io "{namespace}-hub-access-hosted-clusters"
@@ -2988,12 +2984,9 @@ transformer ... in CI/production overlays" — i.e. this `ClusterRole` is
 expected to be pre-created by a kustomize overlay used in upstream's own
 CI/production, and isn't shipped by the public Helm chart at all.
 
-**Why not fixed here:** root cause needs more investigation than this PR's
-scope affords — specifically, whether the fix is a minimal fixture
-`ClusterRole` (matching the vendoring posture of DD-219) or an upstream ask
-for the Helm chart to ship it. If AC-TB-030's terminal-state assertion times
-out in this PR's own CI run even after DD-219's fixes, this is the next
-thing to check.
+**Resolved (2026-08-26):** see DD-222 — root-caused and fixed via a second
+live repro, same day. Left this entry as-is (rather than deleting it) since
+it captures the original discovery accurately; DD-222 has the fix.
 
 **Related requirements:** REQ-TB-100, AC-TB-030
 
@@ -3022,3 +3015,37 @@ this only gets BMFO's manager past startup into a `Ready` pod for
 TC-TB-100, consistent with DD-215's terminal-state deferral to #46.
 
 **Related requirements:** REQ-TB-070, REQ-TB-100
+
+## DD-222: DD-220's RoleBinding gap is a genuine chart omission, fixed with a fixture ClusterRole + a scoped `bind` grant
+
+**Decision:** `test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml`
+adds, after `osac-operator` is installed: (1) a `default-hub-access-hosted-clusters`
+ClusterRole granting `get/list/watch` on `hypershift.openshift.io`
+`hostedclusters`/`nodepools`, and (2) a second ClusterRole + ClusterRoleBinding
+granting `osac-operator`'s own ServiceAccount the `bind` verb, scoped via
+`resourceNames` to just that one ClusterRole.
+
+**Root cause (confirmed via a second live repro, a minimal single-operator
+cluster built specifically to isolate this):** the chart's
+`templates/hub-access-clusterrole.yaml` (gated by `.Values.hubAccess.enabled`)
+only creates a `{namespace}-hub-access` ClusterRole (`osac.openshift.io`
+CRUD) — a different ClusterRole, for a different purpose, than the
+`{namespace}-hub-access-hosted-clusters` one the controller code actually
+references. The chart never ships the latter at all; this is a genuine
+upstream gap, not a version-skew or fixture-vendoring artifact.
+
+**Why both pieces were needed, not just the ClusterRole:** creating only the
+ClusterRole (repro'd first) reproduced the *identical* error unchanged —
+including with a ruleset that's an exact subset of `osac-operator-manager`'s
+own existing `hostedclusters`/`nodepools` permissions (confirmed by reading
+that ClusterRole directly off the repro cluster). Kubernetes' RBAC
+escalation check did not treat that pre-existing coverage as sufficient in
+practice; only adding it back after granting `osac-operator`'s ServiceAccount
+`cluster-admin` (isolating the RBAC hypothesis) or, more narrowly, an
+explicit `bind` verb on that specific ClusterRole (the actual fix shipped
+here) made the `RoleBinding` create succeed. After that, reconciliation
+progressed past this component entirely, into real AAP-dispatch behavior
+(confirmed by the next error changing to a template-lookup failure — expected,
+since the repro cluster had no `osac-aap-mock` running).
+
+**Related requirements:** REQ-TB-100, AC-TB-030

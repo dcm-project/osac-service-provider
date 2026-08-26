@@ -1,0 +1,66 @@
+# Fixture — fills a real gap in osac-operator's own published chart, root
+# caused via a live repro (DD-222): the chart ships a
+# "{namespace}-hub-access" ClusterRole (osac.openshift.io CRUD, gated by
+# `hubAccess.enabled`) but not the DIFFERENT
+# "{namespace}-hub-access-hosted-clusters" one that
+# clusterorder_controller.go's "HubAccessRoleBinding" component actually
+# references (hypershift.openshift.io hostedclusters/nodepools access) —
+# these are two distinct ClusterRoles for two distinct purposes, and only
+# one of them ships. Hardcodes the `default-` prefix because this e2e setup
+# always installs osac-operator into (and creates ClusterOrders in) the
+# `default` namespace (see osac-operator-values.yaml / clusterorder-
+# fixture.yaml) — the real prefix is `{.Release.Namespace}-`, per
+# clusterorder_names.go's own doc comment on hubAccessClusterRoleName().
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: default-hub-access-hosted-clusters
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+rules:
+  - apiGroups:
+      - hypershift.openshift.io
+    resources:
+      - hostedclusters
+      - nodepools
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Confirmed live (DD-222) that the ClusterRole existing alone is NOT
+# sufficient: osac-operator's own ClusterRole (osac-operator-manager)
+# already covers this exact rule set, but Kubernetes' RBAC escalation check
+# still rejected the RoleBinding create without an explicit `bind` grant —
+# rule-coverage alone didn't satisfy it in practice. `resourceNames` scopes
+# this to the one ClusterRole above, not a blanket bind-anything grant.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: osac-operator-bind-hub-access-hosted-clusters
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+rules:
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - clusterroles
+    resourceNames:
+      - default-hub-access-hosted-clusters
+    verbs:
+      - bind
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: osac-operator-bind-hub-access-hosted-clusters
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+subjects:
+  - kind: ServiceAccount
+    name: osac-operator
+    namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: osac-operator-bind-hub-access-hosted-clusters
