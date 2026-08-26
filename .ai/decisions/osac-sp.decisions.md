@@ -2131,10 +2131,23 @@ BMFO instead of introducing a new, inconsistent pattern.
 Confirmed as a real, live risk while researching this decision (not
 theoretical): `osac-project/fulfillment-service` (along with `osac-operator`,
 BMFO, and `osac-aap`) was archived and merged into a new monorepo,
-`osac-project/osac`, on 2026-08-04 — the day before this decision was
-written. A live Go dependency on the old repo's `it` package would already
-need remediation; a pinned image/chart tag and a vendored static file are
-both unaffected by the repo move.
+`osac-project/osac`. This entry originally said that move happened on
+2026-08-04, the day before this decision was written — it hadn't actually
+happened yet at that point; the real archival date, re-verified directly
+against each repo's `pushed_at` via the GitHub API on 2026-08-26, is
+**2026-08-15**. Corrected here rather than left standing, per this repo's
+own convention for decision-log entries whose stated facts didn't hold up
+(see [PR #41](https://github.com/dcm-project/osac-service-provider/pull/41)'s
+DD numbering fix for the same treatment applied to a different kind of
+miss). The conclusion this decision reached is unaffected
+either way: a live Go dependency on the old repo's `it` package would still
+need remediation once the repo moved/archived; a pinned image/chart tag and
+a vendored static file remain unaffected by the repo move, whenever it
+actually happened. Also confirmed 2026-08-26: the monorepo's CI publishes
+new releases to the *same* registry coordinates the archived repos used, so
+"pinned image/chart tag" for Tier B Phase 2 (issue #44) means pinning
+against the monorepo's own releases going forward, not whatever the
+archived repos last published before the freeze.
 
 **Related requirements:** REQ-TB-010, REQ-TB-050
 
