@@ -2,7 +2,12 @@
 # osac-operator chart. See DD-214 for the full rationale behind each
 # override below.
 image:
-  tag: "0.0.12" # REQ-TB-050 — pin, never `main`/`latest` (DD-149 monorepo pivot)
+  tag: "v0.0.12" # REQ-TB-050 — pin, never `main`/`latest` (DD-149 monorepo pivot). Note the `v`
+  # prefix: unlike the chart's own OCI version (bare `0.0.12`, see
+  # OSAC_OPERATOR_CHART_VERSION in e2e-tierb.yaml), the published *image* tags on
+  # ghcr.io/osac-project/osac-operator use a `v` prefix — confirmed live via `skopeo
+  # list-tags` after this repo's own e2e-tierb CI run failed with ImagePullBackOff on
+  # the un-prefixed value.
 
 # Only ClusterOrder reconciliation is exercised this phase (DD-215:
 # BareMetalInstance is owned by BMFO, not this operator, and is tracked
