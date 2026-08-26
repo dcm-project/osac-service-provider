@@ -105,27 +105,27 @@ the two-entry-point relationship (TC-U-039).
 
 ## 4. `internal/registration`
 
-Collaborator faked: `control-plane`'s `pkg/sp/client/provider` HTTP
-round-tripper — injected as a fake `http.RoundTripper` returning canned
-status codes/bodies per call, so payload construction and retry/backoff
-logic are tested without a real registration server (end-to-end wiring is
-TC-I scope).
+Collaborator faked: `environment-agent`'s `pkg/client` HTTP round-tripper
+(DD-203) — injected as a fake `http.RoundTripper` returning canned status
+codes/bodies per call, so payload construction and retry/backoff logic are
+tested without a real registration server (end-to-end wiring is TC-I
+scope).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-U-050 | Cluster registration payload fields | REQ-REG-020, REQ-REG-030, REQ-REG-040, AC-REG-020 | Trigger the cluster registration call; capture the request body sent to the fake round-tripper; assert `name == "osac-sp-cluster"`, `service_type == "cluster"`, `endpoint == "<provider.endpoint>/api/v1alpha1/clusters"`, `schema_version == "v1alpha1"`, and within `metadata`: `supported_platforms == ["baremetal"]`, `supported_provisioning_types == ["hypershift"]`, `len(kubernetes_supported_versions) > 0`. |
 | TC-U-051 | VM registration payload fields | REQ-REG-020, REQ-REG-030, AC-REG-021 | Trigger the vm registration call; assert `name == "osac-sp-vm"`, `service_type == "vm"`, `endpoint == "<provider.endpoint>/api/v1alpha1/vms"`, `schema_version == "v1alpha1"`. |
 | TC-U-052 | Two independent registration calls are issued | REQ-REG-010, AC-REG-010 | Trigger `Start()`; assert the fake round-tripper recorded exactly 2 initial requests, with distinct `name` values `osac-sp-cluster` and `osac-sp-vm`. |
-| TC-U-053 | 409 Conflict is non-retryable, same as other 4xx | REQ-REG-090, AC-REG-060 | Fake round-tripper returns `409` for every `vm` call, `201` for `cluster`; assert (a) `vm`'s registration is logged at ERROR level and marked non-retryable — same handling as a `400` — (b) no further `vm` registration requests are sent after the first `409` (advance a fake clock past several backoff intervals to confirm), (c) `cluster`'s state is `registered` and unaffected. Supersedes the pre-pivot "409 is retryable" test design — see DD-050. |
+| TC-U-053 | 409 Conflict is retried on the re-registration cadence, not treated as fatal | REQ-REG-080, AC-REG-060 | Fake round-tripper returns `409` for every `vm` call, `201` for `cluster`; assert (a) `vm`'s `409` is logged at WARN level, (b) `vm` keeps sending further registration requests on the re-registration cadence (not exponential backoff) rather than stopping after the first `409`, (c) `cluster`'s state is `registered` and unaffected throughout. Restores the pre-Phase-1 design DD-050 had replaced — see DD-203. |
 | TC-U-054 | Non-retryable 4xx stops retries | REQ-REG-090, AC-REG-070 | Fake round-tripper returns `400` for the `cluster` call; advance the fake clock past several backoff intervals; assert no further `cluster` registration requests were sent after the first `400`. |
 | TC-U-055 | Retryable failure uses exponential backoff | REQ-REG-070, AC-REG-050 | Fake round-tripper returns connection-refused-equivalent errors 3 times then succeeds for `cluster`; assert the recorded retry delays match the configured exponential sequence exactly. |
 | TC-U-056 | Registration does not block on construction | REQ-REG-050, AC-REG-030 | Fake round-tripper's handler blocks until explicitly released; call `Start()`; assert `Start()` returns before the round-tripper is released (i.e., registration runs in a goroutine, not synchronously in `Start`). |
 | TC-U-057 | Cluster failure does not affect VM registration | REQ-REG-060, AC-REG-040 | Fake round-tripper returns `500` for every `cluster` call and `201` for the first `vm` call; assert `vm`'s state reaches `registered` regardless of `cluster`'s ongoing retries. |
-| TC-U-058 | Idempotent re-registration reuses same name | REQ-REG-100, AC-REG-080 | Call the registration path twice (simulating a restart); assert both calls send the same `name`/`service_type` pair (no suffix/uniqueness token appended) so `control-plane`'s idempotency-on-`name` behavior is preserved. |
+| TC-U-058 | Idempotent re-registration reuses same name | REQ-REG-100, AC-REG-080 | Call the registration path twice (simulating a restart); assert both calls send the same `name`/`service_type` pair (no suffix/uniqueness token appended) so `environment-agent`'s idempotency-on-`name` behavior is preserved. |
 | TC-U-059 | No Authorization header on registration requests | REQ-REG-115, AC-REG-095 | Trigger both registration calls; inspect the requests recorded by the fake round-tripper; assert neither request has an `Authorization` header set. |
 | TC-U-060 | Backoff growth is capped at `maxBackoff` | REQ-REG-070 | Configure a small `initialBackoff`/`maxBackoff` (e.g. 1ms/4ms); fake round-tripper fails 8 consecutive times then succeeds; assert total elapsed time until success is bounded consistently with a *capped* geometric sum (well under what an uncapped doubling sequence over 8 retries would require), proving the cap actually bounds retry growth rather than merely being computed and discarded. |
 
-**Coverage note:** `NewRegistrar`'s `cpclient.NewClientWithResponses` error-wrap branch ([registration.go:113-116](../../internal/registration/registration.go)) is not exercised by any TC here — it is currently unreachable given `control-plane`'s generated client: `NewClient` stores the server string as-is (no parsing) and `WithHTTPClient` never returns an error, so no input this code can construct causes that branch to fire. Documented as an accepted coverage exception in the client code rather than tested with a fabricated failing fake, consistent with this suite's "test real production types" convention.
+**Coverage note:** `NewRegistrar`'s `agentclient.NewClientWithResponses` error-wrap branch ([registration.go](../../internal/registration/registration.go)) is not exercised by any TC here — it is currently unreachable given `environment-agent`'s generated client (same oapi-codegen shape as `control-plane`'s formerly did): `NewClient` stores the server string as-is (no parsing) and `WithHTTPClient` never returns an error, so no input this code can construct causes that branch to fire. Documented as an accepted coverage exception in the client code rather than tested with a fabricated failing fake, consistent with this suite's "test real production types" convention.
 
 ---
 
@@ -271,7 +271,7 @@ handler code will call it.
 | 4.1 HTTP Server | 10 | 10 | 20 (TC-U-070..089) | Remaining HTTP-server ACs (startup, shutdown signals, route registration) are integration-scope — see `osac-sp-integration.test-plan.md`. |
 | 4.2 OSAC Client Bootstrap | 11 | 14 | 24 (TC-U-010..025, TC-U-106..113) | Full unit coverage, including error-branch closure (TC-U-106..113, Milestone 2); real-dial-over-the-wire cases are TC-I scope. |
 | 4.3 Health Service | 9 | 10 | 10 (TC-U-030..039) | Full unit coverage. |
-| 4.4 SP Registration (`control-plane`) | 10 | 10 | 11 (TC-U-050..060) | Full unit coverage of payload/backoff/independence logic (one branch documented as currently unreachable given `control-plane`'s client — see section 4's coverage note); live-server wiring is TC-I scope. |
+| 4.4 SP Registration (`environment-agent`, DD-203) | 11 | 11 | 11 (TC-U-050..060) | Full unit coverage of payload/backoff/independence/409-retry logic (one branch documented as currently unreachable given `environment-agent`'s client — see section 4's coverage note); live-server wiring is TC-I scope. |
 | 5.1 Logging | 2 | 2 | (covered incidentally by TC-U-014, TC-U-053, TC-U-054 asserting log level/content) | |
 | 5.2 Configuration Management | 2 | 2 | 4 (TC-U-001..004) | Full unit coverage. |
 | M2 4.1 Proto Vendoring & Codegen | 6 | 3 | (verified via `make check-generate-proto` in CI + file diff against the pinned commit, not a Ginkgo spec) | See `osac-sp-m2-grpc-client-generation.spec.md`. |

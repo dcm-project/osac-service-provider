@@ -32,15 +32,18 @@ type OSACConfig struct {
 	ProbeTimeout       time.Duration `env:"PROBE_TIMEOUT" envDefault:"5s"`
 }
 
-// DCMConfig holds settings for reaching control-plane's SP registration
-// endpoint and the shared NATS broker used for async status reporting.
+// DCMConfig holds settings for reaching the SP registration endpoint
+// (environment-agent, per DD-203 — formerly control-plane, per the
+// now-superseded DD-050) and the shared NATS broker used for async status
+// reporting.
 //
 // Implements REQ-REG-110, REQ-PUBLISH-010. envPrefix is unprefixed by "SP_"
 // (unlike the other nested configs) to match the DCM_REGISTRATION_URL env
 // var name already used by sibling SPs (k8s-container-service-provider,
-// acm-cluster-service-provider) for the same backend — see DD-050. NATSURL
-// follows the same placement principle (DD-071): the NATS broker is a
-// shared, DCM-wide backend, not provider-specific.
+// acm-cluster-service-provider) for their own registration backend — the
+// var name itself was never control-plane-specific, only its value is
+// changing. NATSURL follows the same placement principle (DD-071): the
+// NATS broker is a shared, DCM-wide backend, not provider-specific.
 type DCMConfig struct {
 	RegistrationURL string `env:"REGISTRATION_URL,notEmpty"`
 	NATSURL         string `env:"NATS_URL,notEmpty"`

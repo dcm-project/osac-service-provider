@@ -1,14 +1,15 @@
 package registration_test
 
 // Integration scope (per .ai/test-plans/osac-sp-integration.test-plan.md,
-// "3. SP registration against a fake control-plane", TC-I-020..027): unlike
-// registration_unit_test.go, which fakes http.RoundTripper directly (no
-// socket, no real TCP/HTTP framing), these tests run the real generated
-// control-plane client (cpclient.ClientWithResponses) over a real
-// httptest.Server — a real listener, a real TCP connection, and real HTTP
-// request/response framing and JSON (de)serialization on both sides. This
-// closes the "registration wiring" pyramid-invariant gap identified in the
-// GA readiness audit (the HTTP-routing and gRPC wiring gaps are closed by
+// "3. SP registration against a fake environment-agent" (DD-203),
+// TC-I-020..027): unlike registration_unit_test.go, which fakes
+// http.RoundTripper directly (no socket, no real TCP/HTTP framing), these
+// tests run the real generated environment-agent client
+// (agentclient.ClientWithResponses) over a real httptest.Server — a real
+// listener, a real TCP connection, and real HTTP request/response framing
+// and JSON (de)serialization on both sides. This closes the "registration
+// wiring" pyramid-invariant gap identified in the GA readiness audit (the
+// HTTP-routing and gRPC wiring gaps are closed by
 // internal/apiserver/server_integration_test.go and
 // cmd/osac-service-provider/main_integration_test.go respectively).
 //
@@ -37,21 +38,21 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	cpv1alpha1 "github.com/dcm-project/control-plane/api/sp/v1alpha1/provider"
+	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/registration"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
-// fakeControlPlaneServer is a real httptest.Server implementing
-// control-plane's current, implemented POST /api/v1alpha1/providers
-// contract (api/sp/v1alpha1/provider/openapi.yaml) — the integration-test
+// fakeEnvironmentAgentServer is a real httptest.Server implementing
+// environment-agent's current, documented POST /api/v1alpha1/providers
+// contract (api/v1alpha1/openapi.yaml, DD-203) — the integration-test
 // analog of registration_unit_test.go's fakeProviderTransport and
 // cmd/osac-service-provider/main_integration_test.go's fakeProviderServer,
 // duplicated here (not shared across packages) per this project's
 // hand-written-fakes-per-package testing convention.
-type fakeControlPlaneServer struct {
+type fakeEnvironmentAgentServer struct {
 	server *httptest.Server
 
 	mu           sync.Mutex
@@ -60,8 +61,8 @@ type fakeControlPlaneServer struct {
 	hijackCounts map[string]int // serviceType -> remaining "drop connection" responses
 }
 
-func newFakeControlPlaneServer() *fakeControlPlaneServer {
-	f := &fakeControlPlaneServer{responder: alwaysCreated, hijackCounts: map[string]int{}}
+func newFakeEnvironmentAgentServer() *fakeEnvironmentAgentServer {
+	f := &fakeEnvironmentAgentServer{responder: alwaysCreated, hijackCounts: map[string]int{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1alpha1/providers", func(w http.ResponseWriter, r *http.Request) {
 		bodyBytes, err := io.ReadAll(r.Body)
@@ -71,7 +72,7 @@ func newFakeControlPlaneServer() *fakeControlPlaneServer {
 		}
 		_ = r.Body.Close()
 
-		var p cpv1alpha1.Provider
+		var p agentv1alpha1.Provider
 		_ = json.Unmarshal(bodyBytes, &p)
 
 		f.mu.Lock()
@@ -106,9 +107,9 @@ func newFakeControlPlaneServer() *fakeControlPlaneServer {
 	return f
 }
 
-func (f *fakeControlPlaneServer) URL() string { return f.server.URL + "/api/v1alpha1" }
+func (f *fakeEnvironmentAgentServer) URL() string { return f.server.URL + "/api/v1alpha1" }
 
-func (f *fakeControlPlaneServer) Requests() []capturedRequest {
+func (f *fakeEnvironmentAgentServer) Requests() []capturedRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]capturedRequest, len(f.reqs))
@@ -116,7 +117,7 @@ func (f *fakeControlPlaneServer) Requests() []capturedRequest {
 	return out
 }
 
-func (f *fakeControlPlaneServer) requestsFor(serviceType string) []capturedRequest {
+func (f *fakeEnvironmentAgentServer) requestsFor(serviceType string) []capturedRequest {
 	var out []capturedRequest
 	for _, r := range f.Requests() {
 		if r.provider.ServiceType == serviceType {
@@ -126,7 +127,7 @@ func (f *fakeControlPlaneServer) requestsFor(serviceType string) []capturedReque
 	return out
 }
 
-func (f *fakeControlPlaneServer) SetResponder(fn responderFunc) {
+func (f *fakeEnvironmentAgentServer) SetResponder(fn responderFunc) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.responder = fn
@@ -135,25 +136,25 @@ func (f *fakeControlPlaneServer) SetResponder(fn responderFunc) {
 // SetHijackCount makes the next n requests for serviceType fail at the
 // transport level (connection dropped, no HTTP response at all) before
 // falling back to the normal responder.
-func (f *fakeControlPlaneServer) SetHijackCount(serviceType string, n int) {
+func (f *fakeEnvironmentAgentServer) SetHijackCount(serviceType string, n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.hijackCounts[serviceType] = n
 }
 
-func (f *fakeControlPlaneServer) Close() { f.server.Close() }
+func (f *fakeEnvironmentAgentServer) Close() { f.server.Close() }
 
 // newIntegrationRegistrar wires a real Registrar (real generated
-// control-plane client, real *http.Client, no injected RoundTripper)
+// environment-agent client, real *http.Client, no injected RoundTripper)
 // against srv, with fast backoff/re-registration intervals so tests
 // complete quickly.
-func newIntegrationRegistrar(srv *fakeControlPlaneServer) *registration.Registrar {
+func newIntegrationRegistrar(srv *fakeEnvironmentAgentServer) *registration.Registrar {
 	return newIntegrationRegistrarWithMatrix(srv, versionmatrix.DefaultMatrix)
 }
 
 // newIntegrationRegistrarWithMatrix is newIntegrationRegistrar with an
 // explicit matrix, for TC-I-510.
-func newIntegrationRegistrarWithMatrix(srv *fakeControlPlaneServer, matrix versionmatrix.Matrix) *registration.Registrar {
+func newIntegrationRegistrarWithMatrix(srv *fakeEnvironmentAgentServer, matrix versionmatrix.Matrix) *registration.Registrar {
 	cfg := &config.Config{
 		DCM: config.DCMConfig{RegistrationURL: srv.URL()},
 		Provider: config.ProviderConfig{
@@ -172,11 +173,11 @@ func newIntegrationRegistrarWithMatrix(srv *fakeControlPlaneServer, matrix versi
 	return r
 }
 
-var _ = Describe("Registrar against a real fake control-plane server (integration)", func() {
-	var srv *fakeControlPlaneServer
+var _ = Describe("Registrar against a real fake environment-agent server (integration)", func() {
+	var srv *fakeEnvironmentAgentServer
 
 	BeforeEach(func() {
-		srv = newFakeControlPlaneServer()
+		srv = newFakeEnvironmentAgentServer()
 	})
 
 	AfterEach(func() {
@@ -259,12 +260,14 @@ var _ = Describe("Registrar against a real fake control-plane server (integratio
 		Expect(versions).To(ConsistOf(testMatrix.SupportedVersions()))
 	})
 
-	// TC-I-023: a vm 409 Conflict is non-retryable; cluster registration
-	// still succeeds independently, over a real HTTP round trip.
-	It("treats a vm 409 as non-retryable while cluster registration still succeeds (TC-I-023)", func() {
-		srv.SetResponder(func(p cpv1alpha1.Provider) (int, any, string) {
+	// TC-I-023: a vm 409 Conflict is retried on the re-registration cadence
+	// (not treated as fatal); cluster registration still succeeds
+	// independently, over a real HTTP round trip. Restores the pre-Phase-1
+	// design DD-050 had replaced — see DD-203.
+	It("retries a vm 409 on the re-registration cadence while cluster registration still succeeds (TC-I-023)", func() {
+		srv.SetResponder(func(p agentv1alpha1.Provider) (int, any, string) {
 			if p.ServiceType == "vm" {
-				return http.StatusConflict, cpv1alpha1.Error{Title: "already registered", Type: "ALREADY_EXISTS"}, "application/problem+json"
+				return http.StatusConflict, agentv1alpha1.Error{Title: "already registered", Type: "CONFLICT"}, "application/problem+json"
 			}
 			return http.StatusCreated, p, "application/json"
 		})
@@ -275,9 +278,10 @@ var _ = Describe("Registrar against a real fake control-plane server (integratio
 		r := newIntegrationRegistrar(srv)
 		r.Start(ctx)
 
-		// vm gives up after exactly one 409 — no retry.
-		Eventually(func() int { return len(srv.requestsFor("vm")) }, "500ms", "10ms").Should(Equal(1))
-		Consistently(func() int { return len(srv.requestsFor("vm")) }, "150ms", "10ms").Should(Equal(1))
+		// vm keeps retrying past the first 409, on the re-registration
+		// cadence (300ms, per newIntegrationRegistrar) — it must NOT give
+		// up after exactly one attempt.
+		Eventually(func() int { return len(srv.requestsFor("vm")) }, "2s", "10ms").Should(BeNumerically(">=", 3))
 
 		// cluster keeps succeeding/renewing, unaffected.
 		Eventually(func() int { return len(srv.requestsFor("cluster")) }, "1s", "10ms").Should(BeNumerically(">=", 2))
@@ -287,9 +291,9 @@ var _ = Describe("Registrar against a real fake control-plane server (integratio
 	// registration, and (by virtue of the fake server continuing to
 	// respond throughout) does not crash the process.
 	It("does not let a non-retryable cluster failure block vm registration (TC-I-024)", func() {
-		srv.SetResponder(func(p cpv1alpha1.Provider) (int, any, string) {
+		srv.SetResponder(func(p agentv1alpha1.Provider) (int, any, string) {
 			if p.ServiceType == "cluster" {
-				return http.StatusBadRequest, cpv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, "application/problem+json"
+				return http.StatusBadRequest, agentv1alpha1.Error{Title: "invalid", Type: "INVALID_ARGUMENT"}, "application/problem+json"
 			}
 			return http.StatusCreated, p, "application/json"
 		})

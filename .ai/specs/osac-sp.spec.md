@@ -513,23 +513,27 @@ Depends on Topic 1 (HTTP Server) and Topic 2 (OSAC Client Bootstrap).
 
 ---
 
-### 4.4 SP Registration (`control-plane`)
+### 4.4 SP Registration (`environment-agent`, Phase 2 — DD-203)
 
 #### Overview
 
-Self-register with `control-plane`'s SP API on startup, using **two**
-distinct provider names — `osac-sp-cluster` (service_type `cluster`) and
-`osac-sp-vm` (service_type `vm`) — following the same
-`name`-as-natural-key idempotency structure as the enhancement's
-[Registration Flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#registration-flow),
-now updated for the Phase 1 target (DD-050,
-[enhancements#95](https://github.com/dcm-project/enhancements/issues/95)).
-The two registrations are independent: neither's success or failure affects
-the other. Unlike `environment-agent`, `control-plane` enforces **no
-per-service-type exclusivity** — conflicts are name/ID-based only (see
-DD-050) — so there is no "another SP already holds this service type slot"
-scenario to accommodate; a `409` here signals a genuine registration data
-conflict, not contention with `kubevirt-service-provider` or any other SP.
+**Status: draft, in progress (issue [#33](https://github.com/dcm-project/osac-service-provider/issues/33)) — this section describes the target design, not yet the state of `main`.** Self-register with
+`dcm-project/environment-agent`'s SP API on startup, using **two** distinct
+provider names — `osac-sp-cluster` (service_type `cluster`) and `osac-sp-vm`
+(service_type `vm`) — following the same `name`-as-natural-key idempotency
+structure as the enhancement's
+[Registration Flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#registration-flow).
+This supersedes DD-050's Phase 1 target (`control-plane`), forced back to
+the originally-planned `environment-agent` destination by
+[`control-plane#51`](https://github.com/dcm-project/control-plane/pull/51)
+deleting `control-plane`'s SP registration API outright in favor of an
+agent-routed model — see DD-203. The two registrations are independent:
+neither's success or failure affects the other. Unlike `control-plane`,
+`environment-agent` enforces **per-service-type exclusivity** — only one
+SP (embedded or external) may serve a given `service_type` per agent — so a
+`409` on `POST /providers` signals that scenario (another SP currently holds
+the slot), not a name/ID data conflict, and is retried rather than treated
+as fatal (REQ-REG-090).
 
 Out of scope: de-registration on shutdown, registration status surfaced in
 the health check (deferred — see Topic 4.3 out-of-scope note).
@@ -538,23 +542,24 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-REG-010 | The SP MUST register with `control-plane` on startup via two independent calls: one for `service_type=cluster` (name `osac-sp-cluster`), one for `service_type=vm` (name `osac-sp-vm`) | MUST | |
+| REQ-REG-010 | The SP MUST register with `environment-agent` on startup via two independent calls: one for `service_type=cluster` (name `osac-sp-cluster`), one for `service_type=vm` (name `osac-sp-vm`) | MUST | DD-203 |
 | REQ-REG-020 | Each registration payload MUST include `name`, `service_type`, `endpoint`, and `schema_version` | MUST | |
 | REQ-REG-030 | The cluster registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/clusters`; the vm registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/vms` | MUST | |
-| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object | MUST | DD-050 — `control-plane`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these; carried via its `additionalProperties` catch-all shape (same as `environment-agent`'s would have been) |
+| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object | MUST | DD-203 — `environment-agent`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these either; carried via its `additionalProperties` catch-all shape alongside its own known fields (`region_code`/`zone`/`status`/`resources`) |
 | REQ-REG-050 | Both registrations MUST execute asynchronously and MUST NOT block server startup | MUST | |
 | REQ-REG-052 | The internal readiness self-probe that gates when registration starts (REQ-REG-050) MUST keep retrying if a single probing window elapses without a successful response, rather than permanently abandoning registration; it MUST give up only when the server's shutdown context is cancelled | MUST | DD-141 |
 | REQ-REG-060 | The two registrations MUST be independent: a failure (including non-retryable 4xx) on one MUST NOT stop or delay the other | MUST | |
 | REQ-REG-070 | Registration MUST retry with exponential backoff on retryable failures (connection errors, 5xx) | MUST | |
-| REQ-REG-090 | Non-retryable 4xx responses, including `409 Conflict` (name or provider ID already in use — no per-service-type carve-out under `control-plane`), MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-050 |
-| REQ-REG-100 | Registration MUST be idempotent: periodic re-registration updates/refreshes the entry (by `name`) rather than duplicating it. Unlike `environment-agent`, `control-plane`'s `Provider` row has no lease/TTL to expire, so periodic re-registration is not required to retain the slot — it remains valuable only to keep capability metadata (REQ-REG-040) fresh across restarts/upgrades | MUST | DD-050 |
-| REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential. `control-plane`'s provider API declares `security: bearerAuth` as of [`control-plane#24`](https://github.com/dcm-project/control-plane/pull/24), but that check is currently a no-op (`AUTH_DISABLED=true` by default) and `control-plane` sends no bearer token to SPs either — sending none here remains correct behavior today, but is a known, tracked production-auth gap rather than a permanent guarantee (see DD-050's Authentication Gap paragraph) | MUST | DD-050 |
+| REQ-REG-080 | A `409 Conflict` response (service type already served by another provider — `environment-agent`'s per-service-type exclusivity) MUST NOT be treated as fatal: it MUST be logged at WARN level and retried on the same cadence as periodic re-registration (REQ-REG-100), not exponential backoff, so this SP can acquire the slot later if the incumbent is displaced | MUST | DD-203 — restores the pre-Phase-1 design DD-050 had replaced; see REQ-REG-090's "not `409`" carve-out |
+| REQ-REG-090 | Non-retryable 4xx responses **other than `409 Conflict`** (see REQ-REG-080) MUST stop retries for that registration immediately and be logged at ERROR level | MUST | DD-203 |
+| REQ-REG-100 | Registration MUST be idempotent: periodic re-registration updates/refreshes the entry (by `name`) rather than duplicating it. `environment-agent`'s OpenAPI describes a "200: lease renewal" response, but no lease/TTL enforcement was found in its current `internal/provider/service` implementation for external providers — periodic re-registration is therefore not proven necessary to retain the slot today, but remains valuable both to keep capability metadata (REQ-REG-040) fresh and as the retry cadence for REQ-REG-080 | MUST | DD-203 |
+| REQ-REG-115 | Registration requests MUST NOT set an `Authorization` header or any bearer credential. `environment-agent`'s API declares its `401` response as "reserved; authentication deferred to future version" — unauthenticated is the currently correct, documented behavior, not merely an unenforced no-op as it was under `control-plane` (DD-050's Authentication Gap) | MUST | DD-203 |
 
 #### Configuration Introduced
 
 | Config Key | Env Var | Default | Required | Description |
 |------------|---------|---------|----------|-------------|
-| dcm.registrationUrl | DCM_REGISTRATION_URL | - | Yes | `control-plane` base URL (e.g. `https://control-plane.example.com/api/v1alpha1`), passed to the generated client's `NewClient` — env var name matches sibling SPs' existing `DCM_REGISTRATION_URL` convention (`k8s-container-service-provider`, `acm-cluster-service-provider`), since they target the same backend |
+| dcm.registrationUrl | DCM_REGISTRATION_URL | - | Yes | `environment-agent` base URL (e.g. `https://environment-agent.example.com/api/v1alpha1`), passed to the generated client's `NewClient`. Env var name is unchanged from Phase 1's `control-plane` target (DD-203) — it already described "the DCM-side registration endpoint" generically, not `control-plane` by name, so this is a config *value* change for operators, not a schema change |
 | provider.endpoint | SP_ENDPOINT | - | Yes | Externally reachable base URL for this SP |
 | provider.clusterName | SP_PROVIDER_CLUSTER_NAME | osac-sp-cluster | No | Registered name for the `cluster` service type |
 | provider.vmName | SP_PROVIDER_VM_NAME | osac-sp-vm | No | Registered name for the `vm` service type |
@@ -615,7 +620,7 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 - **Validates:** REQ-REG-060
 - **Given** the `vm` registration fails immediately (e.g., non-retryable 4xx)
 - **When** the failure occurs
-- **Then** the `cluster` registration MUST proceed unaffected and MUST succeed if `control-plane` accepts it
+- **Then** the `cluster` registration MUST proceed unaffected and MUST succeed if `environment-agent` accepts it
 
 ##### AC-REG-050: Exponential backoff on retryable failure
 
@@ -624,18 +629,18 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 - **When** a registration attempt fails
 - **Then** the SP MUST retry with exponential backoff
 
-##### AC-REG-060: 409 Conflict is non-retryable (revises the pre-pivot "VM 409 is non-fatal and retried" design)
+##### AC-REG-060: 409 Conflict is retried on the re-registration cadence, not treated as fatal (restores the pre-Phase-1 design; DD-203 supersedes DD-050 here)
 
-- **Validates:** REQ-REG-090
-- **Given** a registration receives `409 Conflict` from `control-plane` (name or provider ID already in use)
+- **Validates:** REQ-REG-080
+- **Given** a registration receives `409 Conflict` from `environment-agent` (service type already served by another provider)
 - **When** the response is handled
-- **Then** the SP MUST treat it identically to any other non-retryable 4xx: log at ERROR level, stop retrying that registration, and continue running
-- **And** MUST NOT special-case it as a retryable slot-contention scenario (that model does not apply to `control-plane` — see DD-050)
+- **Then** the SP MUST log at WARN level and retry that registration on the same cadence as periodic re-registration (not exponential backoff)
+- **And** MUST NOT stop that registration's loop, and MUST NOT let it affect the other service type's registration
 
-##### AC-REG-070: Non-retryable 4xx stops retries
+##### AC-REG-070: Non-retryable 4xx (other than 409) stops retries
 
 - **Validates:** REQ-REG-090
-- **Given** a registration receives a non-retryable 4xx response (e.g., 400 Bad Request, 409 Conflict)
+- **Given** a registration receives a non-retryable 4xx response other than `409 Conflict` (e.g., 400 Bad Request, 422 Unprocessable Entity)
 - **When** the response is handled
 - **Then** the SP MUST NOT retry that registration
 - **And** MUST log the error at ERROR level
@@ -652,7 +657,7 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 
 - **Validates:** REQ-REG-115
 - **Given** a registration request is constructed
-- **When** it is sent to `control-plane`
+- **When** it is sent to `environment-agent`
 - **Then** the request MUST NOT carry an `Authorization` header or any bearer token
 
 #### Dependencies
@@ -794,7 +799,7 @@ sentence originally attributed to `environment-agent`, now confirmed against
 | REQ-HTTP-NNN | 4.1: HTTP Server | 10 |
 | REQ-OSAC-NNN | 4.2: OSAC Client Bootstrap | 11 |
 | REQ-HLT-NNN | 4.3: Health Service | 9 |
-| REQ-REG-NNN | 4.4: SP Registration (`control-plane`) | 10 |
+| REQ-REG-NNN | 4.4: SP Registration (`environment-agent`, Phase 2 — DD-203) | 11 |
 | REQ-XC-LOG-NNN | 5.1: Logging | 2 |
 | REQ-XC-CFG-NNN | 5.2: Configuration Management | 2 |
-| **Total** | | **44** |
+| **Total** | | **45** |

@@ -52,6 +52,15 @@ test:
 test-cover:
 	go run github.com/onsi/ginkgo/v2/ginkgo -r --race --cover --skip-package=test/e2e
 
+# test-realbackend-environment-agent runs internal/registration's Tier B
+# specs (TC-I-028/029, DD-203) against a REAL, already-running
+# environment-agent build — unlike `test`/`test-cover`, which never build or
+# start one. Set REAL_ENVIRONMENT_AGENT_URL first (e.g. via the same steps
+# as .github/workflows/environment-agent-registration.yaml). Excluded from
+# `check` since it needs that external process, not just local fakes.
+test-realbackend-environment-agent:
+	go run github.com/onsi/ginkgo/v2/ginkgo -tags realbackend --focus "TC-I-02[89]" ./internal/registration/...
+
 lint:
 	golangci-lint run ./...
 
@@ -155,4 +164,4 @@ e2e-apply:
 e2e-test:
 	cd test/e2e && go run github.com/onsi/ginkgo/v2/ginkgo -r -v
 
-.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-pinned-tags check-container-engine image-build image-build-mock-provider e2e-cluster-up e2e-cluster-down e2e-images e2e-load e2e-apply e2e-test
+.PHONY: build build-mock-provider run run-mock-provider clean fmt vet test test-cover test-realbackend-environment-agent lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-pinned-tags check-container-engine image-build image-build-mock-provider e2e-cluster-up e2e-cluster-down e2e-images e2e-load e2e-apply e2e-test

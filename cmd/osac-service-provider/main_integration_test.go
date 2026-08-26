@@ -9,7 +9,7 @@ package main
 // server (a loopback TCP listener, not bufconn — an equally "real wire"
 // substitute for the test-plan's suggested bufconn harness, chosen because
 // it requires no new dial-option-injection surface on osac.New), a real
-// apiserver.Server on a real loopback listener, and a real control-plane
+// apiserver.Server on a real loopback listener, and a real environment-agent
 // client posting to a fake httptest.Server. This is package main
 // (not main_test) specifically so these tests can call the unexported run
 // function directly.
@@ -44,7 +44,7 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
 
-	cpv1alpha1 "github.com/dcm-project/control-plane/api/sp/v1alpha1/provider"
+	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
@@ -224,11 +224,12 @@ func startCapabilitiesServer(addr string, impl publicv1.CapabilitiesServer) *grp
 
 func (h *grpcServerHandle) Stop() { h.server.Stop() }
 
-// ---- fake control-plane (real httptest.Server implementing POST
-// /providers, per control-plane's current, implemented SP API contract) ----
+// ---- fake environment-agent (real httptest.Server implementing POST
+// /providers, per environment-agent's current, documented SP API contract,
+// DD-203) ----
 
 type fakeProviderRequest struct {
-	provider cpv1alpha1.Provider
+	provider agentv1alpha1.Provider
 	headers  http.Header
 }
 
@@ -237,10 +238,10 @@ type fakeProviderServer struct {
 
 	mu        sync.Mutex
 	reqs      []fakeProviderRequest
-	responder func(cpv1alpha1.Provider) (statusCode int, body any, contentType string)
+	responder func(agentv1alpha1.Provider) (statusCode int, body any, contentType string)
 }
 
-func alwaysCreated201(p cpv1alpha1.Provider) (int, any, string) {
+func alwaysCreated201(p agentv1alpha1.Provider) (int, any, string) {
 	return http.StatusCreated, p, "application/json"
 }
 
@@ -255,7 +256,7 @@ func newFakeProviderServer() *fakeProviderServer {
 		}
 		_ = r.Body.Close()
 
-		var p cpv1alpha1.Provider
+		var p agentv1alpha1.Provider
 		_ = json.Unmarshal(bodyBytes, &p)
 
 		f.mu.Lock()
@@ -292,7 +293,7 @@ func (f *fakeProviderServer) RequestsFor(serviceType string) []fakeProviderReque
 	return out
 }
 
-func (f *fakeProviderServer) SetResponder(fn func(cpv1alpha1.Provider) (int, any, string)) {
+func (f *fakeProviderServer) SetResponder(fn func(agentv1alpha1.Provider) (int, any, string)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.responder = fn
@@ -304,11 +305,11 @@ func (f *fakeProviderServer) Close() { f.server.Close() }
 
 // spHarness wires all three fakes and drives a real run() invocation.
 type spHarness struct {
-	keycloak     *fakeKeycloak
-	capImpl      *fakeCapabilitiesImpl
-	grpc         *grpcServerHandle
-	grpcAddr     string
-	controlPlane *fakeProviderServer
+	keycloak         *fakeKeycloak
+	capImpl          *fakeCapabilitiesImpl
+	grpc             *grpcServerHandle
+	grpcAddr         string
+	environmentAgent *fakeProviderServer
 
 	serverAddr string
 	cancel     context.CancelFunc
@@ -339,9 +340,9 @@ func startSP(startGRPC bool) *spHarness {
 // opposed to a test mutating harness state afterward and racing run()'s
 // own background goroutines — see keycloakDown below).
 type spStartOptions struct {
-	startGRPC             bool
-	keycloakDown          bool
-	controlPlaneResponder func(cpv1alpha1.Provider) (int, any, string)
+	startGRPC      bool
+	keycloakDown   bool
+	agentResponder func(agentv1alpha1.Provider) (int, any, string)
 }
 
 // startSPWithOptions is startSP's implementation. keycloakDown closes the
@@ -353,17 +354,17 @@ type spStartOptions struct {
 // winning a race).
 func startSPWithOptions(opts spStartOptions) *spHarness {
 	h := &spHarness{
-		keycloak:     newFakeKeycloak(),
-		capImpl:      &fakeCapabilitiesImpl{},
-		controlPlane: newFakeProviderServer(),
+		keycloak:         newFakeKeycloak(),
+		capImpl:          &fakeCapabilitiesImpl{},
+		environmentAgent: newFakeProviderServer(),
 	}
-	if opts.controlPlaneResponder != nil {
+	if opts.agentResponder != nil {
 		// Set before run() launches (not after startSPWithOptions
 		// returns): otherwise the default alwaysCreated201 responder
 		// could already have answered the very first registration
 		// attempt before the test gets a chance to swap it out, same
 		// race rationale as keycloakDown below.
-		h.controlPlane.SetResponder(opts.controlPlaneResponder)
+		h.environmentAgent.SetResponder(opts.agentResponder)
 	}
 
 	// Capture the issuer URL string before potentially closing the
@@ -390,7 +391,7 @@ func startSPWithOptions(opts spStartOptions) *spHarness {
 	t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
 	t.Setenv("SP_OSAC_TLS_ENABLED", "false")
 	t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
-	t.Setenv("DCM_REGISTRATION_URL", h.controlPlane.URL())
+	t.Setenv("DCM_REGISTRATION_URL", h.environmentAgent.URL())
 	t.Setenv("DCM_NATS_URL", "nats://127.0.0.1:4222")
 	t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 	t.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster")
@@ -417,7 +418,7 @@ func startSPWithOptions(opts spStartOptions) *spHarness {
 func (h *spHarness) stop() {
 	h.cancel()
 	Eventually(h.runDone, "3s").Should(Receive())
-	h.controlPlane.Close()
+	h.environmentAgent.Close()
 	h.keycloak.Close()
 	if h.grpc != nil {
 		h.grpc.Stop()
@@ -578,12 +579,12 @@ var _ = Describe("Health end-to-end (integration)", func() {
 	// TC-I-022: registration does not block server readiness — the health
 	// endpoint, served on a completely independent listener/goroutine from
 	// registration.Registrar's runLoop, must respond normally even while a
-	// registration request to the fake control-plane is still pending.
+	// registration request to the fake environment-agent is still pending.
 	It("keeps the health endpoint responsive while registration is still pending (TC-I-022)", func() {
 		release := make(chan struct{})
 		h := startSPWithOptions(spStartOptions{
 			startGRPC: true,
-			controlPlaneResponder: func(p cpv1alpha1.Provider) (int, any, string) {
+			agentResponder: func(p agentv1alpha1.Provider) (int, any, string) {
 				<-release // held open until explicitly released below
 				return http.StatusCreated, p, "application/json"
 			},
@@ -597,7 +598,7 @@ var _ = Describe("Health end-to-end (integration)", func() {
 		// response is still withheld — proving the health check below is
 		// answered by a genuinely independent code path, not one waiting
 		// on registration to finish first.
-		Eventually(func() []fakeProviderRequest { return h.controlPlane.Requests() }, "1s", "10ms").ShouldNot(BeEmpty())
+		Eventually(func() []fakeProviderRequest { return h.environmentAgent.Requests() }, "1s", "10ms").ShouldNot(BeEmpty())
 
 		status, _ := h.getHealth("/api/v1alpha1/clusters/health")
 		Expect(status).To(Equal(http.StatusOK))
@@ -618,8 +619,8 @@ var _ = Describe("Full-stack smoke test (integration)", func() {
 		_, vmBody := h.getHealth("/api/v1alpha1/vms/health")
 		Expect(vmBody["status"]).To(Equal("healthy"))
 
-		Eventually(func() []fakeProviderRequest { return h.controlPlane.RequestsFor("cluster") }, "2s", "20ms").ShouldNot(BeEmpty())
-		Eventually(func() []fakeProviderRequest { return h.controlPlane.RequestsFor("vm") }, "2s", "20ms").ShouldNot(BeEmpty())
+		Eventually(func() []fakeProviderRequest { return h.environmentAgent.RequestsFor("cluster") }, "2s", "20ms").ShouldNot(BeEmpty())
+		Eventually(func() []fakeProviderRequest { return h.environmentAgent.RequestsFor("vm") }, "2s", "20ms").ShouldNot(BeEmpty())
 	})
 
 	// TC-I-521 (REQ-VERSION-090, AC-VERSION-100): with
@@ -630,9 +631,9 @@ var _ = Describe("Full-stack smoke test (integration)", func() {
 		h := startSP(true)
 		defer h.stop()
 
-		Eventually(func() []fakeProviderRequest { return h.controlPlane.RequestsFor("cluster") }, "2s", "20ms").ShouldNot(BeEmpty())
+		Eventually(func() []fakeProviderRequest { return h.environmentAgent.RequestsFor("cluster") }, "2s", "20ms").ShouldNot(BeEmpty())
 
-		req := h.controlPlane.RequestsFor("cluster")[0]
+		req := h.environmentAgent.RequestsFor("cluster")[0]
 		versions, ok := req.provider.Metadata.Get("kubernetes_supported_versions")
 		Expect(ok).To(BeTrue())
 		Expect(versions).To(ConsistOf(versionmatrix.DefaultMatrix.SupportedVersions()))
@@ -642,7 +643,7 @@ var _ = Describe("Full-stack smoke test (integration)", func() {
 // TC-I-520 (REQ-VERSION-090, AC-VERSION-040/090): startup fails fast when
 // SP_VERSION_MATRIX_PATH is set but invalid — the process exits non-zero
 // before the HTTP listener opens, and before any registration request
-// reaches the fake control-plane. Uses mainRun() directly (same in-process
+// reaches the fake environment-agent. Uses mainRun() directly (same in-process
 // technique as TC-U-097) rather than the startSP harness, since run()
 // returns its error synchronously here, before any background goroutine
 // (osac.Bootstrap.Start, registrar.Start) is ever launched.
@@ -650,8 +651,8 @@ var _ = Describe("Full-stack startup fails fast on an invalid version matrix (in
 	It("fails fast before opening the listener or registering, when SP_VERSION_MATRIX_PATH is invalid (TC-I-520)", func() {
 		keycloak := newFakeKeycloak()
 		defer keycloak.Close()
-		controlPlane := newFakeProviderServer()
-		defer controlPlane.Close()
+		environmentAgent := newFakeProviderServer()
+		defer environmentAgent.Close()
 
 		grpcAddr := reserveLoopbackAddr()
 		serverAddr := reserveLoopbackAddr()
@@ -665,7 +666,7 @@ var _ = Describe("Full-stack startup fails fast on an invalid version matrix (in
 		t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
 		t.Setenv("SP_OSAC_TLS_ENABLED", "false")
 		t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
-		t.Setenv("DCM_REGISTRATION_URL", controlPlane.URL())
+		t.Setenv("DCM_REGISTRATION_URL", environmentAgent.URL())
 		t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
 		t.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster")
 		t.Setenv("SP_PROVIDER_VM_NAME", "osac-sp-vm")
@@ -678,6 +679,6 @@ var _ = Describe("Full-stack startup fails fast on an invalid version matrix (in
 		Expect(err).NotTo(HaveOccurred())
 		_ = ln.Close()
 
-		Expect(controlPlane.Requests()).To(BeEmpty())
+		Expect(environmentAgent.Requests()).To(BeEmpty())
 	})
 })
