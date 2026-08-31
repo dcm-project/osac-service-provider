@@ -4,7 +4,7 @@
 
 Phase 1 of [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17)
 (FLPATH-4759): a standalone binary, `test/cmd/osac-mock-provider` (moved
-from repo-root `cmd/osac-mock-provider` per DD-223: test-only binaries stay
+from repo-root `cmd/osac-mock-provider` per DD-224: test-only binaries stay
 out of `cmd/`, which is reserved for shipped product code), that fakes the
 **OSAC backend side** of the gRPC contract `osac-sp` dials — a real
 `net.Listen`-backed `grpc.Server` implementing `osac.public.v1`'s

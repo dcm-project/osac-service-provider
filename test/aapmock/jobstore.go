@@ -10,7 +10,7 @@ import (
 // canceled is tracked as a separate flag rather than folded into a single
 // status-timeline field: from the reconciliation-loop perspective, a job
 // that is never canceled always reports status "successful" from its very
-// first GetJob poll (DD-213 — no pending/running window to simulate, since
+// first GetJob poll (DD-214 — no pending/running window to simulate, since
 // NFR-TB-030 scopes this mock to the hardware/Ansible boundary, not AAP's
 // own job-lifecycle timing). CanCancelJob/CancelJob still need real,
 // fail-safe terminal-state semantics for their own direct callers/tests, so
@@ -69,7 +69,7 @@ func (s *jobStore) get(id int) (*job, bool) {
 
 // cancel marks a job canceled, returning ok=false if it was already
 // terminal (already-canceled — REQ-TB-080's MethodNotAllowedError path,
-// DD-213) and found=false if the ID doesn't exist at all.
+// DD-214) and found=false if the ID doesn't exist at all.
 func (s *jobStore) cancel(id int) (ok bool, found bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

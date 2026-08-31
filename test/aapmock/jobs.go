@@ -43,7 +43,7 @@ type jobResponse struct {
 
 // getJob handles `GET /v2/jobs/{id}/` — REQ-TB-080's GetJob contract.
 // Reports "successful" from the very first poll for any non-canceled job
-// (DD-213); unknown IDs return a real 404 (TC-U-565), matching
+// (DD-214); unknown IDs return a real 404 (TC-U-565), matching
 // aap.Client's NotFoundError branch.
 func (h *Handler) getJob(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -91,7 +91,7 @@ func (h *Handler) canCancelJob(w http.ResponseWriter, r *http.Request) {
 
 // cancelJob handles `POST /v2/jobs/{id}/cancel/` — REQ-TB-080's CancelJob
 // contract. Returns 202 on a real state transition, or 405 if the job was
-// already canceled (DD-213, TC-U-568) — a fail-safe response, not a
+// already canceled (DD-214, TC-U-568) — a fail-safe response, not a
 // silent success, matching aap.Client's MethodNotAllowedError branch.
 func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))

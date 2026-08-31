@@ -1,6 +1,6 @@
 # ClusterOrder fixture for AC-TB-030/TC-TB-080/090 (Phase 2). Created
 # directly against the kind cluster's own API server — not yet routed
-# through osac-sp/fulfillment-service's dispatch chain, see DD-217 and
+# through osac-sp/fulfillment-service's dispatch chain, see DD-218 and
 # https://github.com/dcm-project/osac-service-provider/issues/47.
 #
 # The vendored CRD (manifests-tierb/crds/clusterorders.osac.openshift.io.yaml)

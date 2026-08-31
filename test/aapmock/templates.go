@@ -8,7 +8,7 @@ import (
 
 // templateResult mirrors osac-operator/pkg/aap.Template's wire shape
 // (id/name only — Type is derived client-side from which endpoint
-// answered, DD-212).
+// answered, DD-213).
 type templateResult struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
@@ -21,7 +21,7 @@ type templateLookupResponse struct {
 
 // templateRegistry assigns a stable, incrementing ID the first time a
 // template name is looked up, and returns the same ID on every subsequent
-// lookup — this mock accepts any name (DD-212: no fixture template list to
+// lookup — this mock accepts any name (DD-213: no fixture template list to
 // keep in sync with osac-operator's resolveTemplateName), but real AAP
 // template IDs are stable, so this mirrors that.
 type templateRegistry struct {
@@ -49,7 +49,7 @@ func (r *templateRegistry) idFor(name string) int {
 // lookupTemplate handles both `GET /v2/job_templates/?name=X` and
 // `GET /v2/workflow_job_templates/?name=X` — REQ-TB-080's GetTemplate
 // contract (aap.Client.getTemplateFromEndpoint). Always reports exactly one
-// match for the requested name (DD-212).
+// match for the requested name (DD-213).
 func (h *Handler) lookupTemplate(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	id := h.templates.idFor(name)

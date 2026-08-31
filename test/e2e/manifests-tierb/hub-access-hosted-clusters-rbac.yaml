@@ -1,5 +1,5 @@
 # Fixture — fills a real gap in osac-operator's own published chart, root
-# caused via a live repro (DD-222): the chart ships a
+# caused via a live repro (DD-223): the chart ships a
 # "{namespace}-hub-access" ClusterRole (osac.openshift.io CRUD, gated by
 # `hubAccess.enabled`) but not the DIFFERENT
 # "{namespace}-hub-access-hosted-clusters" one that
@@ -28,7 +28,7 @@ rules:
       - list
       - watch
 ---
-# Confirmed live (DD-222) that the ClusterRole existing alone is NOT
+# Confirmed live (DD-223) that the ClusterRole existing alone is NOT
 # sufficient: osac-operator's own ClusterRole (osac-operator-manager)
 # already covers this exact rule set, but Kubernetes' RBAC escalation check
 # still rejected the RoleBinding create without an explicit `bind` grant —

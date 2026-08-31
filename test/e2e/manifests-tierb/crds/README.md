@@ -4,8 +4,8 @@ The first 4 are verbatim copies of the CRD YAMLs `fulfillment-service`'s own
 `it` (Go integration-test) package vendors for its tests, sourced from
 [`osac-project/osac/fulfillment-service/it/crds/`](https://github.com/osac-project/osac/tree/main/fulfillment-service/it/crds)
 (see issue #44's research comment for how this was confirmed). The remaining
-4 (DD-219/DD-220-adjacent) were added after a live spike and this repo's own
-CI both hit startup-time gaps DD-218's original 4 didn't cover — either
+4 (DD-220/DD-221-adjacent) were added after a live spike and this repo's own
+CI both hit startup-time gaps DD-219's original 4 didn't cover — either
 copied from `osac-operator`'s/BMFO's own `config/crd/bases/` (real,
 `controller-gen`-generated schemas) where no `it/crds/` fixture existed, or
 authored from scratch in the same fixture-grade style where neither existed.
@@ -22,7 +22,7 @@ authored from scratch in the same fixture-grade style where neither existed.
 | `baremetalhosts.metal3.io.yaml` | `BareMetalHost` | Fixture-grade, authored here — BMFO's `metal3` inventory backend (selected in `bmfo-secrets.yaml`) does a CRD-discovery check at startup for this API group; no `BareMetalHost` objects are ever created this phase |
 
 All 8 are installed regardless of which osac-operator/BMFO controllers are
-actually enabled (DD-214) — `osac-operator`'s and BMFO's managers reference
+actually enabled (DD-215) — `osac-operator`'s and BMFO's managers reference
 these types even for controllers this phase leaves disabled, and a missing
 CRD kind is a harder failure mode to diagnose than one extra unused CRD (in
 the `NodePool`/`ComputeInstance` cases, "harder to diagnose" is literal: the

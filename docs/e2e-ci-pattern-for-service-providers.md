@@ -278,7 +278,7 @@ neither alone would have been sufficient.
 - [ ] Convert your existing unit-test gRPC/HTTP fakes into a real
       `net.Listen`-backed `test/cmd/<your-sp>-mock-provider/` binary (§3) —
       not repo-root `cmd/`, which is reserved for binaries you actually
-      ship (DD-223).
+      ship (DD-224).
 - [ ] Write `test/e2e/` as its own nested Go module (own `go.mod`) so its
       test-only dependencies never enter your main module.
 - [ ] Write plain `Deployment`+`Service` manifests for your SP + your mock
