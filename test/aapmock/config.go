@@ -12,7 +12,7 @@ import (
 	env "github.com/caarlos0/env/v11"
 )
 
-// Config holds cmd/osac-aap-mock's own listen address (REQ-TB-080).
+// Config holds test/cmd/osac-aap-mock's own listen address (REQ-TB-080).
 // Deliberately not a reuse of internal/config.Config or
 // test/mockprovider.Config: this binary has a single HTTP listener and none
 // of either's concerns.

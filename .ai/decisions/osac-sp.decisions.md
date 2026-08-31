@@ -2310,7 +2310,9 @@ isn't part of its documented/stable contract.
 ## DD-152: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
 
 **Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)
-will introduce a new binary, `cmd/osac-aap-mock/`, implementing enough of
+will introduce a new binary, `test/cmd/osac-aap-mock/` (see DD-223 for why
+it lives under `test/` rather than the repo-root `cmd/`), implementing
+enough of
 AAP's REST surface (`GetTemplate`, `LaunchJobTemplate`/
 `LaunchWorkflowTemplate`, `GetJob`, `CancelJob`) for real `osac-operator`/
 BMFO reconciliation to reach a terminal state — built from scratch, the
@@ -2735,7 +2737,7 @@ again the moment Tier B's fixtures change, or (b) leaving Tier B red.
 
 ## DD-212: `osac-aap-mock` hand-rolls its own response structs, not an import of `osac-operator/pkg/aap`
 
-**Decision:** `cmd/osac-aap-mock/` defines its own request/response types
+**Decision:** `test/aapmock/` defines its own request/response types
 matching the JSON shapes `osac-operator/pkg/aap.Client` sends/expects
 (confirmed by reading `client.go` directly — issue #44's own comment
 already did this research), rather than importing
@@ -3049,3 +3051,28 @@ progressed past this component entirely, into real AAP-dispatch behavior
 since the repro cluster had no `osac-aap-mock` running).
 
 **Related requirements:** REQ-TB-100, AC-TB-030
+
+---
+
+## DD-223: test-only binaries live under `test/cmd/`, not the repo-root `cmd/`
+
+**Decision:** `osac-aap-mock`'s `main.go` (+ its two `main_*_test.go` files)
+lives at `test/cmd/osac-aap-mock/`, not `cmd/osac-aap-mock/`. Repo-root
+`cmd/` is reserved for binaries this repo actually ships as product —
+currently just `cmd/osac-service-provider/`.
+
+**Rationale:** `osac-aap-mock` has no purpose outside e2e testing; keeping
+it out of `cmd/` avoids it being mistaken for production code. Its own
+implementation package (`test/aapmock/`) was already under `test/` — only
+the `package main` wrapper needed a home, and Go doesn't require `cmd/` at
+the repo root, so nesting it as `test/cmd/osac-aap-mock/` keeps the familiar
+`cmd/<binary>/main.go` shape while making the test-only scope obvious from
+the path.
+
+**Known inconsistency:** `osac-mock-provider` (Phase 1, merged pre-dating
+this decision) still lives at `cmd/osac-mock-provider/`. Not moved as part
+of this PR — it's unrelated, already-shipped code, and relocating it is a
+bigger, separate diff. Tracked in
+[#49](https://github.com/dcm-project/osac-service-provider/issues/49).
+
+**Related requirements:** REQ-TB-080

@@ -33,7 +33,7 @@ build-mock-provider:
 	go build -o bin/$(MOCK_BINARY_NAME) ./cmd/$(MOCK_BINARY_NAME)
 
 build-aap-mock:
-	go build -o bin/$(AAP_MOCK_BINARY_NAME) ./cmd/$(AAP_MOCK_BINARY_NAME)
+	go build -o bin/$(AAP_MOCK_BINARY_NAME) ./test/cmd/$(AAP_MOCK_BINARY_NAME)
 
 run:
 	go run ./cmd/$(BINARY_NAME)
@@ -42,7 +42,7 @@ run-mock-provider:
 	go run ./cmd/$(MOCK_BINARY_NAME)
 
 run-aap-mock:
-	go run ./cmd/$(AAP_MOCK_BINARY_NAME)
+	go run ./test/cmd/$(AAP_MOCK_BINARY_NAME)
 
 clean:
 	rm -rf bin/

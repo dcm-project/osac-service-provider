@@ -68,7 +68,7 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 
 ## 6. Phase 2: `osac-aap-mock` unit tests
 
-Scope: `cmd/osac-aap-mock`'s own `go test` unit coverage — same `TC-U-*` ID
+Scope: `test/cmd/osac-aap-mock`'s own `go test` unit coverage — same `TC-U-*` ID
 space and pyramid-invariant/100%-unit-coverage discipline as the rest of the
 repo (unlike `TC-TB-*`, these count toward that gate). Same testing pattern
 as `test/mockprovider`'s own unit tests (`httptest.Server`, table-driven
@@ -91,13 +91,13 @@ where the response shape repeats across endpoints).
 | TC-U-572 | `GetJob`/`CanCancelJob`/`CancelJob` all reject a non-numeric job ID with `400` | REQ-TB-080 | Table-driven across all 3 job-scoped endpoints — a malformed ID must not panic or silently match an unintended route. |
 | TC-U-573 | `CanCancelJob`/`CancelJob` both return `404` for an unknown job ID | REQ-TB-080 | Matches `GetJob`'s own not-found behavior (TC-U-565), table-driven across both endpoints. |
 
-`cmd/osac-aap-mock`'s own `main.go` wiring (config-load/listener-bind error
-wrapping, `serveUntilDone`'s shutdown/failure branches) is covered by
+`test/cmd/osac-aap-mock`'s own `main.go` wiring (config-load/listener-bind
+error wrapping, `serveUntilDone`'s shutdown/failure branches) is covered by
 TC-U-580..585, and a real-listener end-to-end lifecycle smoke test by
 TC-I-090 — same split and same techniques as
 `osac-sp-e2e-mock-provider.test-plan.md`'s own `cmd/osac-mock-provider`
 coverage (TC-U-144..151, TC-I-031), not re-tabulated here in full since the
-pattern is identical; see `cmd/osac-aap-mock/main_unit_test.go` and
+pattern is identical; see `test/cmd/osac-aap-mock/main_unit_test.go` and
 `main_integration_test.go` directly.
 
 ---
