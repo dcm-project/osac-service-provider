@@ -130,13 +130,19 @@ type clusterOrderStatus struct {
 	ProvisioningJobs []map[string]any `json:"provisioningJobs"`
 }
 
-// phase2CRDs are the 4 vendored CRDs (manifests-tierb/crds/) TC-TB-060
-// asserts exist before any Phase 2 reconciliation is exercised.
+// phase2CRDs are all 8 vendored CRDs (manifests-tierb/crds/) TC-TB-060
+// asserts exist before any Phase 2 reconciliation is exercised — the
+// original 4 plus BareMetalPool/ComputeInstance/NodePool/BareMetalHost,
+// added once osac-operator/BMFO startup broke without them (DD-220/222).
 var phase2CRDs = []string{
 	"clusterorders.osac.openshift.io",
 	"hostedclusters.hypershift.openshift.io",
 	"tenants.osac.openshift.io",
 	"baremetalinstances.osac.openshift.io",
+	"baremetalpools.osac.openshift.io",
+	"computeinstances.osac.openshift.io",
+	"nodepools.hypershift.openshift.io",
+	"baremetalhosts.metal3.io",
 }
 
 var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exercised", func() {
@@ -151,7 +157,7 @@ var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exerc
 	// before this suite even starts if any of this isn't true — this
 	// re-asserts it here too so the fact is visible as a named, traceable
 	// spec result rather than only as an opaque earlier CI step.
-	It("has osac-operator, BMFO, and osac-aap-mock all Ready, and all 4 vendored CRDs registered", func() {
+	It("has osac-operator, BMFO, and osac-aap-mock all Ready, and all 8 vendored CRDs registered", func() {
 		for _, dep := range []string{"osac-operator", "bmf-operator-controller-manager", "osac-aap-mock"} {
 			Expect(deploymentReady(dep)).To(BeTrue(), "deployment/%s is not Ready", dep)
 		}
@@ -161,7 +167,7 @@ var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exerc
 		}
 	})
 
-	// TC-TB-100 / REQ-TB-070. Deliberately thin (DD-215, #46): proves the
+	// TC-TB-100 / REQ-TB-070. Deliberately thin (DD-216, #46): proves the
 	// chart/RBAC/CRD install is sound on its own, without claiming any
 	// BareMetalInstance reconciliation fidelity — nothing in this suite
 	// ever creates one.
@@ -185,8 +191,8 @@ func deploymentReady(name string) bool {
 
 var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal state", func() {
 	// TC-TB-080/090 / REQ-TB-070, REQ-TB-080, REQ-TB-100 / AC-TB-030
-	// (ClusterOrder-only, direct-CR-create scope this landing — DD-215,
-	// DD-217).
+	// (ClusterOrder-only, direct-CR-create scope this landing — DD-216,
+	// DD-218).
 	It("drives a directly-created ClusterOrder to Ready via real osac-operator + osac-aap-mock", func() {
 		if os.Getenv(envPhase2Enabled) == "" {
 			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
@@ -211,7 +217,7 @@ var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal st
 
 		// TC-TB-090: the actual Phase 2 deliverable — real osac-operator
 		// reconciliation + osac-aap-mock drive the CR to Ready. osac-aap-mock
-		// reports jobs "successful" on the very first poll (DD-213), and
+		// reports jobs "successful" on the very first poll (DD-214), and
 		// osac-operator's own status-poll interval defaults to 30s
 		// (pkg/provisioning.DefaultStatusPollInterval) — 3 minutes is
 		// several poll cycles of headroom, not a realistic expected runtime,

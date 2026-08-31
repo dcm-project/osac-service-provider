@@ -1,11 +1,13 @@
 name: E2E Tier B (kind + real OSAC stack)
 
-# Tier B of osac-service-provider#21's e2e effort — Phase 1
-# (.ai/specs/osac-sp-e2e-tier-b.spec.md): real Postgres, real Keycloak
-# (vendored realm, DD-150), and real fulfillment-service (pinned, published
-# chart, DD-151), replacing Phase A's osac-mock-provider, to close the mock
-# provider's structural auth-fidelity gap (Phase A never validates auth at
-# all — see issue #21). dcm-control-plane/osac-service-provider wiring
+# Tier B of osac-service-provider#21's e2e effort
+# (.ai/specs/osac-sp-e2e-tier-b.spec.md). Phase 1: real Postgres, real
+# Keycloak (vendored realm, DD-150), and real fulfillment-service (pinned,
+# published chart, DD-151), replacing Phase A's osac-mock-provider, to
+# close the mock provider's structural auth-fidelity gap (Phase A never
+# validates auth at all — see issue #21). Phase 2 (issue #44): real
+# osac-operator + BMFO + osac-aap-mock, driving a real ClusterOrder CR to a
+# real terminal state. dcm-control-plane/osac-service-provider wiring
 # otherwise unchanged from .github/workflows/e2e.yaml (Phase A).
 
 on:
@@ -199,10 +201,10 @@ jobs:
           kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=osac-service-provider-bad-auth --timeout=120s
 
       # --- Phase 2: real osac-operator + BMFO + osac-aap-mock (REQ-TB-070..100) ---
-      - name: Install vendored CRDs (ClusterOrder, HostedCluster, NodePool, Tenant, BareMetalInstance, BareMetalPool, ComputeInstance)
+      - name: Install vendored CRDs (ClusterOrder, HostedCluster, NodePool, Tenant, BareMetalInstance, BareMetalPool, ComputeInstance, BareMetalHost)
         run: kubectl apply -f test/e2e/manifests-tierb/crds/
 
-      - name: Deploy BMFO stub secrets (DD-216)
+      - name: Deploy BMFO stub secrets (DD-217)
         run: kubectl apply -f test/e2e/manifests-tierb/bmfo-secrets.yaml
 
       - name: Install osac-operator
@@ -212,10 +214,10 @@ jobs:
             --values test/e2e/tierb-config/osac-operator-values.yaml
           kubectl rollout status deployment/osac-operator --timeout=3m
 
-      - name: Fill osac-operator's hub-access-hosted-clusters RBAC gap (DD-222)
+      - name: Fill osac-operator's hub-access-hosted-clusters RBAC gap (DD-223)
         run: kubectl apply -f test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml
 
-      - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-215)
+      - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-216)
         run: |
           helm install bmf-operator oci://ghcr.io/osac-project/charts/bare-metal-fulfillment-operator \
             --version "${{ env.BMFO_CHART_VERSION }}"
@@ -256,8 +258,9 @@ jobs:
         # Cluster/VM CRUD hardcode osac-mock-provider-only fixture IDs and
         # rely on its non-validating Create, neither of which holds
         # against this real backend — genuinely exercising CRUD here is
-        # Phase 2 scope (osac-aap-mock, DD-152). e2e.yaml (Phase A) runs
-        # unfiltered on purpose.
+        # Phase 2 scope (osac-aap-mock, DD-152). e2e.yaml (Phase A) excludes
+        # the symmetric Label("tier-b-only") specs instead (#43) — each
+        # workflow only runs what's relevant to its own backend.
         run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --label-filter='!tier-a-only' --timeout=10m
 
       - name: Stop port-forwards
