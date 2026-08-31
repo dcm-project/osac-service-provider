@@ -2310,7 +2310,7 @@ isn't part of its documented/stable contract.
 ## DD-152: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
 
 **Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)
-will introduce a new binary, `test/cmd/osac-aap-mock/` (see DD-223 for why
+will introduce a new binary, `test/cmd/osac-aap-mock/` (see DD-224 for why
 it lives under `test/` rather than the repo-root `cmd/`), implementing
 enough of
 AAP's REST surface (`GetTemplate`, `LaunchJobTemplate`/
@@ -2735,7 +2735,7 @@ again the moment Tier B's fixtures change, or (b) leaving Tier B red.
 
 ---
 
-## DD-212: `osac-aap-mock` hand-rolls its own response structs, not an import of `osac-operator/pkg/aap`
+## DD-213: `osac-aap-mock` hand-rolls its own response structs, not an import of `osac-operator/pkg/aap`
 
 **Decision:** `test/aapmock/` defines its own request/response types
 matching the JSON shapes `osac-operator/pkg/aap.Client` sends/expects
@@ -2759,7 +2759,7 @@ dependency.
 
 ---
 
-## DD-213: `osac-aap-mock`'s jobs are always immediately `"successful"` — no pending/running simulation
+## DD-214: `osac-aap-mock`'s jobs are always immediately `"successful"` — no pending/running simulation
 
 **Decision:** `GetJob` on `osac-aap-mock` always reports a launched job's
 status as `"successful"` from the very first poll — there is no
@@ -2782,7 +2782,7 @@ precedent of a synchronous, non-validating `Create` (`DD-211`'s framing).
 
 ---
 
-## DD-214: Phase 2 Helm values explicitly disable unused `osac-operator` controllers and retarget its `ClusterIssuer`
+## DD-215: Phase 2 Helm values explicitly disable unused `osac-operator` controllers and retarget its `ClusterIssuer`
 
 **Decision:** `osac-operator`'s chart install for Phase 2 explicitly sets:
 
@@ -2820,7 +2820,7 @@ issuer name needs overriding.
 
 ---
 
-## DD-215: `BareMetalInstance`'s terminal-state proof is out of scope this phase — split to #46
+## DD-216: `BareMetalInstance`'s terminal-state proof is out of scope this phase — split to #46
 
 **Decision:** `REQ-TB-100`/`AC-TB-030`'s real-terminal-state proof covers
 `ClusterOrder` only in this landing. BMFO is still deployed (satisfying
@@ -2849,7 +2849,7 @@ invoked. Tracked as [#46](https://github.com/dcm-project/osac-service-provider/i
 
 ---
 
-## DD-216: BMFO's two non-optional chart secrets (`osac-inventory-config`, `osac-management-config`) are stubbed empty
+## DD-217: BMFO's two non-optional chart secrets (`osac-inventory-config`, `osac-management-config`) are stubbed empty
 
 **Decision:** Phase 2 creates two placeholder Secrets,
 `osac-inventory-config` and `osac-management-config` (the chart's default
@@ -2861,7 +2861,7 @@ before installing the BMFO chart.
 without `optional: true` (unlike `clouds`/`profiles`/`bcm-certs`, which are
 all marked optional). Without them, the controller-manager pod fails at
 mount time and never starts, regardless of whether `BareMetalInstance`
-reconciliation is exercised (`DD-215`) — this is a hard pod-start
+reconciliation is exercised (`DD-216`) — this is a hard pod-start
 requirement, not a lazy-read dependency.
 
 **Correction (2026-08-26):** this entry originally said the Secrets could be
@@ -2870,13 +2870,13 @@ That was wrong — passing the mount doesn't mean passing BMFO's own startup
 code, which reads and parses these files by name (`cmd/main.go`) and then
 constructs a real inventory/management client from their `type` field before
 the manager can start at all. An empty Secret satisfies the volume mount but
-not the file-read/parse step one layer up; DD-221 covers the actual fix.
+not the file-read/parse step one layer up; DD-222 covers the actual fix.
 
 **Related requirements:** REQ-TB-070
 
 ---
 
-## DD-217: `fulfillment-service` `Hub` registration researched but deferred to #47 — this phase creates `ClusterOrder` directly instead
+## DD-218: `fulfillment-service` `Hub` registration researched but deferred to #47 — this phase creates `ClusterOrder` directly instead
 
 **Decision:** getting `fulfillment-service` to create real `ClusterOrder` CRs
 on this same `kind` cluster (the link a fully-faithful `REQ-TB-100`/
@@ -2911,14 +2911,14 @@ pod), and whether the CLI's config persists correctly across two separate
 invocations. Given how many new moving pieces that is on top of #44's
 already-large scope (a new binary, 4 new CRDs, two new operators), this is
 lower-risk to verify iteratively in its own smaller, focused PR — same
-judgment call as `DD-215`'s `BareMetalInstance` split, applied here to a
+judgment call as `DD-216`'s `BareMetalInstance` split, applied here to a
 different (dispatch-chain, not infra-availability) kind of gap.
 
 **Related requirements:** REQ-TB-100
 
 ---
 
-## DD-218: Phase 2's CRDs are `kubectl apply`'d directly; `osac-operator-crds`/BMFO's own CRD charts are not used
+## DD-219: Phase 2's CRDs are `kubectl apply`'d directly; `osac-operator-crds`/BMFO's own CRD charts are not used
 
 **Decision:** `e2e-tierb.yaml` installs the 4 vendored CRD YAMLs
 (`test/e2e/manifests-tierb/crds/`, DD-149-adjacent vendoring precedent) via
@@ -2940,11 +2940,11 @@ drift risk from skipping the dedicated CRD charts.
 
 **Related requirements:** REQ-TB-070
 
-## DD-219: Three more CRDs vendored after a live spike found `osac-operator`/BMFO fail to reconcile or even start without them
+## DD-220: Three more CRDs vendored after a live spike found `osac-operator`/BMFO fail to reconcile or even start without them
 
 **Decision:** `test/e2e/manifests-tierb/crds/` gains `osac.openshift.io_computeinstances.yaml`,
 `nodepools.hypershift.openshift.io.yaml`, and `osac.openshift.io_baremetalpools.yaml`,
-on top of DD-218's original 4.
+on top of DD-219's original 4.
 
 **Rationale:** a live spike for issue #47 (building the full Phase 2 stack by
 hand on a real cluster) and this PR's own CI run both hit the same three
@@ -2952,7 +2952,7 @@ gaps independently:
 
 - `osac-operator`'s startup migration (`migrate-subnetrefs`) unconditionally
   lists `ComputeInstance`s and crash-loops without the CRD present, even
-  with `controllers.computeInstance: false` — DD-214's controller-disable
+  with `controllers.computeInstance: false` — DD-215's controller-disable
   flags don't prevent this because it runs before the controller-manager
   even starts controllers.
 - `osac-operator`'s `ClusterOrderReconciler` always registers a watch on
@@ -2973,9 +2973,9 @@ gaps independently:
 
 **Related requirements:** REQ-TB-070, REQ-TB-100
 
-## DD-220: `hub-access-hosted-clusters` ClusterRole gap is a known, unresolved risk for AC-TB-030's terminal-state assertion
+## DD-221: `hub-access-hosted-clusters` ClusterRole gap is a known, unresolved risk for AC-TB-030's terminal-state assertion
 
-**Finding:** even with DD-219's three CRDs applied, a live spike found
+**Finding:** even with DD-220's three CRDs applied, a live spike found
 `osac-operator`'s `ClusterOrderReconciler` gets stuck indefinitely retrying
 `rolebindings.rbac.authorization.k8s.io "{namespace}-hub-access-hosted-clusters"
 not found` on every reconcile of a freshly-created `ClusterOrder` — traced to
@@ -2986,23 +2986,23 @@ transformer ... in CI/production overlays" — i.e. this `ClusterRole` is
 expected to be pre-created by a kustomize overlay used in upstream's own
 CI/production, and isn't shipped by the public Helm chart at all.
 
-**Resolved (2026-08-26):** see DD-222 — root-caused and fixed via a second
+**Resolved (2026-08-26):** see DD-223 — root-caused and fixed via a second
 live repro, same day. Left this entry as-is (rather than deleting it) since
-it captures the original discovery accurately; DD-222 has the fix.
+it captures the original discovery accurately; DD-223 has the fix.
 
 **Related requirements:** REQ-TB-100, AC-TB-030
 
-## DD-221: BMFO's stub inventory/management config (DD-216) selects the `metal3` backend type, not truly empty content
+## DD-222: BMFO's stub inventory/management config (DD-217) selects the `metal3` backend type, not truly empty content
 
 **Decision:** `bmfo-secrets.yaml`'s two Secrets use keys named exactly
 `inventory.yaml`/`management.yaml` (not an arbitrary key name) containing
 `type: metal3` config pointing at the `default` namespace, plus a new
 fixture-grade `baremetalhosts.metal3.io.yaml` CRD.
 
-**Rationale:** this repo's own CI run (not just the #47 spike) hit DD-216's
+**Rationale:** this repo's own CI run (not just the #47 spike) hit DD-217's
 gap directly — `cmd/main.go` reads these files from hardcoded default paths
 (`/etc/osac/inventory/inventory.yaml`, `/etc/osac/management/
-management.yaml`) regardless of the Secret's own key name, so DD-216's
+management.yaml`) regardless of the Secret's own key name, so DD-217's
 original `config.yaml` key was never actually read. Once read, the content
 is unmarshalled into a `Config{Type, Options, ...}` struct and fed to a
 per-backend client factory — `metal3` was chosen over BMFO's other two
@@ -3014,11 +3014,11 @@ fixture-grade `BareMetalHost` CRD; its management-side constructor has no
 such check at all. No `BareMetalHost` objects are ever created this phase,
 so `FindFreeHost`/`AssignHost`/power-control calls are never exercised —
 this only gets BMFO's manager past startup into a `Ready` pod for
-TC-TB-100, consistent with DD-215's terminal-state deferral to #46.
+TC-TB-100, consistent with DD-216's terminal-state deferral to #46.
 
 **Related requirements:** REQ-TB-070, REQ-TB-100
 
-## DD-222: DD-220's RoleBinding gap is a genuine chart omission, fixed with a fixture ClusterRole + a scoped `bind` grant
+## DD-223: DD-221's RoleBinding gap is a genuine chart omission, fixed with a fixture ClusterRole + a scoped `bind` grant
 
 **Decision:** `test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml`
 adds, after `osac-operator` is installed: (1) a `default-hub-access-hosted-clusters`
@@ -3054,7 +3054,7 @@ since the repro cluster had no `osac-aap-mock` running).
 
 ---
 
-## DD-223: test-only binaries live under `test/cmd/`, not the repo-root `cmd/`
+## DD-224: test-only binaries live under `test/cmd/`, not the repo-root `cmd/`
 
 **Decision:** Both e2e mock binaries — `osac-aap-mock` and
 `osac-mock-provider` — live at `test/cmd/osac-aap-mock/` and
@@ -3076,3 +3076,29 @@ home, and Go doesn't require `cmd/` at the repo root, so nesting them as
 making the test-only scope obvious from the path.
 
 **Related requirements:** REQ-TB-080, REQ-MOCK-010
+
+---
+
+## DD-225: `osac-aap-mock` enforces exact-match Bearer token auth, not "any/no header accepted"
+
+**Decision:** every request to `osac-aap-mock` must present
+`Authorization: Bearer <token>`, where `<token>` exactly matches the value
+the mock was started with (`MOCK_AAP_TOKEN`) — a shared secret with
+`osac-operator`'s own `aap.token` Helm value
+(`test/e2e/tierb-config/osac-operator-values.yaml`). A missing header, wrong
+scheme, or mismatched token gets a real `401`, checked once in `Handler`'s
+`ServeHTTP` (`test/aapmock/handler.go`) ahead of every route, not per-handler.
+
+**Rationale:** supersedes this PR's own earlier posture — `TC-U-569`
+originally asserted the opposite (any/no `Authorization` header succeeded),
+reasoning by analogy to `DD-132`'s permissive OIDC stub. Reconsidered: a mock
+that's permissive-by-default on auth risks masking a real production
+misconfiguration — a test suite would pass against the mock and only fail
+once pointed at real AAP, the opposite of what an e2e suite is for.
+`NFR-TB-030`'s actual scope ("no real Ansible/hardware access") never
+required this permissiveness in the first place; enforcing a shared-secret
+check costs nothing in fidelity terms and closes the gap. `TC-U-569` now
+asserts the missing-header case; `TC-U-574` is new, asserting the
+wrong-token case.
+
+**Related requirements:** REQ-TB-080, NFR-TB-030

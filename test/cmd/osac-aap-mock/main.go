@@ -61,7 +61,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer func() { _ = ln.Close() }()
 
-	srv := &http.Server{Handler: aapmock.NewHandler()}
+	srv := &http.Server{Handler: aapmock.NewHandler(cfg.Token)}
 
 	return serveUntilDone(ctx, logger, shutdownTimeout, srv, ln)
 }

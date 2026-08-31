@@ -26,6 +26,31 @@ func TestMainIntegration(t *testing.T) {
 	RunSpecs(t, "AAP Mock Main Integration Suite")
 }
 
+// testToken is the Bearer value this suite configures the real binary
+// with (MOCK_AAP_TOKEN) and presents on every request (DD-225).
+const testToken = "test-token"
+
+// authedDo builds a request with testToken's Authorization header attached
+// and performs it, failing the spec on any construction/transport error.
+// body may be nil for a bodyless request (e.g. GET).
+func authedDo(method, url string, body *strings.Reader) *http.Response {
+	var reqBody *strings.Reader
+	if body != nil {
+		reqBody = body
+	} else {
+		reqBody = strings.NewReader("")
+	}
+	req, err := http.NewRequest(method, url, reqBody) //nolint:noctx // test helper
+	Expect(err).NotTo(HaveOccurred())
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	Expect(err).NotTo(HaveOccurred())
+	return resp
+}
+
 // reserveLoopbackAddr binds an ephemeral loopback port, notes its address,
 // then immediately releases it so run() can bind that exact address once
 // its env var is set — same pattern as
@@ -47,6 +72,7 @@ var _ = Describe("AAP mock binary (integration)", func() {
 
 		t := GinkgoT()
 		t.Setenv("MOCK_AAP_ADDRESS", addr)
+		t.Setenv("MOCK_AAP_TOKEN", testToken)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		runDone := make(chan error, 1)
@@ -66,14 +92,12 @@ var _ = Describe("AAP mock binary (integration)", func() {
 
 		baseURL := "http://" + addr
 
-		lookupResp, err := http.Get(baseURL + "/v2/job_templates/?name=osac-create-hosted-cluster") //nolint:noctx // test helper
-		Expect(err).NotTo(HaveOccurred())
+		lookupResp := authedDo(http.MethodGet, baseURL+"/v2/job_templates/?name=osac-create-hosted-cluster", nil)
 		defer func() { _ = lookupResp.Body.Close() }()
 		Expect(lookupResp.StatusCode).To(Equal(http.StatusOK))
 
 		launchBody := strings.NewReader(`{"extra_vars":{"resource":{"kind":"ClusterOrder","name":"it-cluster"}}}`)
-		launchResp, err := http.Post(baseURL+"/v2/job_templates/osac-create-hosted-cluster/launch/", "application/json", launchBody) //nolint:noctx // test helper
-		Expect(err).NotTo(HaveOccurred())
+		launchResp := authedDo(http.MethodPost, baseURL+"/v2/job_templates/osac-create-hosted-cluster/launch/", launchBody)
 		defer func() { _ = launchResp.Body.Close() }()
 		Expect(launchResp.StatusCode).To(Equal(http.StatusOK))
 
@@ -83,8 +107,7 @@ var _ = Describe("AAP mock binary (integration)", func() {
 		Expect(json.NewDecoder(launchResp.Body).Decode(&launched)).To(Succeed())
 		Expect(launched.ID).To(BeNumerically(">", 0))
 
-		jobResp, err := http.Get(baseURL + "/v2/jobs/" + strconv.Itoa(launched.ID) + "/") //nolint:noctx // test helper
-		Expect(err).NotTo(HaveOccurred())
+		jobResp := authedDo(http.MethodGet, baseURL+"/v2/jobs/"+strconv.Itoa(launched.ID)+"/", nil)
 		defer func() { _ = jobResp.Body.Close() }()
 
 		var jobStatus struct {

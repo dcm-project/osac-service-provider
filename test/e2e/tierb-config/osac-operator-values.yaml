@@ -1,5 +1,5 @@
 # Phase 2 (osac-sp-e2e-tier-b.spec.md §3, REQ-TB-070) values for the
-# osac-operator chart. See DD-214 for the full rationale behind each
+# osac-operator chart. See DD-215 for the full rationale behind each
 # override below.
 image:
   tag: "v0.0.12" # REQ-TB-050 — pin, never `main`/`latest` (DD-149 monorepo pivot). Note the `v`
@@ -9,7 +9,7 @@ image:
   # list-tags` after this repo's own e2e-tierb CI run failed with ImagePullBackOff on
   # the un-prefixed value.
 
-# Only ClusterOrder reconciliation is exercised this phase (DD-215:
+# Only ClusterOrder reconciliation is exercised this phase (DD-216:
 # BareMetalInstance is owned by BMFO, not this operator, and is tracked
 # separately in #46). Disabling the rest avoids pulling in CRD
 # requirements (KubeVirt, OVN-K) this phase has no use for and no CRDs
@@ -23,8 +23,11 @@ controllers:
   storage: false # also skips the label-storageclass pre-install hook (avoids pulling quay.io/openshift/origin-cli:4.20.0, ~164 MB)
 
 # Points osac-operator's AAP client at this phase's own fake (REQ-TB-080).
-# The token value is a placeholder: osac-aap-mock never validates it
-# (NFR-TB-030, TC-U-569) — this is NOT a real credential.
+# The token is a shared secret with osac-aap-mock's own MOCK_AAP_TOKEN
+# (test/e2e/manifests-tierb/aap-mock.yaml) — osac-aap-mock rejects any
+# request that doesn't present it (DD-225). Still test-only, checked into
+# git, used for nothing but this throwaway kind cluster (NFR-TB-020) — NOT
+# a real credential.
 aap:
   url: "http://osac-aap-mock:9093"
   token: "tierb-aap-mock-token"

@@ -13,6 +13,10 @@ import (
 	"github.com/dcm-project/osac-service-provider/test/aapmock"
 )
 
+// testToken is the Bearer value every test in this package configures
+// NewHandler with, matching what each request must present (DD-225).
+const testToken = "test-token"
+
 // launchJob is a small test helper that launches a job template and returns
 // its assigned job ID, failing the spec on any non-2xx response.
 func launchJob(srv *httptest.Server, extraVars map[string]any) int {
@@ -21,7 +25,7 @@ func launchJob(srv *httptest.Server, extraVars map[string]any) int {
 
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v2/job_templates/osac-create-hosted-cluster/launch/", strings.NewReader(string(body)))
 	Expect(err).NotTo(HaveOccurred())
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testToken)
 
 	resp, err := srv.Client().Do(req)
 	Expect(err).NotTo(HaveOccurred())
@@ -39,7 +43,7 @@ var _ = Describe("Jobs", func() {
 	var srv *httptest.Server
 
 	BeforeEach(func() {
-		srv = httptest.NewServer(aapmock.NewHandler())
+		srv = httptest.NewServer(aapmock.NewHandler(testToken))
 	})
 	AfterEach(func() {
 		srv.Close()
@@ -68,13 +72,13 @@ var _ = Describe("Jobs", func() {
 	})
 
 	// TC-U-564: GetJob reports a launched job as "successful" immediately,
-	// with started/finished both populated (DD-213).
+	// with started/finished both populated (DD-214).
 	It("reports a launched job as successful immediately, with started/finished populated (TC-U-564)", func() {
 		id := launchJob(srv, map[string]any{"resource": "cluster-a"})
 
 		req, err := http.NewRequest(http.MethodGet, srv.URL+"/v2/jobs/"+itoa(id)+"/", nil)
 		Expect(err).NotTo(HaveOccurred())
-		req.Header.Set("Authorization", "Bearer test-token")
+		req.Header.Set("Authorization", "Bearer "+testToken)
 		resp, err := srv.Client().Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
@@ -97,7 +101,7 @@ var _ = Describe("Jobs", func() {
 	It("returns 404 for an unknown job ID (TC-U-565)", func() {
 		req, err := http.NewRequest(http.MethodGet, srv.URL+"/v2/jobs/999999/", nil)
 		Expect(err).NotTo(HaveOccurred())
-		req.Header.Set("Authorization", "Bearer test-token")
+		req.Header.Set("Authorization", "Bearer "+testToken)
 		resp, err := srv.Client().Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
@@ -111,7 +115,7 @@ var _ = Describe("Jobs", func() {
 
 		req, err := http.NewRequest(http.MethodGet, srv.URL+"/v2/jobs/"+itoa(id)+"/cancel/", nil)
 		Expect(err).NotTo(HaveOccurred())
-		req.Header.Set("Authorization", "Bearer test-token")
+		req.Header.Set("Authorization", "Bearer "+testToken)
 		resp, err := srv.Client().Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
@@ -131,7 +135,7 @@ var _ = Describe("Jobs", func() {
 
 		cancelReq, err := http.NewRequest(http.MethodPost, srv.URL+"/v2/jobs/"+itoa(id)+"/cancel/", nil)
 		Expect(err).NotTo(HaveOccurred())
-		cancelReq.Header.Set("Authorization", "Bearer test-token")
+		cancelReq.Header.Set("Authorization", "Bearer "+testToken)
 		cancelResp, err := srv.Client().Do(cancelReq)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = cancelResp.Body.Close() }()
@@ -139,7 +143,7 @@ var _ = Describe("Jobs", func() {
 
 		getReq, err := http.NewRequest(http.MethodGet, srv.URL+"/v2/jobs/"+itoa(id)+"/", nil)
 		Expect(err).NotTo(HaveOccurred())
-		getReq.Header.Set("Authorization", "Bearer test-token")
+		getReq.Header.Set("Authorization", "Bearer "+testToken)
 		getResp, err := srv.Client().Do(getReq)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = getResp.Body.Close() }()
@@ -158,7 +162,7 @@ var _ = Describe("Jobs", func() {
 
 		firstCancel, err := http.NewRequest(http.MethodPost, srv.URL+"/v2/jobs/"+itoa(id)+"/cancel/", nil)
 		Expect(err).NotTo(HaveOccurred())
-		firstCancel.Header.Set("Authorization", "Bearer test-token")
+		firstCancel.Header.Set("Authorization", "Bearer "+testToken)
 		firstResp, err := srv.Client().Do(firstCancel)
 		Expect(err).NotTo(HaveOccurred())
 		_ = firstResp.Body.Close()
@@ -166,7 +170,7 @@ var _ = Describe("Jobs", func() {
 
 		secondCancel, err := http.NewRequest(http.MethodPost, srv.URL+"/v2/jobs/"+itoa(id)+"/cancel/", nil)
 		Expect(err).NotTo(HaveOccurred())
-		secondCancel.Header.Set("Authorization", "Bearer test-token")
+		secondCancel.Header.Set("Authorization", "Bearer "+testToken)
 		secondResp, err := srv.Client().Do(secondCancel)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = secondResp.Body.Close() }()
@@ -179,7 +183,7 @@ var _ = Describe("Jobs", func() {
 		func(method, path string) {
 			req, err := http.NewRequest(method, srv.URL+path, nil)
 			Expect(err).NotTo(HaveOccurred())
-			req.Header.Set("Authorization", "Bearer test-token")
+			req.Header.Set("Authorization", "Bearer "+testToken)
 			resp, err := srv.Client().Do(req)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -196,7 +200,7 @@ var _ = Describe("Jobs", func() {
 		func(method, path string) {
 			req, err := http.NewRequest(method, srv.URL+path, nil)
 			Expect(err).NotTo(HaveOccurred())
-			req.Header.Set("Authorization", "Bearer test-token")
+			req.Header.Set("Authorization", "Bearer "+testToken)
 			resp, err := srv.Client().Do(req)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -206,16 +210,29 @@ var _ = Describe("Jobs", func() {
 		Entry("CancelJob", http.MethodPost, "/v2/jobs/999999/cancel/"),
 	)
 
-	// TC-U-569: every endpoint requires an Authorization header to be
-	// present, but never validates its content (NFR-TB-030 — the
-	// permissiveness boundary is deliberate, mirroring DD-132's OIDC stub).
-	It("accepts requests with no Authorization header at all (TC-U-569)", func() {
+	// TC-U-569: every endpoint rejects a request with no Authorization
+	// header at all, with a real 401 (DD-225).
+	It("rejects a request with no Authorization header (401) (TC-U-569)", func() {
 		req, err := http.NewRequest(http.MethodGet, srv.URL+"/v2/job_templates/?name=osac-create-hosted-cluster", nil)
 		Expect(err).NotTo(HaveOccurred())
 		resp, err := srv.Client().Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
-		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
+	})
+
+	// TC-U-574: every endpoint rejects a request whose Bearer token
+	// doesn't exactly match the one this mock was configured with, with a
+	// real 401 (DD-225) — proves the mock actually validates the token's
+	// content, not just its presence.
+	It("rejects a request with a non-matching Bearer token (401) (TC-U-574)", func() {
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/v2/job_templates/?name=osac-create-hosted-cluster", nil)
+		Expect(err).NotTo(HaveOccurred())
+		req.Header.Set("Authorization", "Bearer wrong-token")
+		resp, err := srv.Client().Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
 	})
 })
 

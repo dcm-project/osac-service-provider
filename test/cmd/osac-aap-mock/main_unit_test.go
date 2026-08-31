@@ -37,6 +37,7 @@ var _ = Describe("run's top-level error wrapping (unit)", func() {
 
 		t := GinkgoT()
 		t.Setenv("MOCK_AAP_ADDRESS", held.Addr().String()) // already bound by `held`
+		t.Setenv("MOCK_AAP_TOKEN", "test-token")
 
 		runErr := run(context.Background(), slog.New(slog.DiscardHandler))
 		Expect(runErr).To(HaveOccurred())

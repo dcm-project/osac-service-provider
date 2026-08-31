@@ -1,6 +1,6 @@
 # osac-aap-mock (REQ-TB-080, Phase 2): this repo's own binary, faking just
 # enough of AAP's REST surface for real osac-operator/BMFO reconciliation
-# to reach a terminal state (DD-212/213). Same manifest style as
+# to reach a terminal state (DD-213/214). Same manifest style as
 # postgres.yaml — a plain Deployment+Service, no chart.
 apiVersion: apps/v1
 kind: Deployment
@@ -30,6 +30,11 @@ spec:
           env:
             - name: MOCK_AAP_ADDRESS
               value: ":9093"
+            # Shared secret with osac-operator's own `aap.token` Helm value
+            # (test/e2e/tierb-config/osac-operator-values.yaml) — this mock
+            # rejects any request that doesn't present it (DD-225).
+            - name: MOCK_AAP_TOKEN
+              value: "tierb-aap-mock-token"
           readinessProbe:
             tcpSocket:
               port: http
