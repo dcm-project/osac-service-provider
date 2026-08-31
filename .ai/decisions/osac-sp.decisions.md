@@ -3056,23 +3056,23 @@ since the repro cluster had no `osac-aap-mock` running).
 
 ## DD-223: test-only binaries live under `test/cmd/`, not the repo-root `cmd/`
 
-**Decision:** `osac-aap-mock`'s `main.go` (+ its two `main_*_test.go` files)
-lives at `test/cmd/osac-aap-mock/`, not `cmd/osac-aap-mock/`. Repo-root
-`cmd/` is reserved for binaries this repo actually ships as product —
-currently just `cmd/osac-service-provider/`.
+**Decision:** Both e2e mock binaries — `osac-aap-mock` and
+`osac-mock-provider` — live at `test/cmd/osac-aap-mock/` and
+`test/cmd/osac-mock-provider/` respectively, not repo-root `cmd/`.
+Repo-root `cmd/` is reserved for binaries this repo actually ships as
+product — currently just `cmd/osac-service-provider/`.
+`osac-mock-provider` predates this decision (Phase 1) and was moved
+alongside `osac-aap-mock` in this same PR rather than deferred, once the
+general principle was raised (originally tracked as a separate follow-up in
+[#49](https://github.com/dcm-project/osac-service-provider/issues/49),
+closed as done-here).
 
-**Rationale:** `osac-aap-mock` has no purpose outside e2e testing; keeping
-it out of `cmd/` avoids it being mistaken for production code. Its own
-implementation package (`test/aapmock/`) was already under `test/` — only
-the `package main` wrapper needed a home, and Go doesn't require `cmd/` at
-the repo root, so nesting it as `test/cmd/osac-aap-mock/` keeps the familiar
-`cmd/<binary>/main.go` shape while making the test-only scope obvious from
-the path.
+**Rationale:** neither binary has any purpose outside e2e testing; keeping
+them out of `cmd/` avoids either being mistaken for production code. Both
+binaries' own implementation packages (`test/aapmock/`, `test/mockprovider/`)
+were already under `test/` — only the `package main` wrappers needed a new
+home, and Go doesn't require `cmd/` at the repo root, so nesting them as
+`test/cmd/<binary>/` keeps the familiar `cmd/<binary>/main.go` shape while
+making the test-only scope obvious from the path.
 
-**Known inconsistency:** `osac-mock-provider` (Phase 1, merged pre-dating
-this decision) still lives at `cmd/osac-mock-provider/`. Not moved as part
-of this PR — it's unrelated, already-shipped code, and relocating it is a
-bigger, separate diff. Tracked in
-[#49](https://github.com/dcm-project/osac-service-provider/issues/49).
-
-**Related requirements:** REQ-TB-080
+**Related requirements:** REQ-TB-080, REQ-MOCK-010

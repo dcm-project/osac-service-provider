@@ -95,7 +95,7 @@ where the response shape repeats across endpoints).
 error wrapping, `serveUntilDone`'s shutdown/failure branches) is covered by
 TC-U-580..585, and a real-listener end-to-end lifecycle smoke test by
 TC-I-090 — same split and same techniques as
-`osac-sp-e2e-mock-provider.test-plan.md`'s own `cmd/osac-mock-provider`
+`osac-sp-e2e-mock-provider.test-plan.md`'s own `test/cmd/osac-mock-provider`
 coverage (TC-U-144..151, TC-I-031), not re-tabulated here in full since the
 pattern is identical; see `test/cmd/osac-aap-mock/main_unit_test.go` and
 `main_integration_test.go` directly.

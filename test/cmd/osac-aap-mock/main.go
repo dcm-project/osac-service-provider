@@ -35,7 +35,7 @@ func mainRun() int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	// Coverage exception (documented, not unit-tested): same rationale as
-	// cmd/osac-mock-provider/main.go's mainRun — translating
+	// test/cmd/osac-mock-provider/main.go's mainRun — translating
 	// SIGTERM/SIGINT into context cancellation is a stdlib concern, kept
 	// out of run so tests can drive shutdown directly via ctx
 	// cancellation without sending real OS signals to the test process.
@@ -71,7 +71,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 // returns the triggering error (nil on a clean ctx-driven shutdown). Split
 // out from run so it can be unit-tested directly against a pre-closed
 // listener/slow handler — same technique as
-// cmd/osac-mock-provider/main.go's serveUntilDone.
+// test/cmd/osac-mock-provider/main.go's serveUntilDone.
 func serveUntilDone(ctx context.Context, logger *slog.Logger, shutdownTimeout time.Duration, srv *http.Server, ln net.Listener) error {
 	errCh := make(chan error, 1)
 	go func() {

@@ -1,6 +1,6 @@
 package main
 
-// Unit scope (mirrors cmd/osac-mock-provider/main_unit_test.go): run's
+// Unit scope (mirrors test/cmd/osac-mock-provider/main_unit_test.go): run's
 // top-level error-wrapping branches (each failing before the server starts
 // serving, so no fakes needed) plus serveUntilDone's own failure/shutdown
 // branches, tested directly against real-but-deliberately-broken
@@ -48,7 +48,7 @@ var _ = Describe("mainRun (unit)", func() {
 	// TC-U-582: mainRun maps a run failure to exit code 1, in-process,
 	// without invoking os.Exit — mainRun's happy path (exit code 0) is a
 	// documented coverage exception (needs a real OS signal to unblock
-	// signal.NotifyContext's ctx), same as cmd/osac-mock-provider's own.
+	// signal.NotifyContext's ctx), same as test/cmd/osac-mock-provider's own.
 	It("returns exit code 1 when run fails (TC-U-582)", func() {
 		// Same trigger as TC-U-580: MOCK_AAP_ADDRESS is not set.
 		Expect(mainRun()).To(Equal(1))

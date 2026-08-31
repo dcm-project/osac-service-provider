@@ -1,7 +1,7 @@
 package main
 
 // TC-I-031 (per .ai/test-plans/osac-sp-e2e-mock-provider.test-plan.md,
-// "5. cmd/osac-mock-provider — integration"): drives this binary's real
+// "5. test/cmd/osac-mock-provider — integration"): drives this binary's real
 // run() end to end — real env-var config loading, a real net.Listen-backed
 // grpc.Server hosting all 5 fake osac.public.v1 services, and a real
 // net.Listen-backed OIDC discovery+token HTTP server — then points a real

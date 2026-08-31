@@ -4,7 +4,7 @@ package main
 // config loading and a real net.Listen-backed http.Server — then makes
 // real HTTP calls through the full launch → poll → cancel lifecycle, same
 // package-main-for-unexported-run-access convention as
-// cmd/osac-mock-provider/main_integration_test.go's TC-I-031.
+// test/cmd/osac-mock-provider/main_integration_test.go's TC-I-031.
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func TestMainIntegration(t *testing.T) {
 // reserveLoopbackAddr binds an ephemeral loopback port, notes its address,
 // then immediately releases it so run() can bind that exact address once
 // its env var is set — same pattern as
-// cmd/osac-mock-provider/main_integration_test.go's own helper of the same
+// test/cmd/osac-mock-provider/main_integration_test.go's own helper of the same
 // name.
 func reserveLoopbackAddr() string {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
