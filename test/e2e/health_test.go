@@ -88,7 +88,7 @@ const healthStatusReady = "ready"
 // final response for further assertions.
 //
 // This is deliberately not a single getHealth call: osac-sp's real OIDC
-// token fetch + gRPC probe against osac-mock-provider (internal/osac.
+// token fetch + gRPC probe against a real backend (internal/osac.
 // Bootstrap) run asynchronously in the background and are not gated by
 // either the Kubernetes Deployment's Available condition (which the
 // workflow's "Wait for readiness" step waits on, but which only requires a
