@@ -17,12 +17,12 @@ import (
 // cross-repo proof of this contract anywhere in the DCM project (see
 // control-plane#40 / osac-service-provider#17).
 //
-// TODO(#28): none of these specs ever call the OSAC backend — mock vs.
-// real is irrelevant to them, so running them in both e2e.yaml (mock) and
-// e2e-tierb.yaml (real) is pure duplication. Once #27 (Tier B) and #24
-// (CRUD e2e) both merge, drop this Describe block from the mock job and
-// keep it running only against the real backend.
-var _ = Describe("osac-sp registration with real control-plane", func() {
+// Label("tier-b-only") (#28, DD-212): none of these specs ever call the
+// OSAC backend — mock vs. real is irrelevant to them, so running them in
+// both e2e.yaml (mock) and e2e-tierb.yaml (real) was pure duplication.
+// e2e.yaml now excludes this label; this Describe block runs only against
+// the real backend (e2e-tierb.yaml).
+var _ = Describe("osac-sp registration with real control-plane", Label("tier-b-only"), func() {
 	var client *cpclient.ClientWithResponses
 
 	BeforeEach(func() {

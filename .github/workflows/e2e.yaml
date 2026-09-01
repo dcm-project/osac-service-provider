@@ -140,7 +140,9 @@ jobs:
         env:
           CONTROL_PLANE_URL: http://localhost:18080
           OSAC_SP_URL: http://localhost:18081
-        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=10m
+        # --label-filter excludes Label("tier-b-only") specs, now Tier
+        # B-only (#28, DD-212).
+        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --label-filter='!tier-b-only' --timeout=10m
 
       - name: Stop port-forwards
         if: always()
