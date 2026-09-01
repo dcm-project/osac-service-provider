@@ -42,6 +42,13 @@ backend; that substitution is the one documented, deliberate scope boundary
 
 ## 2. Registration contract (`osac-sp` ↔ real `control-plane`)
 
+**As of DD-212 (#28):** `registration_test.go`'s `Describe` block is
+`Label("tier-b-only")` — these specs run only against Tier B's real
+backend (`e2e-tierb.yaml`), no longer against `osac-mock-provider`
+(`e2e.yaml`). None of them ever exercised the OSAC backend at all, so
+mock-vs-real made no difference; running them in both jobs was pure
+duplication once Tier B existed to run them for real.
+
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-E2E-020 | `osac-sp` registers a `cluster`-type provider with real `control-plane` | REQ-E2E-050, AC-E2E-020 | `GET` `control-plane`'s real provider-listing endpoint; assert exactly one entry has `serviceType == "cluster"` (or the real API's equivalent enum/string — confirmed against `control-plane`'s actual REST schema at implementation time) and `endpoint` equal to `osac-service-provider`'s real in-cluster `SP_ENDPOINT`. |
@@ -52,9 +59,17 @@ backend; that substitution is the one documented, deliberate scope boundary
 
 ## 3. Health-check propagation (real gRPC + real OIDC, no bufconn)
 
+**As of DD-212 (#28):** `health_test.go`'s happy-path `Describe` block is
+`Label("tier-b-only")` — same rationale as §2 above. These specs proved
+"a backend that always says yes makes `osac-sp` report healthy," already
+covered in-process by `internal/osac`'s own bufconn tests, and covered
+more rigorously by Tier B's real Keycloak/`fulfillment-service` saying
+yes for real reasons — running them against the mock too added no
+signal.
+
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-E2E-050 | `osac-sp`'s cluster health endpoint reports healthy against the real mock backend | REQ-E2E-060, AC-E2E-030 | `GET osac-service-provider`'s `/api/v1alpha1/clusters/health` directly (via port-forward/NodePort), **polling (`Eventually`, 30s/500ms) rather than a single one-shot request** — `osac-sp`'s real OIDC token fetch + gRPC probe run asynchronously and are not gated by the pod's `Available` condition (DD-010: status is in the body, not the HTTP code), so a single-shot check would only pass reliably by accident of which other spec happened to run first (DD-142); assert the body's `status == "healthy"` once converged and its connectivity/token sub-fields indicate a real, successful OIDC token fetch and gRPC probe — not the bufconn-backed fakes `internal/health`'s own tests use. |
+| TC-E2E-050 | `osac-sp`'s cluster health endpoint reports healthy against the real backend | REQ-E2E-060, AC-E2E-030 | `GET osac-service-provider`'s `/api/v1alpha1/clusters/health` directly (via port-forward/NodePort), **polling (`Eventually`, 30s/500ms) rather than a single one-shot request** — `osac-sp`'s real OIDC token fetch + gRPC probe run asynchronously and are not gated by the pod's `Available` condition (DD-010: status is in the body, not the HTTP code), so a single-shot check would only pass reliably by accident of which other spec happened to run first (DD-142); assert the body's `status == "healthy"` once converged and its connectivity/token sub-fields indicate a real, successful OIDC token fetch and gRPC probe — not the bufconn-backed fakes `internal/health`'s own tests use. |
 | TC-E2E-060 | `osac-sp`'s vm health endpoint reports the identical global health condition | REQ-E2E-060, AC-E2E-030 | Same polling discipline as TC-E2E-050, independently applied to `/api/v1alpha1/vms/health` (DD-142); assert its body matches TC-E2E-050's (one global health condition per CLAUDE.md's documented API design, now proven over a real wire, not just asserted from a single in-process handler test). |
 | TC-E2E-070 | `control-plane`'s own health monitor reflects `osac-sp` as healthy | REQ-E2E-060, AC-E2E-030 | Query `control-plane`'s real `ListProviders` REST endpoint's `health_status` field for both registered providers; assert both equal `"ready"` — `control-plane`'s own vocabulary (`internal/sp/store/model.HealthStatusReady`) for "my last poll of this provider's `/health` succeeded," confirmed against the real API/source at implementation time. This is deliberately not the string `"healthy"` `osac-sp`'s own `/health` response uses (TC-E2E-050/060) — the two are independent layers' vocabularies, not one contract; this TC closes the full real, cross-repo propagation loop, not just `osac-sp`'s own view of itself. |
 
