@@ -3476,3 +3476,32 @@ localizes a regression class (claim-shape drift, e.g. DD-150's `groups`-
 omission gotcha) that the end-to-end health check alone can't diagnose.
 
 **Related requirements:** REQ-TB-070, AC-TB-030
+
+---
+## DD-232: `test/aapmock` config tests collapsed from 4 to 2 — no business logic to test beyond a struct-tag typo guard
+
+**Decision:** merged TC-U-570/571 (address load/fail-fast) with TC-U-575/576
+(token load/fail-fast) into just TC-U-570/571, covering both fields.
+`aapmock.LoadConfig` (`test/aapmock/config.go`) is `env.Parse(cfg)` plus an
+`fmt.Errorf` wrap — no logic of this package's own. Both fields go through
+the identical `caarlos0/env` mapping + `,notEmpty` validation mechanism, so
+testing each field's load/fail-fast pair separately (the original 4 tests)
+proved the same third-party behavior twice, not two different code paths.
+
+The one thing worth guarding is real but narrow: a typo in either field's
+`env:"..."` struct-tag string (e.g. `MOCK_AAP_ADRESS`) compiles fine and
+fails silently/confusingly at runtime — the Go compiler can't catch a wrong
+string literal. One positive test (sets both vars, asserts both fields)
+and one negative test (omits one required var, asserts the fail-fast error
+names it) fully cover that risk; a third or fourth test would only
+re-exercise `caarlos0/env`'s own already-tested contract, not this
+package's.
+
+Prompted by the user questioning a pending PR #48 review comment
+(`are we testing the 'env' framework to enforce not empty?`) plus a
+`gciavarrini` review comment suggesting TC-U-570/571 be combined — this
+decision extends that further, to all 4 tests, once it became clear the
+config struct has zero business logic to differentiate the two fields'
+tests in the first place.
+
+**Related requirements:** REQ-TB-080, DD-225
