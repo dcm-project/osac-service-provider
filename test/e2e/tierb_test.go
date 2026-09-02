@@ -177,30 +177,24 @@ var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exerc
 		}
 	})
 
-	// TC-TB-060 / REQ-TB-070 / AC-TB-030 (given clause). The workflow's own
-	// `kubectl rollout status`/`helm install` steps already fail the job
-	// before this suite even starts if any of this isn't true — this
-	// re-asserts it here too so the fact is visible as a named, traceable
-	// spec result rather than only as an opaque earlier CI step.
-	It("has osac-operator, BMFO, and osac-aap-mock all Ready, and all 8 vendored CRDs registered", func() {
-		for _, dep := range []string{"osac-operator", "bmf-operator-controller-manager", "osac-aap-mock"} {
-			Expect(deploymentReady(dep)).To(BeTrue(), "deployment/%s is not Ready", dep)
-		}
+	// TC-TB-060 / REQ-TB-070 / AC-TB-030 (given clause). Deployment
+	// readiness is deliberately NOT re-checked here: the workflow's own
+	// `kubectl rollout status`/`kubectl wait --for=condition=Available`
+	// steps for osac-operator/BMFO/osac-aap-mock already gate the job
+	// before this suite ever starts (.github/workflows/e2e-tierb.yaml) —
+	// re-asserting the identical condition here can never catch anything
+	// those steps didn't already catch first, so it was dropped as a
+	// no-value duplicate. The CRD check stays: nothing else in the
+	// workflow verifies these are registered, and it has a real bug-catch
+	// on record (DD-220/222 — osac-operator/BMFO once started, and
+	// reported Available, while still missing a CRD they needed).
+	It("has all 8 vendored CRDs registered before any Phase 2 reconciliation is exercised", func() {
 		for _, crd := range phase2CRDs {
 			out, err := exec.Command("kubectl", "get", "crd", crd).CombinedOutput() //nolint:gosec // fixed allowlist, not user input
 			Expect(err).NotTo(HaveOccurred(), "CRD %q not registered: %s", crd, out)
 		}
 	})
 })
-
-// deploymentReady reports whether the named Deployment (in the current
-// kubectl context's default namespace) has all replicas Available.
-func deploymentReady(name string) bool {
-	out, err := exec.Command("kubectl", "get", "deployment", name, //nolint:gosec // fixed allowlist, not user input
-		"-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}").CombinedOutput()
-	Expect(err).NotTo(HaveOccurred(), "kubectl get deployment %s failed: %s", name, out)
-	return strings.TrimSpace(string(out)) == "True"
-}
 
 var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal state", func() {
 	// TC-TB-080/090 / REQ-TB-070, REQ-TB-080, REQ-TB-100 / AC-TB-030

@@ -3441,3 +3441,38 @@ comment named:
 
 **Related requirements:** REQ-TB-020, REQ-TB-060, REQ-TB-080, REQ-TB-100,
 REQ-TB-110, REQ-TB-120, AC-TB-020, AC-TB-030, AC-TB-040, AC-TB-050
+
+---
+## DD-231: TC-TB-060's deployment-readiness loop dropped as a no-value duplicate of already-enforced CI gates
+
+**Decision:** removed the `deploymentReady(osac-operator/bmf-operator-
+controller-manager/osac-aap-mock)` loop (and its now-unused
+`deploymentReady` helper) from TC-TB-060. `.github/workflows/e2e-tierb.yaml`
+already runs `kubectl rollout status`/`kubectl wait
+--for=condition=Available` against those exact three Deployments (lines
+215, 224, 229) before the Ginkgo suite ever starts — by the time this spec
+ran, the condition it checked was already guaranteed true (or the job would
+already have failed earlier), so it could never catch a regression those
+steps didn't already catch first. It also didn't map to any input-
+validation/fail-safe/boundary-protection/audit-sufficiency category — pure
+infra-existence checking, the textbook "asserts a code path ran, not a
+business outcome" pattern this project treats as no-value (see
+`dcm-testing-methodology`).
+
+The CRD-registration half of TC-TB-060 was kept as is: nothing else in the
+workflow checks CRD registration, and it has a real, documented bug-catch
+on record (DD-220/222 — osac-operator/BMFO once started and reported
+`Available` while still missing a CRD they needed) — a genuinely
+non-duplicated, earned check, unlike the Deployment loop.
+
+Same review pass that produced DD-230's assertion-strictness pass; this is
+a separate, orthogonal finding (test-value, not assertion-strictness) from
+the same "triage the rest of the tests" request. `TC-TB-020` (Keycloak
+claim shape) was also considered and *not* changed: despite superficially
+resembling infra-existence checking, it pins REQ-TB-020's real, stated
+contract (the exact `osac-admin` OIDC client `osac-sp` itself is configured
+with in this stack, `manifests-tierb/osac-service-provider.yaml`) and
+localizes a regression class (claim-shape drift, e.g. DD-150's `groups`-
+omission gotcha) that the end-to-end health check alone can't diagnose.
+
+**Related requirements:** REQ-TB-070, AC-TB-030
