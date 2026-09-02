@@ -104,9 +104,17 @@ var _ = Describe("Tier B: a real auth failure is genuinely detectable", func() {
 			return h.Status
 		}, 30*time.Second, 500*time.Millisecond).Should(Equal("unhealthy"))
 
-		Expect(h.Detail).NotTo(BeEmpty())
-		Expect(h.Detail).To(ContainSubstring("OIDC token invalid"),
-			"a wrong client secret must surface as a token-fetch failure, not an opaque connectivity error")
+		// Exact match, not ContainSubstring: internal/health/health.go's
+		// unhealthyDetail returns precisely "OIDC token invalid" when only
+		// the token is invalid, and
+		// "OIDC token invalid; OSAC fulfillment service unreachable" if
+		// connectivity is *also* broken (own source, same string asserted
+		// by internal/health/health_unit_test.go). A substring match would
+		// let that second, unexpected failure mode (connectivity also
+		// down) silently pass as if this test's one intended failure mode
+		// were the only thing wrong.
+		Expect(h.Detail).To(Equal("OIDC token invalid"),
+			"a wrong client secret must surface as exactly a token-fetch failure, not an opaque connectivity error or a compounded one")
 	})
 })
 
@@ -376,6 +384,26 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 			return status.Phase
 		}, 2*time.Minute, 5*time.Second).Should(Equal("Ready"),
 			"BareMetalInstance %q never reached Ready; last observed status: %+v", bareMetalInstanceUnsetName, status)
+
+		// Consistency with TC-TB-130/140's negative-path Allocated checks
+		// below: those assert Allocated=False/"Failed" on the failure
+		// branch of BMFO's real reconcileInventory; this asserts the
+		// success branch's exact counterpart — Allocated=True/reason
+		// "Allocated" (internal/controller/baremetalinstance_controller.go).
+		// The message is asserted on its two fixture-controlled components
+		// (the claimed host's name, and osac-inventory-config's
+		// hostClass, DD-228) via substring rather than full equality,
+		// since the format also embeds the claiming namespace — an
+		// incidental deployment detail, not part of the behavior under
+		// test — ahead of those two.
+		condStatus, reason, message, found := bareMetalInstanceCondition(status, "Allocated")
+		Expect(found).To(BeTrue(), "Allocated condition never appeared; last observed status: %+v", status)
+		Expect(condStatus).To(Equal("True"))
+		Expect(reason).To(Equal("Allocated"))
+		Expect(message).To(And(
+			ContainSubstring(bareMetalHostUnsetName),
+			ContainSubstring("tierb-fixture-hostclass"),
+		), "allocated-host message; last observed status: %+v", status)
 	})
 
 	// TC-TB-120 / REQ-TB-110 / AC-TB-040 (runStrategy: Always variant).
@@ -433,6 +461,18 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 		Expect(reason).To(Equal("PowerOn"))
 		Expect(message).To(Equal(""))
 		Expect(status.RunStrategy).To(Equal("Always"), "observed runStrategy; last observed status: %+v", status)
+
+		// Same Allocated-condition consistency check as TC-TB-110 above —
+		// see that test's comment for why the message is checked by
+		// substring, not full equality.
+		allocStatus, allocReason, allocMessage, allocFound := bareMetalInstanceCondition(status, "Allocated")
+		Expect(allocFound).To(BeTrue(), "Allocated condition never appeared; last observed status: %+v", status)
+		Expect(allocStatus).To(Equal("True"))
+		Expect(allocReason).To(Equal("Allocated"))
+		Expect(allocMessage).To(And(
+			ContainSubstring(bareMetalHostAlwaysName),
+			ContainSubstring("tierb-fixture-hostclass"),
+		), "allocated-host message; last observed status: %+v", status)
 	})
 })
 

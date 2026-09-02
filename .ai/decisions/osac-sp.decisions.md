@@ -3397,5 +3397,47 @@ be fully deterministic and within this suite's control:
   unasserted; everything downstream of that outcome is fully determined by
   `AssignHost` and is now checked.
 
-**Related requirements:** REQ-TB-080, REQ-TB-100, REQ-TB-110, REQ-TB-120,
-AC-TB-030, AC-TB-040, AC-TB-050
+**Second follow-up: triaged every remaining spec in `tierb_test.go` for the
+same consistency.** Walked the whole file top to bottom (TC-TB-020 through
+TC-TB-160) looking for the same two anti-patterns — a controlled field left
+unchecked, or checked with a matcher looser than the value's actual
+determinism warrants — rather than stopping at the two specs the review
+comment named:
+
+- **TC-TB-050** (auth-failure detectability): was `NotTo(BeEmpty())` +
+  `ContainSubstring("OIDC token invalid")`. Tightened to exact
+  `Equal("OIDC token invalid")` — `internal/health/health.go`'s
+  `unhealthyDetail` (this repo's own code, already covered by
+  `internal/health/health_unit_test.go`) returns that literal string when
+  only the token is invalid, and a *different*, longer string when
+  connectivity is also broken. The old substring match would have let that
+  second, unexpected failure mode pass silently as if this test's one
+  intended failure mode were the only thing wrong.
+- **TC-TB-110/TC-TB-120** (the `BareMetalInstance` happy paths): neither
+  asserted the `Allocated` condition at all, even though TC-TB-130/140
+  (the negative counterparts added in the same PR) assert it exactly on
+  the failure branch. Added the success-branch counterpart to both:
+  `Allocated=True`/reason `"Allocated"` exactly (BMFO's real
+  `reconcileInventory` success path,
+  `internal/controller/baremetalinstance_controller.go`), plus a substring
+  check on the message's two fixture-controlled components — the claimed
+  host's name and `tierb-fixture-hostclass` (this repo's own
+  `manifests-tierb/bmfo-secrets.yaml`, DD-228). Substring rather than full
+  equality specifically because the message's format also embeds the
+  claiming Kubernetes namespace, which is real, controlled data too, but
+  is incidental deployment plumbing rather than part of the behavior this
+  suite is verifying — hard-coding it would add a namespace assumption
+  with no corresponding increase in regression-catching power.
+- **TC-TB-020, TC-TB-060, TC-TB-130/140/150/160**: already fully strict on
+  every controlled field (or already using `Or`/`ContainSubstring` only
+  where the underlying value is genuinely one of several valid real-world
+  shapes, e.g. a JWT `aud` claim being either a bare string or an array —
+  left unchanged.
+- **`health_test.go`'s `Label("tier-b-only")` block** (a different file,
+  but the same Tier B test surface): reviewed for the same patterns and
+  found already fully strict (`BeEmpty()`/`Equal()`/`ConsistOf()` on every
+  field) — pre-existing, already-merged code from an earlier PR, left
+  untouched.
+
+**Related requirements:** REQ-TB-020, REQ-TB-060, REQ-TB-080, REQ-TB-100,
+REQ-TB-110, REQ-TB-120, AC-TB-020, AC-TB-030, AC-TB-040, AC-TB-050
