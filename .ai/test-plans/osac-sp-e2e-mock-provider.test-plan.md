@@ -10,7 +10,7 @@ numbering (DD-126).
 `_integration_test.go` suffix. Run a single case with:
 
 ```bash
-go run github.com/onsi/ginkgo/v2/ginkgo -r -v -focus "TC-U-114" ./test/mockprovider/... ./cmd/osac-mock-provider/...
+go run github.com/onsi/ginkgo/v2/ginkgo -r -v -focus "TC-U-114" ./test/mockprovider/... ./test/cmd/osac-mock-provider/...
 ```
 
 **Assertion discipline:** assert actual values (exact IDs, exact status
@@ -42,6 +42,7 @@ test, no further fake/mock layer needed underneath it.
 | TC-U-125 | `ComputeInstances.Delete` removes a known `id`; a second `Delete` is `NotFound` | REQ-MOCK-060, AC-MOCK-050 | Same as TC-U-124 for `ComputeInstances`. |
 | TC-U-155 | `Clusters.GetKubeconfig` round-trips a non-empty, base64-encoded stub for a known `id`; unknown `id` is `NotFound` | REQ-MOCK-120, AC-MOCK-130 | Regression test for a real gap found while building M3/M4 e2e coverage (DD-143): `Create` a cluster with `id="x"`; call `GetKubeconfig("x")`; assert the response's `kubeconfig` is non-empty and `base64.StdEncoding.DecodeString` succeeds on it; call `GetKubeconfig("missing")`; assert error code `NOT_FOUND`. |
 | TC-U-156 | `ClusterTemplates.Get` resolves the well-known `default-hcp` template with exactly one node set; an unknown `id` is `NotFound` | REQ-MOCK-130, AC-MOCK-140 | Regression test for a real gap found while building Milestone 3/4's own e2e CRUD coverage: call `Get(id="default-hcp")`; assert the response's `object.node_sets` has exactly 1 entry; call `Get(id="missing")`; assert error code `NOT_FOUND`. Without this, `internal/cluster.Service.Create`'s `resolveNodeSetKey` (M3 REQ-CREATE-080) hits gRPC UNIMPLEMENTED on every real Cluster Create, surfacing as osac-sp's generic 500/INTERNAL. |
+| TC-U-157 | `ServerTLSConfig` parses the static test cert/key into a usable `*tls.Config` | REQ-MOCK-140, AC-MOCK-150 | Call `ServerTLSConfig()`; assert no error and exactly one certificate that round-trips against the checked-in `testdata/tls-cert.pem`/`tls-key.pem` PEM bytes (`tls.X509KeyPair` on the same inputs, compared field-by-field). Added alongside DD-229 (TLS made unconditional for `osac-sp`'s own fulfillment-service dial), which required this mock to terminate real TLS instead of plaintext. |
 
 ---
 
@@ -92,7 +93,7 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 6. `cmd/osac-mock-provider` — unit
+## 6. `test/cmd/osac-mock-provider` — unit
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -107,11 +108,11 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 7. `cmd/osac-mock-provider` — integration
+## 7. `test/cmd/osac-mock-provider` — integration
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-031 | A real `osac.Bootstrap` authenticates and probes against the real mock binary over real listeners | REQ-MOCK-010, REQ-MOCK-070, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-110, AC-MOCK-120 | Start the real `run()` (env-var config, both real listeners, all 5 fake gRPC services, the OIDC stub) in the background; construct an `osac.Bootstrap` via the production `osac.New(cfg, logger)` pointed at those two real addresses; call `Start(ctx)`; poll (bounded wait) until `TokenStatus().Valid == true`; assert `Probe(ctx).Connected == true`. |
+| TC-I-031 | A real `osac.Bootstrap` authenticates and probes against the real mock binary over real listeners, over real TLS | REQ-MOCK-010, REQ-MOCK-070, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-110, REQ-MOCK-140, AC-MOCK-120 | Start the real `run()` (env-var config, both real listeners, all 5 fake gRPC services over real TLS via `ServerTLSConfig`, the OIDC stub) in the background; construct an `osac.Bootstrap` via the production `osac.New(cfg, logger)`, with `TLSCertFile` set to the same static test certificate, pointed at those two real addresses; call `Start(ctx)`; poll (bounded wait) until `TokenStatus().Valid == true`; assert `Probe(ctx).Connected == true`. Updated (DD-229) from a plaintext dial to a real-TLS one — `osac-sp`'s fulfillment-service dial no longer has an insecure fallback to fall back to. |
 
 ---
 
@@ -124,6 +125,6 @@ test, no further fake/mock layer needed underneath it.
 | `Capabilities` | REQ-MOCK-070 | AC-MOCK-080 | 1 (TC-U-134) | — | |
 | OIDC discovery + token | REQ-MOCK-080, 090, 100 | AC-MOCK-090, 100, 110 | 8 (TC-U-135..141, 152) | — | TC-U-140/141 added post-hoc to close `ParseForm`- and encode-error coverage gaps; TC-U-152 added post-hoc as a regression test for a real cross-pod-unreachability bug found via the e2e infra (DD-139). |
 | Mock config (`test/mockprovider.LoadConfig`) | REQ-MOCK-110 | — | 2 (TC-U-142..143) | — | |
-| Binary wiring (`cmd/osac-mock-provider`) | REQ-MOCK-010, 070, 080, 090, 110 | AC-MOCK-120 | 8 (TC-U-144..151) | 1 (TC-I-031) | `run`/`serveUntilDone` are 100% unit-covered on their own (TC-U-144..151); TC-I-031 closes the pyramid invariant by proving the real transport end to end with a real `osac.Bootstrap`, not a fake. `main`/`mainRun`'s happy path is a documented coverage exception (real-OS-signal-dependent), mirroring `cmd/osac-service-provider/main.go`'s own accepted gap. |
+| Binary wiring (`test/cmd/osac-mock-provider`) | REQ-MOCK-010, 070, 080, 090, 110, 140 | AC-MOCK-120 | 9 (TC-U-144..151, 157) | 1 (TC-I-031) | `run`/`serveUntilDone` are 100% unit-covered on their own (TC-U-144..151); TC-I-031 closes the pyramid invariant by proving the real transport end to end with a real `osac.Bootstrap` over real TLS, not a fake. `main`/`mainRun`'s happy path is a documented coverage exception (real-OS-signal-dependent), mirroring `cmd/osac-service-provider/main.go`'s own accepted gap. |
 | `Clusters.GetKubeconfig` / `ClusterTemplates` | REQ-MOCK-120, 130 | AC-MOCK-130, 140 | 2 (TC-U-155..156) | — | Both added post-hoc as regression tests for real gaps found while building Milestone 3/4's own e2e CRUD coverage (DD-143, and this suite's `ClusterTemplates` addition). |
-| **Total** | 12 | 13 | **39** | **1** | |
+| **Total** | 15 | 15 | **42** | **1** | |
