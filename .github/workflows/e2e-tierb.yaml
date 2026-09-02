@@ -20,7 +20,7 @@ on:
         type: boolean
         default: false
       osac_unreachable:
-        description: "Also deploy the osac-sp instance with an unroutable OSAC address (TC-TB-130 / REQ-HLT-070)"
+        description: "Also deploy the osac-sp instance with an unroutable OSAC address (TC-TB-130 / REQ-TB-065 / AC-TB-025)"
         type: boolean
         default: false
 

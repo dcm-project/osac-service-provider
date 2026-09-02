@@ -106,7 +106,7 @@ var _ = Describe("Tier B: a real auth failure is genuinely detectable", func() {
 })
 
 var _ = Describe("Tier B: OSAC unreachable is genuinely detectable, distinct from a token failure", func() {
-	// TC-TB-130 / REQ-HLT-070 / AC-HLT-060 — opt-in workflow_dispatch
+	// TC-TB-130 / REQ-TB-065 / AC-TB-025 — opt-in workflow_dispatch
 	// variant only (e2e-tierb.yaml); OSAC_UNREACHABLE_OSAC_SP_URL is
 	// unset on every regular PR run. Closes the other half of AC-HLT-060
 	// that TC-TB-050 above doesn't reach: a real, valid OIDC token
