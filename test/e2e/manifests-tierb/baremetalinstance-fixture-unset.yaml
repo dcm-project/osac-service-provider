@@ -1,0 +1,20 @@
+# BareMetalInstance fixture for AC-TB-040/TC-TB-110: `runStrategy` left
+# unset entirely — per BMFO's own spec comment ("When empty, the operator
+# will not manage the host's power state"), this reaches Ready as soon as
+# BMFO allocates baremetalhost-fixture-unset.yaml's host, with zero
+# power-management steps (DD-226).
+#
+# `templateID: noop` is BMFO's own `shared.OsacNoopTemplate` constant,
+# which skips AAP/provisioning dispatch entirely — this fixture's only
+# purpose is proving host allocation + terminal-state convergence, not
+# provisioning fidelity (that's REQ-TB-080/100's `ClusterOrder` scope).
+apiVersion: osac.openshift.io/v1alpha1
+kind: BareMetalInstance
+metadata:
+  name: tierb-bmi-unset
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  hostType: tierb-hosttype-unset
+  externalHostID: ""
+  templateID: "noop"

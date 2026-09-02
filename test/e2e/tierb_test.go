@@ -167,18 +167,6 @@ var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exerc
 			Expect(err).NotTo(HaveOccurred(), "CRD %q not registered: %s", crd, out)
 		}
 	})
-
-	// TC-TB-100 / REQ-TB-070. Deliberately thin (DD-216, #46): proves the
-	// chart/RBAC/CRD install is sound on its own, without claiming any
-	// BareMetalInstance reconciliation fidelity — nothing in this suite
-	// ever creates one.
-	It("keeps BMFO healthy with zero BareMetalInstance CRs present (deploy-only regression check)", func() {
-		Expect(deploymentReady("bmf-operator-controller-manager")).To(BeTrue(), "deployment/bmf-operator-controller-manager is not Ready")
-
-		out, err := exec.Command("kubectl", "get", "baremetalinstances.osac.openshift.io", "-A", "-o", "name").CombinedOutput() //nolint:gosec // fixed args, not user input
-		Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalinstances failed: %s", out)
-		Expect(strings.TrimSpace(string(out))).To(BeEmpty(), "expected zero BareMetalInstance CRs, found: %s", out)
-	})
 })
 
 // deploymentReady reports whether the named Deployment (in the current
@@ -254,6 +242,148 @@ func getClusterOrderStatus() clusterOrderStatus {
 	var status clusterOrderStatus
 	Expect(json.Unmarshal([]byte(raw), &status)).To(Succeed(), "unparseable ClusterOrder status: %s", raw)
 	return status
+}
+
+// bareMetalHost{Unset,Always}Name/Fixture and bareMetalInstance{Unset,Always}Name/Fixture
+// match manifests-tierb/baremetalhost-fixture-{unset,always}.yaml and
+// manifests-tierb/baremetalinstance-fixture-{unset,always}.yaml's own
+// metadata.name/apply path.
+const (
+	bareMetalHostUnsetName        = "tierb-bmh-unset"
+	bareMetalHostUnsetFixture     = "manifests-tierb/baremetalhost-fixture-unset.yaml"
+	bareMetalInstanceUnsetName    = "tierb-bmi-unset"
+	bareMetalInstanceUnsetFixture = "manifests-tierb/baremetalinstance-fixture-unset.yaml"
+
+	bareMetalHostAlwaysName        = "tierb-bmh-always"
+	bareMetalHostAlwaysFixture     = "manifests-tierb/baremetalhost-fixture-always.yaml"
+	bareMetalInstanceAlwaysName    = "tierb-bmi-always"
+	bareMetalInstanceAlwaysFixture = "manifests-tierb/baremetalinstance-fixture-always.yaml"
+)
+
+// bareMetalInstanceStatus mirrors just the fields of BMFO's real
+// BareMetalInstanceStatus (api/v1alpha1/baremetalinstance_types.go) this
+// suite asserts on or reports in failure messages.
+type bareMetalInstanceStatus struct {
+	Phase      string `json:"phase"`
+	Conditions []struct {
+		Type    string `json:"type"`
+		Status  string `json:"status"`
+		Reason  string `json:"reason"`
+		Message string `json:"message"`
+	} `json:"conditions"`
+}
+
+var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real terminal state", func() {
+	BeforeEach(func() {
+		if os.Getenv(envPhase2Enabled) == "" {
+			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
+		}
+	})
+
+	// TC-TB-110 / REQ-TB-110 / AC-TB-040 (runStrategy unset variant). No
+	// real Metal3/Ironic/virtual-BMC infrastructure involved (DD-226/227) —
+	// a static BareMetalHost fixture, patched once to simulate completed
+	// Metal3 inspection, is sufficient for BMFO's real, unmodified
+	// reconciler to allocate it and reach Ready.
+	It("drives a BareMetalInstance with runStrategy unset to Ready via real BMFO, with no power-management steps", func() {
+		applyOut, err := exec.Command("kubectl", "apply", "-f", bareMetalHostUnsetFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalHostUnsetFixture, applyOut)
+		patchBareMetalHostInitialStatus(bareMetalHostUnsetName, "aa:bb:cc:dd:ee:01")
+
+		applyOut, err = exec.Command("kubectl", "apply", "-f", bareMetalInstanceUnsetFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalInstanceUnsetFixture, applyOut)
+
+		var status bareMetalInstanceStatus
+		Eventually(func() string {
+			status = getBareMetalInstanceStatus(bareMetalInstanceUnsetName)
+			return status.Phase
+		}, 2*time.Minute, 5*time.Second).Should(Equal("Ready"),
+			"BareMetalInstance %q never reached Ready; last observed status: %+v", bareMetalInstanceUnsetName, status)
+	})
+
+	// TC-TB-120 / REQ-TB-110 / AC-TB-040 (runStrategy: Always variant).
+	// Exercises the power-synced condition path (reconcilePower/
+	// SetPowerState) that the unset variant above never touches: BMFO
+	// itself only ever patches spec.online, never status.poweredOn
+	// (DD-226), so the instance genuinely cannot reach Ready without a
+	// fake-BMO step simulating a real baremetal-operator's completed
+	// power-on.
+	It("drives a BareMetalInstance with runStrategy Always to Ready only after a fake-BMO power-on patch", func() {
+		applyOut, err := exec.Command("kubectl", "apply", "-f", bareMetalHostAlwaysFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalHostAlwaysFixture, applyOut)
+		patchBareMetalHostInitialStatus(bareMetalHostAlwaysName, "aa:bb:cc:dd:ee:02")
+
+		applyOut, err = exec.Command("kubectl", "apply", "-f", bareMetalInstanceAlwaysFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalInstanceAlwaysFixture, applyOut)
+
+		// Assert it's genuinely blocked on power sync *before* the
+		// fake-BMO patch below — proves PowerSynced actually gates Ready,
+		// not a vestigial/never-blocking condition that would let a
+		// broken reconciler report Ready anyway (mirrors AC-TB-020's "real
+		// failure/blocking paths must be genuinely detectable" spirit).
+		var status bareMetalInstanceStatus
+		Eventually(func() string {
+			status = getBareMetalInstanceStatus(bareMetalInstanceAlwaysName)
+			return status.Phase
+		}, 90*time.Second, 3*time.Second).Should(Equal("Progressing"),
+			"BareMetalInstance %q should be Progressing (blocked on power sync) before the fake-BMO patch; last observed status: %+v", bareMetalInstanceAlwaysName, status)
+
+		patchBareMetalHostPoweredOn(bareMetalHostAlwaysName)
+
+		Eventually(func() string {
+			status = getBareMetalInstanceStatus(bareMetalInstanceAlwaysName)
+			return status.Phase
+		}, 90*time.Second, 3*time.Second).Should(Equal("Ready"),
+			"BareMetalInstance %q never reached Ready after the fake-BMO patch; last observed status: %+v", bareMetalInstanceAlwaysName, status)
+	})
+})
+
+// getBareMetalInstanceStatus mirrors getClusterOrderStatus's own
+// kubectl-shell-out approach (see that function's doc comment for why: no
+// client-go dependency in this module, kubectl is already configured for
+// every other step in .github/workflows/e2e-tierb.yaml).
+func getBareMetalInstanceStatus(name string) bareMetalInstanceStatus {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("kubectl", "get", "baremetalinstance", name, "-o", "jsonpath={.status}") //nolint:gosec // fixed args, not user input
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		Fail(fmt.Sprintf("kubectl get baremetalinstance %s failed: %v: %s", name, err, stderr.String()))
+	}
+
+	raw := strings.TrimSpace(stdout.String())
+	if raw == "" {
+		return bareMetalInstanceStatus{}
+	}
+
+	var status bareMetalInstanceStatus
+	Expect(json.Unmarshal([]byte(raw), &status)).To(Succeed(), "unparseable BareMetalInstance status: %s", raw)
+	return status
+}
+
+// patchBareMetalHostInitialStatus simulates a BareMetalHost that has
+// already completed real Metal3 registration/inspection —
+// operationalStatus OK, provisioning state available, one NIC reported —
+// sufficient for BMFO's real FindFreeHost to select it (DD-226/227). mac
+// must be a unique, valid MAC per fixture; nothing in this suite relies on
+// its actual value. Set via --subresource=status since the vendored CRD
+// declares subresources: {status: {}} (DD-227) — a plain `kubectl apply`
+// body would silently drop it.
+func patchBareMetalHostInitialStatus(name, mac string) {
+	patch := fmt.Sprintf(`{"status":{"operationalStatus":"OK","poweredOn":false,"provisioning":{"state":"available"},"hardware":{"nics":[{"mac":%q,"name":"eth0"}]}}}`, mac)
+	out, err := exec.Command("kubectl", "patch", "baremetalhost", name, //nolint:gosec // fixed args, mac is a compile-time constant, not user input
+		"--subresource=status", "--type=merge", "-p", patch).CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), "kubectl patch baremetalhost %s status failed: %s", name, out)
+}
+
+// patchBareMetalHostPoweredOn simulates a real baremetal-operator finishing
+// a power-on action. BMFO itself only ever patches spec.online (DD-226),
+// never status.poweredOn, so nothing in this suite's own reconciliation
+// path will ever set this without a fake-BMO step like this one.
+func patchBareMetalHostPoweredOn(name string) {
+	out, err := exec.Command("kubectl", "patch", "baremetalhost", name, //nolint:gosec // fixed args, not user input
+		"--subresource=status", "--type=merge", "-p", `{"status":{"poweredOn":true}}`).CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), "kubectl patch baremetalhost %s poweredOn failed: %s", name, out)
 }
 
 // fetchTokenClaims performs a real client_credentials grant directly

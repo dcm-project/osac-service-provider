@@ -1,0 +1,20 @@
+# BareMetalHost fixture for AC-TB-040/TC-TB-110 (BareMetalInstance,
+# runStrategy unset). No real Metal3/Ironic/virtual-BMC involved — a live
+# spike (DD-226) proved BMFO's metal3 backend only reads/patches this
+# object's own Kubernetes fields, never a real BMC/Ironic endpoint.
+#
+# `status` is intentionally omitted from this apply body: the vendored CRD
+# (manifests-tierb/crds/baremetalhosts.metal3.io.yaml) declares
+# `subresources: {status: {}}`, so it must be set via a separate `kubectl
+# patch --subresource=status` call — tierb_test.go's
+# patchBareMetalHostInitial does this right after applying this file
+# (DD-227).
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: tierb-bmh-unset
+  labels:
+    osac.openshift.io/host-type: tierb-hosttype-unset
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  online: false
