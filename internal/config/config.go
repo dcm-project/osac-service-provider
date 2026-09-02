@@ -20,16 +20,20 @@ type ServerConfig struct {
 // OSACConfig holds settings for connecting to the OSAC fulfillment service
 // and its Keycloak OIDC issuer.
 //
-// Implements REQ-OSAC-010, REQ-OSAC-030, REQ-OSAC-040, REQ-OSAC-050,
-// REQ-OSAC-080.
+// Implements REQ-OSAC-010, REQ-OSAC-030, REQ-OSAC-040, REQ-OSAC-080. The
+// gRPC connection to the fulfillment service is always TLS (DD-229) — there
+// is deliberately no field to disable it.
 type OSACConfig struct {
-	FulfillmentAddress string        `env:"FULFILLMENT_ADDRESS,notEmpty"`
-	OIDCIssuerURL      string        `env:"OIDC_ISSUER_URL,notEmpty"`
-	OIDCClientID       string        `env:"OIDC_CLIENT_ID,notEmpty"`
-	OIDCClientSecret   string        `env:"OIDC_CLIENT_SECRET,notEmpty"`
-	TLSEnabled         bool          `env:"TLS_ENABLED" envDefault:"false"`
-	TLSCertFile        string        `env:"TLS_CERT_FILE"`
-	ProbeTimeout       time.Duration `env:"PROBE_TIMEOUT" envDefault:"5s"`
+	FulfillmentAddress string `env:"FULFILLMENT_ADDRESS,notEmpty"`
+	OIDCIssuerURL      string `env:"OIDC_ISSUER_URL,notEmpty"`
+	OIDCClientID       string `env:"OIDC_CLIENT_ID,notEmpty"`
+	OIDCClientSecret   string `env:"OIDC_CLIENT_SECRET,notEmpty"`
+	// TLSCertFile optionally names a custom CA to trust in addition to
+	// the system root pool (DD-229). Leave unset to trust the system
+	// root CA pool, the correct default for a real publicly-trusted
+	// fulfillment-service endpoint.
+	TLSCertFile  string        `env:"TLS_CERT_FILE"`
+	ProbeTimeout time.Duration `env:"PROBE_TIMEOUT" envDefault:"5s"`
 }
 
 // DCMConfig holds settings for reaching the SP registration endpoint

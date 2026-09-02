@@ -18,7 +18,6 @@ var allEnvVars = []string{
 	"SP_OSAC_OIDC_ISSUER_URL",
 	"SP_OSAC_OIDC_CLIENT_ID",
 	"SP_OSAC_OIDC_CLIENT_SECRET",
-	"SP_OSAC_TLS_ENABLED",
 	"SP_OSAC_TLS_CERT_FILE",
 	"SP_OSAC_PROBE_TIMEOUT",
 	"DCM_REGISTRATION_URL",
@@ -59,7 +58,6 @@ var _ = Describe("Configuration", func() {
 		_ = os.Setenv("SP_SERVER_ADDRESS", ":9090")
 		_ = os.Setenv("SP_SERVER_SHUTDOWN_TIMEOUT", "30s")
 		_ = os.Setenv("SP_SERVER_REQUEST_TIMEOUT", "45s")
-		_ = os.Setenv("SP_OSAC_TLS_ENABLED", "true")
 		_ = os.Setenv("SP_OSAC_TLS_CERT_FILE", "/etc/osac/ca.pem")
 		_ = os.Setenv("SP_OSAC_PROBE_TIMEOUT", "9s")
 		_ = os.Setenv("SP_PROVIDER_CLUSTER_NAME", "osac-sp-cluster-custom")
@@ -80,7 +78,6 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.OSAC.OIDCIssuerURL).To(Equal("https://keycloak.example.com/token"))
 		Expect(cfg.OSAC.OIDCClientID).To(Equal("osac-sp"))
 		Expect(cfg.OSAC.OIDCClientSecret).To(Equal("s3cr3t"))
-		Expect(cfg.OSAC.TLSEnabled).To(BeTrue())
 		Expect(cfg.OSAC.TLSCertFile).To(Equal("/etc/osac/ca.pem"))
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(9 * time.Second))
 
@@ -118,7 +115,6 @@ var _ = Describe("Configuration", func() {
 		Expect(cfg.Server.Address).To(Equal(":8080"))
 		Expect(cfg.Server.ShutdownTimeout).To(Equal(15 * time.Second))
 		Expect(cfg.Server.RequestTimeout).To(Equal(30 * time.Second))
-		Expect(cfg.OSAC.TLSEnabled).To(BeFalse())
 		Expect(cfg.OSAC.ProbeTimeout).To(Equal(5 * time.Second))
 		Expect(cfg.Provider.ClusterName).To(Equal("osac-sp-cluster"))
 		Expect(cfg.Provider.VMName).To(Equal("osac-sp-vm"))

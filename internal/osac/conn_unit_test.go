@@ -18,16 +18,20 @@ package osac
 import (
 	"context"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/dcm-project/osac-service-provider/internal/config"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
 
 // fakeCapabilitiesServer is a minimal real Capabilities service
@@ -137,9 +141,29 @@ type bufconnGRPCFixture struct {
 	grpcServer       *grpc.Server
 }
 
+// tlsTestCfg returns testCfg() with TLSCertFile pointing at mockprovider's
+// static test certificate written to a temp file — this fixture dials
+// through the real, unexported dialOptions/transportCredentials, which is
+// unconditionally TLS (DD-229), so its bufconn server must terminate real
+// TLS too (below) rather than plaintext.
+func tlsTestCfg() *config.OSACConfig {
+	f, err := os.CreateTemp("", "osac-sp-test-ca-*.pem")
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.Write(mockprovider.CertPEM)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(f.Close()).To(Succeed())
+	DeferCleanup(func() { _ = os.Remove(f.Name()) })
+
+	cfg := testCfg()
+	cfg.TLSCertFile = f.Name()
+	return cfg
+}
+
 func newBufconnGRPCFixture() *bufconnGRPCFixture {
 	lis := bufconn.Listen(1024 * 1024)
-	grpcSrv := grpc.NewServer()
+	tlsCfg, err := mockprovider.ServerTLSConfig()
+	Expect(err).NotTo(HaveOccurred())
+	grpcSrv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 
 	clustersImpl := &fakeClustersServer{}
 	ciImpl := &fakeComputeInstancesServer{}
@@ -154,15 +178,19 @@ func newBufconnGRPCFixture() *bufconnGRPCFixture {
 
 	go func() { _ = grpcSrv.Serve(lis) }()
 
-	b := newBootstrap(testCfg(), discardLogger, &fakeTokenSource{}, nil)
+	cfg := tlsTestCfg()
+	b := newBootstrap(cfg, discardLogger, &fakeTokenSource{}, nil)
 
-	dialOpts, err := dialOptions(testCfg(), &bearerCreds{b: b})
+	dialOpts, err := dialOptions(cfg, &bearerCreds{b: b})
 	Expect(err).NotTo(HaveOccurred())
 	dialOpts = append(dialOpts, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 		return lis.DialContext(ctx)
 	}))
 
-	conn, err := grpc.NewClient("passthrough:///bufnet", dialOpts...)
+	// "localhost" (not the conventional "bufnet") as the dial target's
+	// authority, so the TLS handshake's SNI/server-name check matches one
+	// of mockprovider's test certificate's actual SANs.
+	conn, err := grpc.NewClient("passthrough:///localhost", dialOpts...)
 	Expect(err).NotTo(HaveOccurred())
 
 	// Mirrors New()'s production wiring: capClient is built from the same
