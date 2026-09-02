@@ -120,6 +120,21 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
+	// TC-U-200f: unlike TC-U-200e's NotFound-to-InvalidArgument remap, any
+	// other gRPC error from ClusterTemplates/Get (e.g. a transient
+	// Unavailable) is passed through unchanged — it's a real backend
+	// failure, not a bad value in the caller's own request.
+	It("passes through a non-NotFound ClusterTemplates/Get error unchanged (TC-U-200f)", func() {
+		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "templates backend unreachable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.Unavailable))
+		Expect(err).To(MatchError(ContainSubstring("templates backend unreachable")))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
 	// TC-U-201 (REQ-CREATE-030, AC-CREATE-020): ownership labels are set
 	// exactly, merged with (not replacing) caller-supplied labels.
 	It("sets ownership labels exactly, merged with caller labels (TC-U-201)", func() {
