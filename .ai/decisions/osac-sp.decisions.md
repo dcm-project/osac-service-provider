@@ -3225,3 +3225,47 @@ BMFO's own Go field names.
    part of this spike, not a new fix to those secrets.
 
 **Related requirements:** REQ-TB-070, REQ-TB-110
+
+---
+
+## DD-228: `bmfo-secrets.yaml`'s `osac-inventory-config` needs a non-empty `hostClass` — corrects a gap in DD-227's own verification
+
+**Decision:** `test/e2e/manifests-tierb/bmfo-secrets.yaml`'s `inventory.yaml`
+sets `hostClass: tierb-fixture-hostclass` at the top level (sibling to
+`type`/`options`, per DD-227 point 3's own schema description). The checked-in
+fixture never actually set it — a real CI run of `TC-TB-110`/`TC-TB-120`
+(post-merge, not part of the spike itself) timed out on both specs, stuck at
+`Phase: Progressing` indefinitely, `BareMetalInstance`'s own `Allocated`
+condition already `True` for both.
+
+**Rationale — the actual mechanism, confirmed against real upstream BMFO
+source (`internal/inventory/metal3.go`, `internal/controller/
+baremetalinstance_controller.go`) post-merge:** `Metal3Client.hostClass` is
+set once, at client construction, straight from `cfg.HostClass` — every
+`FindFreeHost`/`AssignHost` call returns a `Host` whose `HostClass` field is
+that same (in this case empty) string, never derived from the
+`BareMetalHost` object itself. `BareMetalInstanceReconciler.reconcileInventory`
+writes that value straight into `bareMetalInstance.Spec.HostClass` on every
+successful assignment — and `handleUpdate` picks `reconcileInventory` vs.
+`reconcileManagement` based on `bareMetalInstance.Spec.HostClass == ""`. An
+empty `hostClass` in the inventory config means that check is never
+satisfied: the reconciler re-runs the (idempotent) assign-host steps forever,
+setting `Phase=Progressing`/`Allocated=True` each time, but never once
+reaches `reconcileManagement` — the function that would eventually set
+`Phase=Ready`. This is indistinguishable, from the reconciler's own logs
+alone, from a slow-but-progressing power-management flow (both show
+"Successfully fulfilled BareMetalInstance" repeating), which is why it wasn't
+caught by re-reading those logs alone; it only became clear by tracing
+`Spec.HostClass`'s value through `bmhToHost` back to the empty config field.
+
+**Why DD-227 didn't already catch this**: DD-227 point 3 asserted the
+existing stub secrets' *shape* (nesting) was "confirmed correct... not a new
+fix to those secrets" — true for the YAML structure, but that check verified
+nesting, not that every field the schema allows was actually populated with
+a working value. The interactive spike session that produced DD-226/227 most
+likely ran against a `hostClass` set some other way (e.g. edited directly on
+the live cluster) that was never round-tripped back into this checked-in
+fixture — the gap was in what the spike verified, not in the schema
+description itself.
+
+**Related requirements:** REQ-TB-070, REQ-TB-110
