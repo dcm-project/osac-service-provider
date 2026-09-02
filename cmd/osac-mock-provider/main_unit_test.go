@@ -94,7 +94,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 	It("returns nil when ctx is cancelled (TC-U-148)", func() {
 		grpcSrv := grpc.NewServer()
 		grpcLn := newLoopbackListener()
-		oidcSrv := &http.Server{Handler: http.NotFoundHandler()}
+		oidcSrv := &http.Server{Handler: http.NotFoundHandler()} //nolint:gosec // test-only loopback server, no real deployment risk
 		oidcLn := newLoopbackListener()
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -121,7 +121,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 		grpcLn := newLoopbackListener()
 		Expect(grpcLn.Close()).To(Succeed()) // closed before Serve is ever called
 
-		oidcSrv := &http.Server{Handler: http.NotFoundHandler()}
+		oidcSrv := &http.Server{Handler: http.NotFoundHandler()} //nolint:gosec // test-only loopback server, no real deployment risk
 		oidcLn := newLoopbackListener()
 
 		runErr := serveUntilDone(context.Background(), slog.New(slog.DiscardHandler), time.Second, grpcSrv, grpcLn, oidcSrv, oidcLn)
@@ -136,7 +136,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 		grpcSrv := grpc.NewServer()
 		grpcLn := newLoopbackListener()
 
-		oidcSrv := &http.Server{Handler: http.NotFoundHandler()}
+		oidcSrv := &http.Server{Handler: http.NotFoundHandler()} //nolint:gosec // test-only loopback server, no real deployment risk
 		oidcLn := newLoopbackListener()
 		Expect(oidcLn.Close()).To(Succeed()) // closed before Serve is ever called
 
@@ -157,7 +157,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 		grpcLn := newLoopbackListener()
 
 		reqStarted := make(chan struct{})
-		oidcSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		oidcSrv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { //nolint:gosec // test-only loopback server, no real deployment risk
 			close(reqStarted)
 			time.Sleep(300 * time.Millisecond)
 			w.WriteHeader(http.StatusOK)
@@ -183,7 +183,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 		}, "1s", "5ms").Should(Succeed())
 
 		go func() {
-			resp, err := http.Get("http://" + oidcAddr) //nolint:noctx,gosec // test helper hitting a loopback address
+			resp, err := http.Get("http://" + oidcAddr) //nolint:noctx // test helper hitting a loopback address
 			if err == nil {
 				_ = resp.Body.Close()
 			}

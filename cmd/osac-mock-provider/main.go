@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/test/mockprovider"
@@ -70,7 +71,20 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer func() { _ = oidcLn.Close() }()
 
-	grpcSrv := grpc.NewServer()
+	// REQ-MOCK-140/DD-229: this mock terminates real TLS, never
+	// plaintext — osac-sp's own fulfillment-service dial is
+	// unconditionally TLS with no insecure fallback to fall back to.
+	//
+	// Coverage exception (documented, not unit-tested): the error branch
+	// below is only reachable if the static, checked-in
+	// testdata/tls-{cert,key}.pem embed were itself malformed, which
+	// ServerTLSConfig's own TC-U-157 already proves it is not — nothing
+	// at this call site can independently force that failure.
+	tlsCfg, err := mockprovider.ServerTLSConfig()
+	if err != nil {
+		return fmt.Errorf("building mock TLS config: %w", err)
+	}
+	grpcSrv := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 	publicv1.RegisterCapabilitiesServer(grpcSrv, mockprovider.NewCapabilitiesServer())
 	publicv1.RegisterClustersServer(grpcSrv, mockprovider.NewClustersServer())
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, mockprovider.NewClusterTemplatesServer())
@@ -81,7 +95,13 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	// OIDCHandler derives each response's token_endpoint from that
 	// request's own Host header (DD-139), so it needs no address
 	// computed from oidcLn here.
-	oidcSrv := &http.Server{Handler: mockprovider.NewOIDCHandler(logger)}
+	oidcSrv := &http.Server{
+		Handler: mockprovider.NewOIDCHandler(logger),
+		// ReadHeaderTimeout mitigates Slowloris-style resource exhaustion
+		// (gosec G112); this binary only ever serves loopback test traffic,
+		// but the fix is free so there's no reason to nolint it instead.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	return serveUntilDone(ctx, logger, shutdownTimeout, grpcSrv, grpcLn, oidcSrv, oidcLn)
 }

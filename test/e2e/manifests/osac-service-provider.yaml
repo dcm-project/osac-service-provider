@@ -4,6 +4,12 @@
 # per osac-sp-e2e-suite.spec.md §2's component-wiring table) and the
 # osac-mock-provider Service (osac-mock-provider.yaml in this directory).
 # Env vars per internal/config/config.go's contract.
+#
+# SP_OSAC_TLS_CERT_FILE (DD-229/REQ-MOCK-140): osac-sp's fulfillment-service
+# dial is unconditionally TLS with no insecure fallback, so it must trust
+# osac-mock-provider's certificate — mounted below from
+# mockprovider-tls-ca.yaml's ConfigMap (the same static cert
+# osac-mock-provider's own binary embeds and serves).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,12 +44,18 @@ spec:
               value: "osac-sp-e2e-client"
             - name: SP_OSAC_OIDC_CLIENT_SECRET
               value: "osac-sp-e2e-secret"
+            - name: SP_OSAC_TLS_CERT_FILE
+              value: "/etc/osac-sp/tls/ca.pem"
             - name: DCM_REGISTRATION_URL
               value: "http://dcm-control-plane:8080/api/v1alpha1"
             - name: DCM_NATS_URL
               value: "nats://dcm-nats:4222"
             - name: SP_ENDPOINT
               value: "http://osac-service-provider:8080"
+          volumeMounts:
+            - name: mockprovider-tls-ca
+              mountPath: /etc/osac-sp/tls
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /api/v1alpha1/clusters/health
@@ -56,6 +68,13 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+      volumes:
+        - name: mockprovider-tls-ca
+          configMap:
+            name: mockprovider-tls-ca
+            items:
+              - key: ca.pem
+                path: ca.pem
 ---
 apiVersion: v1
 kind: Service
