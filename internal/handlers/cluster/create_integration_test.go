@@ -91,7 +91,7 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 	// this package's own validateCreateRequest is the sole enforcement
 	// point for both cases.
 	It("rejects a missing id query parameter at the real HTTP boundary (TC-I-202a)", func() {
-		resp, err := http.Post(f.URL("/api/v1alpha1/clusters"), "application/json", strings.NewReader(validCreateJSON)) //nolint:noctx,gosec // test helper
+		resp, err := http.Post(f.URL("/api/v1alpha1/clusters"), "application/json", strings.NewReader(validCreateJSON)) //nolint:noctx // test helper
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 

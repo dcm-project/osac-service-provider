@@ -46,7 +46,7 @@ func (s *SubnetsServer) Get(_ context.Context, req *publicv1.SubnetsGetRequest) 
 
 func (s *SubnetsServer) List(_ context.Context, req *publicv1.SubnetsListRequest) (*publicv1.SubnetsListResponse, error) {
 	items, total := s.store.list(int(req.GetOffset()), int(req.GetLimit()))
-	return &publicv1.SubnetsListResponse{Size: int32(len(items)), Total: int32(total), Items: items}, nil
+	return &publicv1.SubnetsListResponse{Size: int32(len(items)), Total: int32(total), Items: items}, nil //nolint:gosec // in-memory test store, item count bounded by what the test itself creates
 }
 
 func (s *SubnetsServer) Delete(_ context.Context, req *publicv1.SubnetsDeleteRequest) (*publicv1.SubnetsDeleteResponse, error) {

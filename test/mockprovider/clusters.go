@@ -57,7 +57,7 @@ func (s *ClustersServer) Get(_ context.Context, req *publicv1.ClustersGetRequest
 
 func (s *ClustersServer) List(_ context.Context, req *publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
 	items, total := s.store.list(int(req.GetOffset()), int(req.GetLimit()))
-	return &publicv1.ClustersListResponse{Size: int32(len(items)), Total: int32(total), Items: items}, nil
+	return &publicv1.ClustersListResponse{Size: int32(len(items)), Total: int32(total), Items: items}, nil //nolint:gosec // in-memory test store, item count bounded by what the test itself creates
 }
 
 func (s *ClustersServer) Delete(_ context.Context, req *publicv1.ClustersDeleteRequest) (*publicv1.ClustersDeleteResponse, error) {

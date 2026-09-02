@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"encoding/base64"
+	"math"
 	"strconv"
 
 	"google.golang.org/grpc/codes"
@@ -64,7 +65,7 @@ func (s *Service) List(ctx context.Context, params v1alpha1.ListClustersParams) 
 	// loop forever refetching the same page. An empty page can never make
 	// progress, so it never emits a next_page_token regardless of Total.
 	if len(results) > 0 {
-		nextOffset := offset + int32(len(results))
+		nextOffset := offset + int32(len(results)) //nolint:gosec // len(results) never exceeds the already-int32 requested limit; overflow would need ~2^31 total OSAC records
 		if nextOffset < resp.GetTotal() {
 			list.NextPageToken = util.Ptr(encodePageToken(nextOffset))
 		}
@@ -90,5 +91,12 @@ func decodePageToken(token string) (int32, error) {
 	if err != nil {
 		return 0, grpcstatus.Errorf(codes.InvalidArgument, "invalid page_token: %v", err)
 	}
-	return int32(n), nil
+	// Reject a decoded value outside int32 range explicitly rather than
+	// let the narrowing conversion below silently wrap it (gosec G109) —
+	// a malformed/tampered token should map to the same InvalidArgument
+	// as any other unparseable one, not an undefined offset.
+	if n < 0 || n > math.MaxInt32 {
+		return 0, grpcstatus.Errorf(codes.InvalidArgument, "invalid page_token: offset out of range")
+	}
+	return int32(n), nil //nolint:gosec // range-checked immediately above; gosec's G109 pattern match doesn't see the manual bounds check
 }

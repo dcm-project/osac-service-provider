@@ -100,7 +100,7 @@ var _ = Describe("VM Create (integration, real HTTP + router + bufconn OSAC fake
 	// validation is enforced at the real HTTP boundary for each
 	// independently-documented required field.
 	It("rejects a missing id query parameter at the real HTTP boundary (TC-I-302a)", func() {
-		resp, err := http.Post(f.URL("/api/v1alpha1/vms"), "application/json", strings.NewReader(validCreateJSON)) //nolint:noctx,gosec // test helper
+		resp, err := http.Post(f.URL("/api/v1alpha1/vms"), "application/json", strings.NewReader(validCreateJSON)) //nolint:noctx // test helper
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 
