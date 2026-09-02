@@ -81,9 +81,9 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(nodeSets).NotTo(HaveKey("default-hcp"))
 	})
 
-	// TC-U-200c (REQ-CREATE-090): a template with more than one node-set
+	// TC-U-207 (REQ-CREATE-090): a template with more than one node-set
 	// key is rejected before Clusters/Create is ever called.
-	It("rejects a template with more than one node-set key (TC-U-200c)", func() {
+	It("rejects a template with more than one node-set key (TC-U-207)", func() {
 		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
 			return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
 				NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}, "gpu": {}},
@@ -95,10 +95,10 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	// TC-U-200d (REQ-CREATE-090): a template with zero node-set keys is
+	// TC-U-209 (REQ-CREATE-090): a template with zero node-set keys is
 	// rejected the same way — there's nothing to apply nodes.worker.count
 	// to.
-	It("rejects a template with zero node-set keys (TC-U-200d)", func() {
+	It("rejects a template with zero node-set keys (TC-U-209)", func() {
 		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
 			return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{}}, nil
 		}
@@ -108,9 +108,9 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	// TC-U-200e (REQ-CREATE-100): an unknown template_id is a 400, not the
+	// TC-U-208 (REQ-CREATE-100): an unknown template_id is a 400, not the
 	// 404 a raw NotFound passthrough would produce.
-	It("rejects an unknown template_id as InvalidArgument, not NotFound (TC-U-200e)", func() {
+	It("rejects an unknown template_id as InvalidArgument, not NotFound (TC-U-208)", func() {
 		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
 			return nil, grpcstatus.Error(codes.NotFound, "template not found")
 		}
@@ -120,11 +120,11 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	// TC-U-200f: unlike TC-U-200e's NotFound-to-InvalidArgument remap, any
+	// TC-U-200c: unlike TC-U-208's NotFound-to-InvalidArgument remap, any
 	// other gRPC error from ClusterTemplates/Get (e.g. a transient
 	// Unavailable) is passed through unchanged — it's a real backend
 	// failure, not a bad value in the caller's own request.
-	It("passes through a non-NotFound ClusterTemplates/Get error unchanged (TC-U-200f)", func() {
+	It("passes through a non-NotFound ClusterTemplates/Get error unchanged (TC-U-200c)", func() {
 		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
 			return nil, grpcstatus.Error(codes.Unavailable, "templates backend unreachable")
 		}
