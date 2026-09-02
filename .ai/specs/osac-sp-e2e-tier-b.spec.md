@@ -184,6 +184,7 @@ kind cluster
 | REQ-TB-090 | Phase 2 implementation MUST NOT begin until `osac-sp` itself has real `Create`/`Get` CRUD dispatch for at least one resource type (M2+) — there is nothing for Phase 2's assertions to exercise before then | MUST | Gate, not a deferral-without-reason |
 | REQ-TB-100 | The e2e suite MUST create a `ClusterOrder` CR and assert it reaches a real terminal `Ready`/`Complete` status, driven entirely by real OSAC reconciliation logic through `osac-aap-mock` | MUST | **Scope correction (DD-216/DD-218):** originally worded to (a) cover `BareMetalInstance` too, and (b) drive the CR via an `osac-sp`-initiated `Create` through `fulfillment-service`'s real dispatch chain (its own `Hub` mechanism). (a) is now covered by REQ-TB-110 — a live spike (DD-226/227) found #46's original premise wrong: `BareMetalInstance` does not need a real host-allocation backend, a static `BareMetalHost` fixture is sufficient. (b) is still split to [#47](https://github.com/dcm-project/osac-service-provider/issues/47) — `fulfillment-service`'s `Hub` registration is a stateful, multi-step CLI flow with several details (TLS mode, image/tag, cross-invocation config persistence) that need their own live-CI verification pass rather than a first attempt inside this already-large PR. This phase creates the `ClusterOrder` CR directly against the cluster's own API server instead, proving real `osac-operator` reconciliation + `osac-aap-mock` reach `Ready` — the actually-novel thing this phase introduces |
 | REQ-TB-110 | The e2e suite MUST create two `BareMetalInstance` CRs — one with `runStrategy` unset, one with `runStrategy: Always` — each backed by its own static `BareMetalHost` fixture, and assert each reaches a real terminal `Ready` status, driven entirely by real BMFO reconciliation | MUST | No real Metal3/Ironic/virtual-BMC infrastructure is required: BMFO's `metal3` inventory/management backends operate purely on Kubernetes-object fields they own (`BareMetalHost.status`/`spec.online`/the `reboot.metal3.io` annotation), never on a live BMC/Ironic endpoint — proven via live spike, see DD-226/227. Originally assumed to need real host-allocation infrastructure and split out to [#46](https://github.com/dcm-project/osac-service-provider/issues/46); that assumption was wrong |
+| REQ-TB-120 | The e2e suite MUST also prove BMFO's `BareMetalInstance` allocation fails safe (never silently allocates an ineligible host, never double-allocates a contended one) and correctly releases its host on deletion — all driven by real BMFO reconciliation against static fixtures, no new mock/product code | MUST | Verified directly against BMFO's real upstream source (`internal/inventory/metal3.go`, `internal/controller/baremetalinstance_controller.go`) before writing any assertion — see DD-229 |
 
 ---
 
@@ -234,6 +235,26 @@ kind cluster
 - **Then** both CRs reach a real terminal `status.phase: Ready`, driven
   entirely by real BMFO reconciliation logic — no real Metal3/Ironic/
   virtual-BMC infrastructure involved
+
+##### AC-TB-050 (Phase 2): BMFO's `BareMetalInstance` allocation fails safe, and releases its host on deletion
+
+- **Validates:** REQ-TB-070, REQ-TB-120
+- **Given** the Phase 2 stack (real BMFO) and static `BareMetalHost`
+  fixtures crafted to exercise each failure/release path (absent, present
+  but ineligible, singly contended)
+- **When** the e2e suite creates `BareMetalInstance` CRs against: (a) a
+  `hostType` with no matching `BareMetalHost` at all, (b) a `hostType`
+  whose only `BareMetalHost` has a non-`OK` `operationalStatus`, (c) a
+  single available `BareMetalHost` claimed by two competing
+  `BareMetalInstance`s, and separately deletes a `Ready`
+  `BareMetalInstance` created for this purpose
+- **Then** (a) and (b) both converge to a real terminal `status.phase:
+  Failed` with an `Allocated=False`/`"No matching hosts available"`
+  condition — never silently `Ready` and never stuck retrying forever
+  without a terminal status; (c) converges to exactly one instance
+  `Ready` and the other `Failed`, never both `Ready` (no double
+  allocation); and the deleted instance's `BareMetalHost` has its
+  `spec.consumerRef` cleared, making it reassignable again
 
 ---
 

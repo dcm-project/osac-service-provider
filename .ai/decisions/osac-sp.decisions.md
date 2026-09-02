@@ -3269,3 +3269,54 @@ fixture — the gap was in what the spike verified, not in the schema
 description itself.
 
 **Related requirements:** REQ-TB-070, REQ-TB-110
+
+---
+
+## DD-229: `BareMetalInstance` fail-safe/release paths (TC-TB-130..160) — verified against real upstream BMFO source before writing any assertion, one candidate scenario ruled out
+
+**Decision:** REQ-TB-120/AC-TB-050's four negative/release cases
+(no-matching-host, ineligible-host, contended-host, delete-time release)
+are all grounded directly in `bare-metal-fulfillment-operator`'s real
+`main`-branch source (`internal/inventory/metal3.go`'s `FindFreeHost`/
+`AssignHost`, `internal/controller/baremetalinstance_controller.go`'s
+`reconcileInventory`/`handleDeletion`), read before any fixture or
+assertion was written — not inferred from the happy-path behavior
+DD-226/227 already proved:
+
+- **No matching host / ineligible host**: `FindFreeHost`'s candidate filter
+  requires `OperationalStatus == OK`, `Provisioning.State == Available`,
+  and `ConsumerRef == nil` — a host failing any of these is silently
+  excluded from the candidate list, indistinguishable (by the reconciler)
+  from that `hostType` having zero hosts at all. Both converge to the same
+  `reconcileInventory` zero-candidates branch: `Phase = Failed`,
+  `Allocated` condition `False`/reason `"Failed"`/message `"No matching
+  hosts available"`, requeued indefinitely (never a silent `Ready`, never
+  an un-requeued dead end).
+- **Contended host**: `AssignHost` guards against double-claim —
+  `bmh.Spec.ConsumerRef != nil && ...Name != bareMetalInstanceID` returns
+  `nil, nil` (not an error) to the loser, which clears its own
+  `Spec.ExternalHostID` and retries `FindFreeHost`. Once the winner's claim
+  is visible, the loser's retry sees zero candidates (the one host is now
+  `ConsumerRef != nil`) and converges to the identical `Failed` path above.
+  No locking bug risk of both reaching `Ready`: `TryLock`/`AssignHost`'s
+  own re-check is what prevents it, not test-side timing.
+- **Delete-time release**: `handleDeletion`'s inventory-finalizer cleanup
+  calls `UnassignHost`, which clears `Spec.ConsumerRef` — and `kubectl
+  delete` (no `--wait=false`) blocks until that finalizer cleanup has
+  actually completed, so the release assertion needs no `Eventually`.
+
+**One candidate case deliberately dropped**: reverting a `Ready`,
+`runStrategy: Always` instance's host back to `status.poweredOn: false`
+post-`Ready`, to prove BMFO detects the drift. Ruled out by reading the
+same source: `SetupWithManager` only watches `BareMetalInstance` itself
+(no `Watches()` on `BareMetalHost`), and `reconcileManagement`'s own
+`Ready` branch returns `ctrl.Result{}` with no `RequeueAfter` — there is
+no trigger, periodic or event-driven, that would ever cause BMFO to
+re-examine a `BareMetalHost` after its owning instance reaches `Ready`.
+This is a genuine gap in BMFO itself (drift from an already-`Ready` state
+is silently missed), not a gap in this suite's test design — fixing it
+means changing BMFO, out of scope for `osac-service-provider`'s own e2e
+suite. Recorded here so a future reader doesn't re-propose this exact test
+without re-deriving the same finding.
+
+**Related requirements:** REQ-TB-070, REQ-TB-120

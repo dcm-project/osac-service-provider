@@ -1,0 +1,13 @@
+# BareMetalHost fixture for AC-TB-050/TC-TB-160, dedicated to the
+# delete-time release assertion — kept independent of every other
+# BareMetalInstance/BareMetalHost pair so Ginkgo's randomized spec order
+# can never race this delete against another spec still using its host.
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: tierb-bmh-cleanup
+  labels:
+    osac.openshift.io/host-type: tierb-hosttype-cleanup
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  online: false

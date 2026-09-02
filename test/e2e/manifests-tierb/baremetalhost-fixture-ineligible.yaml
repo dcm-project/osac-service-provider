@@ -1,0 +1,16 @@
+# BareMetalHost fixture for AC-TB-050/TC-TB-140: exists, matches the paired
+# BareMetalInstance's hostType, but is patched to a non-OK
+# `operationalStatus` (tierb_test.go's patchBareMetalHostIneligibleStatus).
+# BMFO's real Metal3Client.FindFreeHost filters candidates on
+# `OperationalStatus == OK` before anything else (DD-229) — this host must
+# never be allocated, distinguishing "host exists but ineligible" from
+# baremetalinstance-fixture-nohost.yaml's "no host of this type at all".
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: tierb-bmh-ineligible
+  labels:
+    osac.openshift.io/host-type: tierb-hosttype-ineligible
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  online: false

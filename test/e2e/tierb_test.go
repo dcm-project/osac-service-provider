@@ -260,6 +260,31 @@ const (
 	bareMetalInstanceAlwaysFixture = "manifests-tierb/baremetalinstance-fixture-always.yaml"
 )
 
+// Fixture name/path constants for AC-TB-050/TC-TB-130..160's fail-safe and
+// release paths (DD-229) — same match manifests-tierb/*.yaml apply-path
+// convention as the pairs above.
+const (
+	bareMetalInstanceNoHostName    = "tierb-bmi-nohost"
+	bareMetalInstanceNoHostFixture = "manifests-tierb/baremetalinstance-fixture-nohost.yaml"
+
+	bareMetalHostIneligibleName        = "tierb-bmh-ineligible"
+	bareMetalHostIneligibleFixture     = "manifests-tierb/baremetalhost-fixture-ineligible.yaml"
+	bareMetalInstanceIneligibleName    = "tierb-bmi-ineligible"
+	bareMetalInstanceIneligibleFixture = "manifests-tierb/baremetalinstance-fixture-ineligible.yaml"
+
+	bareMetalHostContendedName         = "tierb-bmh-contended"
+	bareMetalHostContendedFixture      = "manifests-tierb/baremetalhost-fixture-contended.yaml"
+	bareMetalInstanceContendedAName    = "tierb-bmi-contended-a"
+	bareMetalInstanceContendedAFixture = "manifests-tierb/baremetalinstance-fixture-contended-a.yaml"
+	bareMetalInstanceContendedBName    = "tierb-bmi-contended-b"
+	bareMetalInstanceContendedBFixture = "manifests-tierb/baremetalinstance-fixture-contended-b.yaml"
+
+	bareMetalHostCleanupName        = "tierb-bmh-cleanup"
+	bareMetalHostCleanupFixture     = "manifests-tierb/baremetalhost-fixture-cleanup.yaml"
+	bareMetalInstanceCleanupName    = "tierb-bmi-cleanup"
+	bareMetalInstanceCleanupFixture = "manifests-tierb/baremetalinstance-fixture-cleanup.yaml"
+)
+
 // bareMetalInstanceStatus mirrors just the fields of BMFO's real
 // BareMetalInstanceStatus (api/v1alpha1/baremetalinstance_types.go) this
 // suite asserts on or reports in failure messages.
@@ -338,6 +363,121 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 	})
 })
 
+var _ = Describe("Tier B Phase 2: BareMetalInstance allocation fails safe, and releases its host on deletion", func() {
+	BeforeEach(func() {
+		if os.Getenv(envPhase2Enabled) == "" {
+			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
+		}
+	})
+
+	// TC-TB-130 / REQ-TB-120 / AC-TB-050: a hostType with zero matching
+	// BareMetalHost fixtures must converge to a real terminal Failed phase
+	// with the exact Allocated=False/"Failed"/"No matching hosts
+	// available" condition BMFO's real reconcileInventory sets on its
+	// zero-candidates branch (DD-229) — not an indefinite
+	// Progressing/Allocating, and not a silent Ready.
+	It("converges to Failed with 'no matching hosts' when no BareMetalHost matches its hostType", func() {
+		applyOut, err := exec.Command("kubectl", "apply", "-f", bareMetalInstanceNoHostFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalInstanceNoHostFixture, applyOut)
+
+		var status bareMetalInstanceStatus
+		Eventually(func() string {
+			status = getBareMetalInstanceStatus(bareMetalInstanceNoHostName)
+			return status.Phase
+		}, 60*time.Second, 3*time.Second).Should(Equal("Failed"),
+			"BareMetalInstance %q never reached Failed; last observed status: %+v", bareMetalInstanceNoHostName, status)
+
+		condStatus, reason, message, found := bareMetalInstanceCondition(status, "Allocated")
+		Expect(found).To(BeTrue(), "Allocated condition never appeared; last observed status: %+v", status)
+		Expect(condStatus).To(Equal("False"))
+		Expect(reason).To(Equal("Failed"))
+		Expect(message).To(Equal("No matching hosts available"))
+	})
+
+	// TC-TB-140 / REQ-TB-120 / AC-TB-050: a distinct regression class from
+	// TC-TB-130 above — a host of the right hostType genuinely exists, but
+	// BMFO's real FindFreeHost candidate filter (OperationalStatus == OK,
+	// DD-229) must still exclude it. A BMFO regression that dropped this
+	// filter would pass TC-TB-130 (no host at all) but fail this one.
+	It("converges to Failed the same way when its only matching BareMetalHost is ineligible (non-OK operationalStatus)", func() {
+		applyOut, err := exec.Command("kubectl", "apply", "-f", bareMetalHostIneligibleFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalHostIneligibleFixture, applyOut)
+		patchBareMetalHostIneligibleStatus(bareMetalHostIneligibleName)
+
+		applyOut, err = exec.Command("kubectl", "apply", "-f", bareMetalInstanceIneligibleFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalInstanceIneligibleFixture, applyOut)
+
+		var status bareMetalInstanceStatus
+		Eventually(func() string {
+			status = getBareMetalInstanceStatus(bareMetalInstanceIneligibleName)
+			return status.Phase
+		}, 60*time.Second, 3*time.Second).Should(Equal("Failed"),
+			"BareMetalInstance %q never reached Failed; last observed status: %+v", bareMetalInstanceIneligibleName, status)
+
+		condStatus, reason, message, found := bareMetalInstanceCondition(status, "Allocated")
+		Expect(found).To(BeTrue(), "Allocated condition never appeared; last observed status: %+v", status)
+		Expect(condStatus).To(Equal("False"))
+		Expect(reason).To(Equal("Failed"))
+		Expect(message).To(Equal("No matching hosts available"))
+	})
+
+	// TC-TB-150 / REQ-TB-120 / AC-TB-050: two BareMetalInstances racing for
+	// the one available BareMetalHost. Grounded directly in AssignHost's
+	// real double-claim guard (DD-229) — the loser clears its own
+	// ExternalHostID and retries FindFreeHost, which now excludes the
+	// claimed host, converging to the same zero-candidates Failed path as
+	// TC-TB-130. Which of A/B wins is intentionally not asserted — only
+	// that exactly one of them does, never both.
+	It("lets exactly one of two competing BareMetalInstances claim the single available host", func() {
+		applyOut, err := exec.Command("kubectl", "apply", "-f", bareMetalHostContendedFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalHostContendedFixture, applyOut)
+		patchBareMetalHostInitialStatus(bareMetalHostContendedName, "aa:bb:cc:dd:ee:03")
+
+		applyOut, err = exec.Command("kubectl", "apply", "-f", bareMetalInstanceContendedAFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalInstanceContendedAFixture, applyOut)
+		applyOut, err = exec.Command("kubectl", "apply", "-f", bareMetalInstanceContendedBFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalInstanceContendedBFixture, applyOut)
+
+		var statusA, statusB bareMetalInstanceStatus
+		Eventually(func() []string {
+			statusA = getBareMetalInstanceStatus(bareMetalInstanceContendedAName)
+			statusB = getBareMetalInstanceStatus(bareMetalInstanceContendedBName)
+			return []string{statusA.Phase, statusB.Phase}
+		}, 90*time.Second, 3*time.Second).Should(
+			Or(Equal([]string{"Ready", "Failed"}), Equal([]string{"Failed", "Ready"})),
+			"exactly one of %q/%q must reach Ready and the other Failed; last observed: A=%+v B=%+v",
+			bareMetalInstanceContendedAName, bareMetalInstanceContendedBName, statusA, statusB,
+		)
+	})
+
+	// TC-TB-160 / REQ-TB-120 / AC-TB-050. Uses its own dedicated fixture
+	// pair, independent of every other spec in this file, so Ginkgo's
+	// randomized spec order can't race this delete against another spec's
+	// still-in-use instance. kubectl delete (no --wait=false) blocks until
+	// BMFO's handleDeletion finalizer cleanup (UnassignHost) actually
+	// completes (DD-229), so the release assertion below needs no
+	// Eventually.
+	It("releases its BareMetalHost (clears consumerRef) when a Ready BareMetalInstance is deleted", func() {
+		applyOut, err := exec.Command("kubectl", "apply", "-f", bareMetalHostCleanupFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalHostCleanupFixture, applyOut)
+		patchBareMetalHostInitialStatus(bareMetalHostCleanupName, "aa:bb:cc:dd:ee:04")
+
+		applyOut, err = exec.Command("kubectl", "apply", "-f", bareMetalInstanceCleanupFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s failed: %s", bareMetalInstanceCleanupFixture, applyOut)
+
+		Eventually(func() string {
+			return getBareMetalInstanceStatus(bareMetalInstanceCleanupName).Phase
+		}, 60*time.Second, 3*time.Second).Should(Equal("Ready"),
+			"BareMetalInstance %q never reached Ready before the delete-release assertion could run", bareMetalInstanceCleanupName)
+
+		deleteOut, err := exec.Command("kubectl", "delete", "baremetalinstance", bareMetalInstanceCleanupName, "--timeout=60s").CombinedOutput() //nolint:gosec // fixed args, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl delete baremetalinstance %s failed: %s", bareMetalInstanceCleanupName, deleteOut)
+
+		Expect(getBareMetalHostConsumerRef(bareMetalHostCleanupName)).To(BeEmpty(),
+			"BareMetalHost %q must have its consumerRef cleared once the BareMetalInstance that claimed it is deleted", bareMetalHostCleanupName)
+	})
+})
+
 // getBareMetalInstanceStatus mirrors getClusterOrderStatus's own
 // kubectl-shell-out approach (see that function's doc comment for why: no
 // client-go dependency in this module, kubectl is already configured for
@@ -384,6 +524,44 @@ func patchBareMetalHostPoweredOn(name string) {
 	out, err := exec.Command("kubectl", "patch", "baremetalhost", name, //nolint:gosec // fixed args, not user input
 		"--subresource=status", "--type=merge", "-p", `{"status":{"poweredOn":true}}`).CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "kubectl patch baremetalhost %s poweredOn failed: %s", name, out)
+}
+
+// patchBareMetalHostIneligibleStatus simulates a BareMetalHost that exists
+// but has not (yet, or ever) completed real Metal3 inspection — a non-OK
+// operationalStatus. BMFO's real Metal3Client.FindFreeHost filters
+// candidates on OperationalStatus == OK before anything else (DD-229), so
+// a host patched this way must never be allocated. Same
+// --subresource=status requirement as patchBareMetalHostInitialStatus
+// (DD-227).
+func patchBareMetalHostIneligibleStatus(name string) {
+	out, err := exec.Command("kubectl", "patch", "baremetalhost", name, //nolint:gosec // fixed args, not user input
+		"--subresource=status", "--type=merge", "-p", `{"status":{"operationalStatus":"Error","poweredOn":false}}`).CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), "kubectl patch baremetalhost %s status failed: %s", name, out)
+}
+
+// bareMetalInstanceCondition returns the named condition's Status/Reason/
+// Message (and whether it was found at all) from a bareMetalInstanceStatus
+// — used by TC-TB-130/140 to assert the exact condition BMFO's real
+// reconcileInventory sets (DD-229), not just "never became Ready", which
+// could also pass for a hung reconciler.
+func bareMetalInstanceCondition(status bareMetalInstanceStatus, condType string) (condStatus, reason, message string, found bool) {
+	for _, c := range status.Conditions {
+		if c.Type == condType {
+			return c.Status, c.Reason, c.Message, true
+		}
+	}
+	return "", "", "", false
+}
+
+// getBareMetalHostConsumerRef returns the named BareMetalHost's
+// spec.consumerRef.name (empty if unset) — TC-TB-160's release assertion.
+// kubectl delete (no --wait=false) already blocks until BMFO's
+// handleDeletion finalizer cleanup (UnassignHost) completes (DD-229), so
+// no Eventually is needed at the call site.
+func getBareMetalHostConsumerRef(name string) string {
+	out, err := exec.Command("kubectl", "get", "baremetalhost", name, "-o", "jsonpath={.spec.consumerRef.name}").CombinedOutput() //nolint:gosec // fixed args, not user input
+	Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalhost %s failed: %s", name, out)
+	return strings.TrimSpace(string(out))
 }
 
 // fetchTokenClaims performs a real client_credentials grant directly

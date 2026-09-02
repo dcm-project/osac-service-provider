@@ -1,0 +1,15 @@
+# BareMetalInstance fixture for AC-TB-050/TC-TB-140. Pairs with
+# baremetalhost-fixture-ineligible.yaml's hostType — that host exists but
+# is never a valid candidate (non-OK operationalStatus), so this instance
+# must converge to the same terminal Phase: Failed as the no-host case
+# (DD-229), never Ready.
+apiVersion: osac.openshift.io/v1alpha1
+kind: BareMetalInstance
+metadata:
+  name: tierb-bmi-ineligible
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  hostType: tierb-hosttype-ineligible
+  externalHostID: ""
+  templateID: "noop"
