@@ -131,6 +131,22 @@ type clusterOrderStatus struct {
 	ProvisioningJobs []map[string]any `json:"provisioningJobs"`
 }
 
+// clusterOrderCondition returns the named condition's Status/Reason/Message
+// (and whether it was found at all) from a clusterOrderStatus — mirrors
+// bareMetalInstanceCondition below, used by TC-TB-090's deeper assertions to
+// check the exact condition osac-operator's real
+// ClusterOrderReconciler.provisioningCallbacks sets when a provisioning job
+// succeeds (api/v1alpha1/conditions.go: ConditionProgressing/
+// ReasonAsExpected), not just ".status.phase == Ready" alone.
+func clusterOrderCondition(status clusterOrderStatus, condType string) (condStatus, reason, message string, found bool) {
+	for _, c := range status.Conditions {
+		if c.Type == condType {
+			return c.Status, c.Reason, c.Message, true
+		}
+	}
+	return "", "", "", false
+}
+
 // phase2CRDs are all 8 vendored CRDs (manifests-tierb/crds/) TC-TB-060
 // asserts exist before any Phase 2 reconciliation is exercised — the
 // original 4 plus BareMetalPool/ComputeInstance/NodePool/BareMetalHost,
@@ -217,6 +233,27 @@ var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal st
 			return status.Phase
 		}, 3*time.Minute, 5*time.Second).Should(Equal("Ready"),
 			"ClusterOrder %q never reached Ready; last observed status: %+v", clusterOrderName, status)
+
+		// Deeper assertions on *how* Ready was reached, not just the phase
+		// value itself — a reconciler bug that flips .status.phase to
+		// "Ready" directly (skipping the real AAP dispatch/poll path)
+		// would still pass the assertion above but fail these. Grounded in
+		// osac-operator's real source: ClusterOrderReconciler.
+		// provisioningCallbacks' OnSuccess handler sets the Progressing
+		// condition False/AsExpected, and RunProvisioningLifecycle appends
+		// a JobStatus{Type: "provision", State: "Succeeded"} entry to
+		// .status.provisioningJobs (api/v1alpha1/conditions.go,
+		// api/v1alpha1/job_types.go).
+		condStatus, reason, _, found := clusterOrderCondition(status, "Progressing")
+		Expect(found).To(BeTrue(), "Progressing condition never appeared; last observed status: %+v", status)
+		Expect(condStatus).To(Equal("False"))
+		Expect(reason).To(Equal("AsExpected"))
+
+		Expect(status.ProvisioningJobs).NotTo(BeEmpty(),
+			"osac-operator never recorded a provisioning job against osac-aap-mock; last observed status: %+v", status)
+		lastJob := status.ProvisioningJobs[len(status.ProvisioningJobs)-1]
+		Expect(lastJob["type"]).To(Equal("provision"), "last provisioning job's type; last observed status: %+v", status)
+		Expect(lastJob["state"]).To(Equal("Succeeded"), "last provisioning job's state; last observed status: %+v", status)
 	})
 })
 
@@ -296,6 +333,7 @@ type bareMetalInstanceStatus struct {
 		Reason  string `json:"reason"`
 		Message string `json:"message"`
 	} `json:"conditions"`
+	RunStrategy string `json:"runStrategy"`
 }
 
 var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real terminal state", func() {
@@ -360,6 +398,21 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 			return status.Phase
 		}, 90*time.Second, 3*time.Second).Should(Equal("Ready"),
 			"BareMetalInstance %q never reached Ready after the fake-BMO patch; last observed status: %+v", bareMetalInstanceAlwaysName, status)
+
+		// Deeper assertions on *how* Ready was reached, not just the phase
+		// value — grounded in BMFO's real syncBareMetalInstanceStatus: a
+		// converged, powered-on host gets PowerSynced=True/reason
+		// "PowerOn", and .status.runStrategy mirrors the observed (not
+		// requested) power state as "Always"
+		// (internal/controller/baremetalinstance_controller.go). A
+		// reconciler that reached Ready via some other path (e.g. never
+		// actually reading the host's power state) would still pass the
+		// Phase assertion above but fail these.
+		condStatus, reason, _, found := bareMetalInstanceCondition(status, "PowerSynced")
+		Expect(found).To(BeTrue(), "PowerSynced condition never appeared; last observed status: %+v", status)
+		Expect(condStatus).To(Equal("True"))
+		Expect(reason).To(Equal("PowerOn"))
+		Expect(status.RunStrategy).To(Equal("Always"), "observed runStrategy; last observed status: %+v", status)
 	})
 })
 

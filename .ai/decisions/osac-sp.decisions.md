@@ -3320,3 +3320,47 @@ suite. Recorded here so a future reader doesn't re-propose this exact test
 without re-deriving the same finding.
 
 **Related requirements:** REQ-TB-070, REQ-TB-120
+
+---
+## DD-230: TC-TB-090/TC-TB-120 deepened beyond `.status.phase == Ready` — exact condition/field values verified against real upstream source
+
+**Decision:** in response to PR review feedback that TC-TB-090 and
+TC-TB-120 asserted only `.status.phase == "Ready"` (which a reconciler bug
+that set `Ready` via the wrong path would still satisfy), both were
+extended to assert the specific condition and status-field values real
+`osac-operator`/BMFO only set once the underlying work has actually
+happened — each value read directly from the real upstream source before
+being asserted, same discipline as DD-229:
+
+- **TC-TB-090** (`ClusterOrder`, `osac-operator`
+  `internal/controller/clusterorder_controller.go`'s
+  `provisioningCallbacks.OnSuccess`, `api/v1alpha1/conditions.go`,
+  `api/v1alpha1/job_types.go`): asserts `Progressing` condition
+  `False`/reason `"AsExpected"`, and the last `.status.provisioningJobs`
+  entry has `type: "provision"`/`state: "Succeeded"` (`JobTypeProvision`/
+  `JobStateSucceeded`). Both are set only inside the AAP-poll-succeeded
+  branch, not by any other code path that could reach `Phase: Ready`.
+- **TC-TB-120** (`BareMetalInstance`, BMFO
+  `internal/controller/baremetalinstance_controller.go`'s
+  `syncBareMetalInstanceStatus`): asserts `PowerSynced` condition
+  `True`/reason `"PowerOn"`, and `.status.runStrategy: "Always"` — both
+  set only after the reconciler has re-read the host's power state
+  post-patch and found it converged (`poweredOn == true` branch), not
+  merely inferred from `Phase` flipping to `Ready`.
+
+Deliberately did **not** extend TC-TB-110 (the `runStrategy` unset sibling
+of TC-TB-120) — the reviewer's comment named only TC-TB-090/TC-TB-120, and
+TC-TB-110's `PowerSynced`/`runStrategy` values (`PowerOff`/`Halted`, since
+the fixture host is never powered on) aren't a meaningfully different
+regression class from what TC-TB-120's new assertions already cover for
+the power-sync path. Also deliberately did **not** assert on
+`ClusterOrder`'s `ControlPlaneAvailable`/`ClusterAvailable` conditions
+(`clusterorder_controller.go`'s `handleHostedCluster`) — those gate on the
+real `HostedCluster` CR's own status becoming available, which never
+happens in this suite (the vendored `HostedCluster` CRD is fixture-grade
+with no real HyperShift operator reconciling it, DD-218/DD-220), so
+asserting them would either hang or assert a value the suite's own
+architecture makes permanently unreachable.
+
+**Related requirements:** REQ-TB-080, REQ-TB-100, REQ-TB-110, AC-TB-030,
+AC-TB-040
