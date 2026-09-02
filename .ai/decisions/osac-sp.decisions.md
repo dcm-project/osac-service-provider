@@ -3362,5 +3362,40 @@ with no real HyperShift operator reconciling it, DD-218/DD-220), so
 asserting them would either hang or assert a value the suite's own
 architecture makes permanently unreachable.
 
-**Related requirements:** REQ-TB-080, REQ-TB-100, REQ-TB-110, AC-TB-030,
-AC-TB-040
+**Follow-up (same review pass): every asserted field made exact, not just
+present.** A first pass left a few fields either unchecked (discarded via
+`_`) or checked with a loose matcher, on the assumption they might not be
+deterministic. Re-verified each one against real upstream source
+(`osac-operator`'s `pkg/provisioning/provision_lifecycle.go`,
+`pkg/provisioning/aap_provider.go`) and this repo's own
+`test/aapmock/jobstore.go`, and tightened every field that turned out to
+be fully deterministic and within this suite's control:
+
+- **TC-TB-090**: the `Progressing` condition's `message` is the literal
+  `""` osac-operator's `OnSuccess` callback passes — now asserted, not
+  discarded. `.status.provisioningJobs` is asserted `HaveLen(1)` (not
+  `NotTo(BeEmpty())`): `TriggerJob` appends exactly one entry and `PollJob`
+  updates it in place, so a reconciler bug that re-triggered instead of
+  polling (`len > 1`) would have silently passed the old assertion. The
+  job's `message` is asserted `"successful"` — osac-aap-mock's own
+  `GetJob` always reports that literal AAP status string
+  (`test/aapmock/jobstore.go`), and `AAPProvider.getJobStatus`/
+  `MessageWithDetails()` pass it through verbatim when there's no
+  `ErrorDetails` (`pkg/provisioning/aap_provider.go`,
+  `pkg/provisioning/provider.go`) — this suite owns the mock, so this is
+  not an external/uncontrolled value. Left unchecked: the job's `jobID` —
+  an incrementing counter internal to osac-aap-mock
+  (`test/aapmock/jobstore.go`) whose exact numeric value isn't part of the
+  behavior under test.
+- **TC-TB-120**: the `PowerSynced` condition's `message` is likewise the
+  literal `""` BMFO's `syncBareMetalInstanceStatus` passes for the
+  powered-on branch — now asserted.
+- **TC-TB-150**: added a check that the contended `BareMetalHost`'s
+  `spec.consumerRef` equals exactly whichever instance's `.status.phase`
+  resolved to `Ready` (not merely "one Ready, one Failed"). Which of A/B
+  wins is the one genuinely nondeterministic value here and is left
+  unasserted; everything downstream of that outcome is fully determined by
+  `AssignHost` and is now checked.
+
+**Related requirements:** REQ-TB-080, REQ-TB-100, REQ-TB-110, REQ-TB-120,
+AC-TB-030, AC-TB-040, AC-TB-050

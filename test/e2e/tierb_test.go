@@ -237,23 +237,37 @@ var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal st
 		// Deeper assertions on *how* Ready was reached, not just the phase
 		// value itself — a reconciler bug that flips .status.phase to
 		// "Ready" directly (skipping the real AAP dispatch/poll path)
-		// would still pass the assertion above but fail these. Grounded in
-		// osac-operator's real source: ClusterOrderReconciler.
-		// provisioningCallbacks' OnSuccess handler sets the Progressing
-		// condition False/AsExpected, and RunProvisioningLifecycle appends
-		// a JobStatus{Type: "provision", State: "Succeeded"} entry to
-		// .status.provisioningJobs (api/v1alpha1/conditions.go,
-		// api/v1alpha1/job_types.go).
-		condStatus, reason, _, found := clusterOrderCondition(status, "Progressing")
+		// would still pass the assertion above but fail these. Every field
+		// asserted below is fully deterministic — set only by
+		// osac-operator's real provisioningCallbacks.OnSuccess handler
+		// (api/v1alpha1/conditions.go) plus TriggerJob/PollJob
+		// (pkg/provisioning/provision_lifecycle.go), fed by this suite's
+		// own osac-aap-mock, which always reports a launched job as
+		// "successful" with no pending/running window (DD-214,
+		// test/aapmock/jobstore.go) — so nothing here is asserting on a
+		// value this suite doesn't control. Only the job's AAP-assigned
+		// jobID is left unchecked: an incrementing counter internal to
+		// osac-aap-mock whose exact value isn't part of the behavior under
+		// test.
+		condStatus, reason, message, found := clusterOrderCondition(status, "Progressing")
 		Expect(found).To(BeTrue(), "Progressing condition never appeared; last observed status: %+v", status)
 		Expect(condStatus).To(Equal("False"))
 		Expect(reason).To(Equal("AsExpected"))
+		Expect(message).To(Equal(""))
 
-		Expect(status.ProvisioningJobs).NotTo(BeEmpty(),
-			"osac-operator never recorded a provisioning job against osac-aap-mock; last observed status: %+v", status)
-		lastJob := status.ProvisioningJobs[len(status.ProvisioningJobs)-1]
-		Expect(lastJob["type"]).To(Equal("provision"), "last provisioning job's type; last observed status: %+v", status)
-		Expect(lastJob["state"]).To(Equal("Succeeded"), "last provisioning job's state; last observed status: %+v", status)
+		// Exactly one job: TriggerJob appends a single JobStatus entry and
+		// PollJob updates it in place as it transitions toward Succeeded —
+		// osac-operator never appends a second entry for the same
+		// provisioning cycle (pkg/provisioning/provision_lifecycle.go). A
+		// reconciler bug that re-triggered instead of polling would show up
+		// here as len > 1, which NotTo(BeEmpty()) would have missed.
+		Expect(status.ProvisioningJobs).To(HaveLen(1),
+			"expected exactly one provisioning job; last observed status: %+v", status)
+		job := status.ProvisioningJobs[0]
+		Expect(job["type"]).To(Equal("provision"), "provisioning job's type; last observed status: %+v", status)
+		Expect(job["state"]).To(Equal("Succeeded"), "provisioning job's state; last observed status: %+v", status)
+		Expect(job["message"]).To(Equal("successful"),
+			"provisioning job's message (osac-aap-mock's raw AAP status, passed through verbatim); last observed status: %+v", status)
 	})
 })
 
@@ -402,16 +416,22 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 		// Deeper assertions on *how* Ready was reached, not just the phase
 		// value — grounded in BMFO's real syncBareMetalInstanceStatus: a
 		// converged, powered-on host gets PowerSynced=True/reason
-		// "PowerOn", and .status.runStrategy mirrors the observed (not
-		// requested) power state as "Always"
-		// (internal/controller/baremetalinstance_controller.go). A
-		// reconciler that reached Ready via some other path (e.g. never
-		// actually reading the host's power state) would still pass the
-		// Phase assertion above but fail these.
-		condStatus, reason, _, found := bareMetalInstanceCondition(status, "PowerSynced")
+		// "PowerOn"/message "" (the literal call is
+		// SetStatusCondition(HostConditionPowerSynced, ConditionTrue,
+		// HostConditionReasonPowerOn, "") — reason and message are, in
+		// that order, the 3rd/4th args on BareMetalInstance's
+		// SetStatusCondition), and .status.runStrategy mirrors the
+		// observed (not requested) power state as "Always"
+		// (internal/controller/baremetalinstance_controller.go). Every
+		// field below is fully deterministic for this code path, so all
+		// are asserted exactly — a reconciler that reached Ready via some
+		// other path (e.g. never actually reading the host's power state)
+		// would still pass the Phase assertion above but fail these.
+		condStatus, reason, message, found := bareMetalInstanceCondition(status, "PowerSynced")
 		Expect(found).To(BeTrue(), "PowerSynced condition never appeared; last observed status: %+v", status)
 		Expect(condStatus).To(Equal("True"))
 		Expect(reason).To(Equal("PowerOn"))
+		Expect(message).To(Equal(""))
 		Expect(status.RunStrategy).To(Equal("Always"), "observed runStrategy; last observed status: %+v", status)
 	})
 })
@@ -501,6 +521,22 @@ var _ = Describe("Tier B Phase 2: BareMetalInstance allocation fails safe, and r
 			"exactly one of %q/%q must reach Ready and the other Failed; last observed: A=%+v B=%+v",
 			bareMetalInstanceContendedAName, bareMetalInstanceContendedBName, statusA, statusB,
 		)
+
+		// Which of A/B wins the race is genuinely nondeterministic (the
+		// one field this test has no control over) — but once a winner is
+		// known, the contended host's consumerRef is fully determined by
+		// it: AssignHost sets spec.consumerRef to the claiming instance's
+		// name (DD-229), so it must equal exactly the winner's name, not
+		// merely "non-empty". This closes the gap the bare Phase check
+		// above leaves open: two instances independently reporting Ready/
+		// Failed due to unrelated bugs would still pass that check, but
+		// only a real, consistent single allocation passes this one too.
+		winner := bareMetalInstanceContendedAName
+		if statusB.Phase == "Ready" {
+			winner = bareMetalInstanceContendedBName
+		}
+		Expect(getBareMetalHostConsumerRef(bareMetalHostContendedName)).To(Equal(winner),
+			"BareMetalHost %q consumerRef must belong to whichever instance reached Ready", bareMetalHostContendedName)
 	})
 
 	// TC-TB-160 / REQ-TB-120 / AC-TB-050. Uses its own dedicated fixture
