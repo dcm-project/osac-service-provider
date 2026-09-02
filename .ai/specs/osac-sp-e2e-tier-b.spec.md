@@ -155,6 +155,7 @@ kind cluster
 | REQ-TB-040 | The e2e suite MUST assert `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC — not just against the Phase A mock | MUST | Same assertions as `AC-E2E-030`, re-run against the real backend |
 | REQ-TB-050 | The workflow MUST pin exact `vX.Y.Z` image/chart tags for every OSAC component (never `main`/`latest`) | MUST | Upstream's own `check-floating-tags.yaml` CI guard confirms `main`/`latest` are untrusted as "current" |
 | REQ-TB-060 | A deliberately wrong/missing client credential MUST result in `osac-sp` reporting `unhealthy` with an auth-failure detail — proving Tier B can actually detect what Phase A's permissive mock structurally cannot | MUST | The core deliverable this tier exists for |
+| REQ-TB-065 | An `osac-sp` instance with valid OIDC credentials but an unroutable `SP_OSAC_FULFILLMENT_ADDRESS` MUST result in `osac-sp` reporting `unhealthy` with a connectivity-only detail, distinct from REQ-TB-060's auth-failure detail — the other half of `osac-sp.spec.md`'s REQ-HLT-070/AC-HLT-060 that REQ-TB-060 doesn't reach | MUST | Closes DD-230's e2e disposition gap for REQ-HLT-070's connectivity direction |
 
 ### Phase 2 (specified now; implementation gated on `osac-sp` M2+ landing, REQ-TB-090)
 
@@ -188,6 +189,18 @@ kind cluster
 - **Then** it fails, and `osac-sp`'s health endpoint reports `status:
   unhealthy` with an auth-failure detail — proving this tier can catch what
   Phase A structurally cannot
+
+##### AC-TB-025: OSAC unreachable is genuinely detectable, distinct from an auth failure
+
+- **Validates:** REQ-TB-065
+- **Given** the Phase 1 stack, but a third `osac-sp` instance configured
+  with real, correct OIDC credentials and an unroutable
+  `SP_OSAC_FULFILLMENT_ADDRESS`
+- **When** `osac-sp` fetches its OIDC token (succeeds) and probes OSAC gRPC
+  connectivity (fails, target unroutable)
+- **Then** its health endpoint reports `status: unhealthy` with a detail
+  equal to exactly `"OSAC fulfillment service unreachable"` — never
+  combined with or confused for AC-TB-020's token-invalid detail
 
 ##### AC-TB-030 (Phase 2): A real cluster/VM create reaches a real terminal state
 
@@ -225,11 +238,10 @@ kind cluster
   (`fulfillment-service/it`'s `AddCrdFile` list) are available as
   standalone files we can vendor/reference without needing
   `osac-operator`'s/BMFO's own source trees checked out.
-- **Realm secret rotation risk**: the vendored `realm.json`'s client
-  secrets are static and checked into git — acceptable for a throwaway
-  `kind` cluster (NFR-TB-020), but worth a one-line comment at the vendor
-  site making that explicit so it's never mistaken for a real-world secret
-  pattern.
+- ~~**Realm secret rotation risk**~~ — resolved: `test/e2e/tierb-config/README.md`
+  already states plainly that the vendored `realm.json`'s client secrets
+  are test-only, static, and checked into git on purpose (NFR-TB-020), and
+  must never be reused for a real deployment.
 
 ## 7. Explicitly out of scope
 
