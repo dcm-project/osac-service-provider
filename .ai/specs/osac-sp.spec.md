@@ -127,7 +127,8 @@ this milestone is limited to the health endpoint; later milestones add
 cluster/VM routes generated from the OpenAPI spec.
 
 Out of scope: TLS termination (handled by infrastructure/ingress),
-authentication/authorization middleware on the DCM-facing API, rate limiting.
+authentication/authorization middleware on the DCM-facing API (delegated
+entirely to `environment-agent` and OSAC — see DD-228), rate limiting.
 
 #### Requirements
 
