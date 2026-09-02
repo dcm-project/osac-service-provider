@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -97,6 +98,28 @@ var _ = Describe("Cluster CRUD, against the real mock backend", Label("tier-a-on
 			}
 		}
 		Expect(count).To(Equal(1), "the duplicate Create must not have produced a second stored object")
+	})
+
+	// TC-E2E-103 / REQ-CREATE-100 / AC-CREATE-080: an unknown template_id
+	// surfaces as 400 (InvalidArgument), not 404 — proven here against the
+	// real mock's own, unmodified ClusterTemplatesServer.Get (which returns
+	// gRPC NotFound for any id other than "default-hcp"), not a bufconn
+	// fake's simulation of that response (internal/handlers/cluster's own
+	// TC-I-208 already covers the fake side).
+	It("rejects an unknown template_id with 400 InvalidArgument, not 404 (TC-E2E-103)", func() {
+		id := uniqueID("e2e-cluster-badtmpl")
+		body := strings.Replace(validClusterCreateBody, "default-hcp", "nonexistent-template", 1)
+
+		status, respBody := osacRequest(http.MethodPost, fmt.Sprintf("/api/v1alpha1/clusters?id=%s", id), body)
+		Expect(status).To(Equal(http.StatusBadRequest), "response body: %s", string(respBody))
+
+		var problem struct {
+			Type string `json:"type"`
+		}
+		Expect(json.Unmarshal(respBody, &problem)).To(Succeed(), "response body: %s", string(respBody))
+		Expect(problem.Type).To(Equal("https://dcm-project.github.io/problems/invalid-argument"))
+
+		Expect(listClusterIDs()).NotTo(ContainElement(id), "a rejected Create must never have been dispatched to Clusters/Create")
 	})
 })
 
