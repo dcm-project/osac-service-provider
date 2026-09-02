@@ -16,7 +16,7 @@ func WriteResponse(w http.ResponseWriter, logger *slog.Logger, statusCode int, e
 	resp := v1alpha1.Error{
 		Type:     errType,
 		Title:    title,
-		Status:   util.Ptr(int32(statusCode)),
+		Status:   util.Ptr(int32(statusCode)), //nolint:gosec // statusCode is always a valid HTTP status (100-599), never overflow-risk
 		Detail:   util.Ptr(detail),
 		Instance: instance,
 	}

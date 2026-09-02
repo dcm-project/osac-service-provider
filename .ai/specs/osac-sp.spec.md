@@ -40,7 +40,7 @@ own spec additions.
 - [Implementation plan (issue #1)](https://github.com/dcm-project/osac-service-provider/issues/1)
 - [SP Registration Flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/sp-registration-flow/sp-registration-flow.md)
 - [SP Health Check](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-provider-health-check/service-provider-health-check.md)
-- OSAC public protos: [`osac-project/fulfillment-service/proto/public/osac/public/v1/`](https://github.com/osac-project/fulfillment-service/tree/main/proto/public/osac/public/v1)
+- OSAC public protos: [`osac-project/fulfillment-service/proto/public/osac/public/v1/`](https://github.com/osac-project/osac/tree/main/fulfillment-service/proto/public/osac/public/v1) (`fulfillment-service` archived as a standalone repo ~2026-08-15; now a subdirectory of the `osac-project/osac` monorepo, the current source of truth)
 - Reference implementations (structure/conventions template): [`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider), [`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider), [`kubevirt-service-provider`](https://github.com/dcm-project/kubevirt-service-provider) — **note:** these also register against `control-plane`'s SP API, via the archived `service-provider-manager` client rather than `control-plane`'s newer `pkg/sp/client/provider`; OSAC SP now targets the same backend as its siblings, just on the newer client (see DD-050)
 - [`dcm-project/control-plane`](https://github.com/dcm-project/control-plane) (`api/sp/v1alpha1/provider/openapi.yaml`) — authoritative Phase 1 registration contract this SP integrates with (see DD-050)
 - [`dcm-project/environment-agent`](https://github.com/dcm-project/environment-agent) — Phase 2 target, deferred pending maturity (see DD-050)
@@ -127,7 +127,8 @@ this milestone is limited to the health endpoint; later milestones add
 cluster/VM routes generated from the OpenAPI spec.
 
 Out of scope: TLS termination (handled by infrastructure/ingress),
-authentication/authorization middleware on the DCM-facing API, rate limiting.
+authentication/authorization middleware on the DCM-facing API (delegated
+entirely to `environment-agent` and OSAC — see DD-228), rate limiting.
 
 #### Requirements
 
@@ -246,9 +247,10 @@ be resolved via standard OIDC discovery before any token request is made
 milestone. Full generated CRUD stubs
 (`Clusters`, `ComputeInstances`, `Subnets`, `VirtualNetworks`) are generated
 in Milestone 2 via a `buf`/`protoc` pipeline against
-[`osac-project/fulfillment-service`](https://github.com/osac-project/fulfillment-service)'s
-public protos — see DD-020 for why this milestone only generates the minimal
-`Capabilities` client instead of the full set.
+[`osac-project/fulfillment-service`](https://github.com/osac-project/osac/tree/main/fulfillment-service)'s
+public protos (now a subdirectory of the `osac-project/osac` monorepo — see
+the ecosystem table note in `CLAUDE.md`) — see DD-020 for why this milestone
+only generates the minimal `Capabilities` client instead of the full set.
 
 Out of scope: token exchange (RFC 8693, confirmed unsupported by OSAC),
 per-tenant credentials (v1 is single shared service account), retry/circuit
@@ -263,8 +265,7 @@ breaking beyond token refresh and connection backoff.
 | REQ-OSAC-012 | The SP MUST extract `token_endpoint` from whichever discovery document succeeds, rather than treating `oidcIssuerUrl` itself as the token endpoint or querying only one of the two documents | MUST | DD-060 |
 | REQ-OSAC-020 | The SP MUST refresh the OIDC token before expiry and supply it as a gRPC bearer credential (`PerRPCCredentials`) on every call to the fulfillment service | MUST | |
 | REQ-OSAC-030 | The SP MUST establish a gRPC `ClientConn` to `fulfillmentAddress` | MUST | |
-| REQ-OSAC-040 | When `tlsEnabled=true`, the gRPC connection MUST use TLS, loading a CA certificate from `tlsCertFile` if set | MUST | |
-| REQ-OSAC-050 | When `tlsEnabled=false` (default), the gRPC connection MUST use insecure transport credentials | MUST | |
+| REQ-OSAC-040 | The gRPC connection to the fulfillment service MUST always use TLS — loading a CA certificate from `tlsCertFile` if set, otherwise trusting the system root CA pool | MUST | Unconditional as of DD-229 — superseded REQ-OSAC-050 (insecure fallback) removed; no configuration disables TLS |
 | REQ-OSAC-060 | OIDC discovery failures and token fetch failures MUST be retried with exponential backoff and MUST NOT crash the SP or block server startup | MUST | |
 | REQ-OSAC-070 | The bootstrap component MUST expose a query method reporting current OIDC token validity (has a non-expired cached token) for use by the health handler | MUST | |
 | REQ-OSAC-080 | The bootstrap component MUST expose a query method reporting gRPC connectivity to the fulfillment service, using a lightweight, unauthenticated probe (`osac.public.v1.Capabilities/Get`) with a short timeout | MUST | DD-020 |
@@ -278,8 +279,7 @@ breaking beyond token refresh and connection backoff.
 | osac.oidcIssuerUrl | SP_OSAC_OIDC_ISSUER_URL | - | Yes | Keycloak OIDC issuer URL |
 | osac.oidcClientId | SP_OSAC_OIDC_CLIENT_ID | - | Yes | OAuth 2.0 client ID registered in Keycloak |
 | osac.oidcClientSecret | SP_OSAC_OIDC_CLIENT_SECRET | - | Yes | OAuth 2.0 client secret |
-| osac.tlsEnabled | SP_OSAC_TLS_ENABLED | false | No | Enable TLS for fulfillment service connection |
-| osac.tlsCertFile | SP_OSAC_TLS_CERT_FILE | - | No | Path to TLS CA certificate file |
+| osac.tlsCertFile | SP_OSAC_TLS_CERT_FILE | - | No | Optional custom CA for the (always-TLS, DD-229) fulfillment service connection; unset trusts the system root CA pool |
 | osac.probeTimeout | SP_OSAC_PROBE_TIMEOUT | 5s | No | Timeout for the health-check connectivity probe |
 
 #### Acceptance Criteria
@@ -330,19 +330,23 @@ breaking beyond token refresh and connection backoff.
 - **When** the SP starts
 - **Then** a gRPC `ClientConn` MUST be created targeting that address
 
-##### AC-OSAC-040: TLS enabled
+##### AC-OSAC-040: TLS with a configured CA
 
 - **Validates:** REQ-OSAC-040
-- **Given** `osac.tlsEnabled=true` and a valid `tlsCertFile`
+- **Given** a valid `tlsCertFile`
 - **When** the gRPC connection is created
-- **Then** the connection MUST use TLS transport credentials loaded from the CA file
+- **Then** the connection MUST use TLS transport credentials loaded from that CA file
 
-##### AC-OSAC-050: TLS disabled (default)
+##### AC-OSAC-045: TLS with the system default CA pool
 
-- **Validates:** REQ-OSAC-050
-- **Given** `osac.tlsEnabled=false`
+- **Validates:** REQ-OSAC-040
+- **Given** `tlsCertFile` is unset
 - **When** the gRPC connection is created
-- **Then** the connection MUST use insecure transport credentials
+- **Then** the connection MUST still use TLS transport credentials, trusting the system root CA pool
+
+~~AC-OSAC-050: TLS disabled (default)~~ — **removed (DD-229):** there is no
+longer a configuration that disables TLS. AC-OSAC-045 above covers the
+"nothing custom configured" case, which now still means TLS.
 
 ##### AC-OSAC-060: Token fetch retry, non-fatal
 
@@ -734,7 +738,6 @@ All configuration is loaded from environment variables.
 | osac.oidcIssuerUrl | SP_OSAC_OIDC_ISSUER_URL | - | Yes | 2 |
 | osac.oidcClientId | SP_OSAC_OIDC_CLIENT_ID | - | Yes | 2 |
 | osac.oidcClientSecret | SP_OSAC_OIDC_CLIENT_SECRET | - | Yes | 2 |
-| osac.tlsEnabled | SP_OSAC_TLS_ENABLED | false | No | 2 |
 | osac.tlsCertFile | SP_OSAC_TLS_CERT_FILE | - | No | 2 |
 | osac.probeTimeout | SP_OSAC_PROBE_TIMEOUT | 5s | No | 2 |
 | dcm.registrationUrl | DCM_REGISTRATION_URL | - | Yes | 4 |

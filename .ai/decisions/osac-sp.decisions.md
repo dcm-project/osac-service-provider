@@ -2767,3 +2767,68 @@ about CRUD.
 **Related:** #28, DD-153 (refined, not reversed — its readiness-race
 rationale for why health checks need polling, not a single-shot check,
 still holds; only the "runs in both tiers" claim changes)
+
+---
+
+## DD-228: `osac-sp` performs no authN/authZ of its own — delegated to `environment-agent` and OSAC
+
+**Decision:** `osac-sp`'s own inbound HTTP API (health today; Create/Delete
+in later milestones) implements no authentication or authorization logic.
+This is intentional, not an oversight: authN/Z is delegated entirely to (a)
+`environment-agent`, the only caller this API is designed for, and (b) OSAC
+itself, which independently authenticates every outbound gRPC call this SP
+makes via its own OIDC client-credentials token (`internal/osac.Bootstrap`).
+
+**Rationale:** DCM's cross-project tenancy model is not yet decided, so
+`osac-sp` has no stable concept to authorize against even if it wanted to —
+any authZ logic written today would be guessing at a shape that may not
+survive that decision. TLS (DD-229) is deliberately the only wire-level
+control this SP takes on unilaterally, since it doesn't depend on an
+unresolved DCM-wide decision the way authN/authZ does.
+
+**Consequence:** this SP's own network exposure must stay restricted to
+callers already trusted by the surrounding platform (i.e.
+`environment-agent`) — it is not safe to expose this API to a broader
+network boundary without revisiting this decision first.
+
+**Related requirements:** REQ-HTTP-010 (Milestone 1 HTTP server scope)
+
+---
+
+## DD-229: TLS to the fulfillment service is unconditional — `TLSEnabled` removed, no insecure fallback
+
+**Decision:** `osac-sp`'s gRPC connection to OSAC's fulfillment service is
+always TLS. `OSACConfig.TLSEnabled` (and the `SP_OSAC_TLS_ENABLED` env var)
+is removed outright — there is no configuration that makes this SP dial
+insecurely. `TLSCertFile` remains, now purely optional: set it to trust a
+custom CA (e.g. a cluster-internal `cert-manager` issuer); leave it unset to
+trust the system root CA pool, the correct default for a real
+publicly-trusted fulfillment-service endpoint.
+
+**Rationale:** a production-readiness audit (2026-09-01) found
+`SP_OSAC_TLS_ENABLED` defaulted to `false` with no deployment manifest in
+this repo overriding it for a real environment — meaning the OIDC bearer
+token `internal/osac.Bootstrap` attaches to every RPC (per-RPC credentials,
+not connection-level) could travel in plaintext by default. Given DD-228
+means this SP takes on no authN/authZ of its own, TLS is the one wire-level
+control it fully owns — leaving it optional (let alone off by default)
+undermined that control entirely for no compensating benefit; nothing in
+this repo's own manifests or specs ever depended on the insecure path being
+available. `bearerCreds.RequireTransportSecurity()` now returns `true`
+(previously `false`) as defense in depth: even a future regression that
+tried to reintroduce an insecure transport would have this credential type
+itself refuse to attach a bearer token to it.
+
+**Consequence — every fake/mock gRPC server this repo dials in tests or e2e
+infra must terminate real TLS, not plaintext.** A single static,
+self-signed, checked-in test certificate (`test/mockprovider`'s
+`testdata/tls-{cert,key}.pem`, SANs `localhost`/`127.0.0.1`/
+`osac-mock-provider`) is embedded via `//go:embed` and reused by every
+in-repo test/e2e fake that previously ran plaintext — mirroring this
+project's existing precedent for static, checked-in, test-only secrets
+(`realm.json`, `fulfillment-secrets.yaml`, NFR-TB-020-style). e2e Tier B
+already dialed real `fulfillment-service` over real TLS (DD-151) and needed
+no change beyond removing its now-meaningless `SP_OSAC_TLS_ENABLED` lines.
+
+**Related requirements:** REQ-OSAC-040 (now unconditional); supersedes
+REQ-OSAC-050 (insecure fallback, removed)

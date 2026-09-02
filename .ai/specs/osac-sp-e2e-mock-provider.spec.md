@@ -3,7 +3,9 @@
 ## 1. Overview
 
 Phase 1 of [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17)
-(FLPATH-4759): a standalone binary, `cmd/osac-mock-provider`, that fakes the
+(FLPATH-4759): a standalone binary, `test/cmd/osac-mock-provider` (moved
+from repo-root `cmd/osac-mock-provider` per DD-224: test-only binaries stay
+out of `cmd/`, which is reserved for shipped product code), that fakes the
 **OSAC backend side** of the gRPC contract `osac-sp` dials — a real
 `net.Listen`-backed `grpc.Server` implementing `osac.public.v1`'s
 `Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`, and
@@ -92,7 +94,7 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
                      | HTTP                     | gRPC
                      v                          v
         +--------------------------------------------------------+
-        |                 cmd/osac-mock-provider                  |
+        |              test/cmd/osac-mock-provider                 |
         |                                                          |
         |  test/mockprovider/oidc.go (HTTP)                    |
         |    GET  /.well-known/oauth-authorization-server          |
@@ -135,7 +137,7 @@ distinct URLs/addresses.
   the dependency (see REQ-MOCK-130's own rationale column).
 - `oidc.go` — the HTTP discovery + token stub (REQ-MOCK-070/080).
 
-### New binary: `cmd/osac-mock-provider`
+### New binary: `test/cmd/osac-mock-provider`
 
 Config (`test/mockprovider/config.go` or inlined in `main.go` — decided
 at implementation time), two `net.Listen` calls, `signal.NotifyContext`
@@ -162,6 +164,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 | REQ-MOCK-110 | The binary MUST load its gRPC and HTTP listen addresses from environment variables, failing fast (matching `internal/config.Load()`'s convention) when a required value is missing/empty, and MUST shut down both listeners gracefully on `SIGTERM`/`SIGINT` | MUST | |
 | REQ-MOCK-120 | `Clusters/GetKubeconfig` MUST return a non-empty, base64-encoded stub kubeconfig for a known `id`, and gRPC `NOT_FOUND` for an unknown one — mirroring the other four CRUD-shaped services' `Get` semantics (REQ-MOCK-040) | MUST | Correction to §1's original scope (see DD-143); backs Milestone 3's `internal/cluster.Service.Get` (REQ-GET-020) |
 | REQ-MOCK-130 | `ClusterTemplates/Get` MUST return a template with exactly one entry in `node_sets` for the well-known id `default-hcp` (matching the e2e suite's own `validClusterCreateBody`'s `provider_hints.osac.template_id`), and gRPC `NOT_FOUND` for any other id | MUST | Second correction to §1's original scope, same category as REQ-MOCK-120/DD-143: `internal/cluster.Service.Create`'s `resolveNodeSetKey` (M3 REQ-CREATE-080) calls this RPC on every Create, and this binary was originally built before `ClusterTemplates` existed (M3 landed after Phase 1) — without it, every real e2e Cluster Create fails 500/INTERNAL on the real mock (`ClusterTemplates/Get` is UNIMPLEMENTED), a gap found while building Milestone 3/4's own e2e CRUD coverage |
+| REQ-MOCK-140 | The gRPC server MUST terminate real TLS (a static, checked-in self-signed test certificate), never plaintext | MUST | Added once `osac-sp`'s own fulfillment-service dial became unconditionally TLS with no insecure fallback (DD-229) — a plaintext mock could no longer be dialed by the real `osac.Bootstrap` at all |
 
 ---
 
@@ -256,19 +259,21 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 - **When** each is called
 - **Then** each returns HTTP `400` with a JSON `error` field
 
-##### AC-MOCK-120: A real `osac.Bootstrap` fetches a token and probes successfully against the real mock binary
+##### AC-MOCK-120: A real `osac.Bootstrap` fetches a token and probes successfully against the real mock binary over real TLS
 
-- **Validates:** REQ-MOCK-010, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-070, REQ-MOCK-110
-- **Given** the real `cmd/osac-mock-provider` binary's `test/mockprovider`
-  gRPC server and OIDC HTTP server both running on real, ephemeral
+- **Validates:** REQ-MOCK-010, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-070, REQ-MOCK-110, REQ-MOCK-140
+- **Given** the real `test/cmd/osac-mock-provider` binary's `test/mockprovider`
+  gRPC server (terminating real TLS via its static test certificate,
+  REQ-MOCK-140) and OIDC HTTP server both running on real, ephemeral
   `net.Listen` ports (in-process, not `bufconn`)
 - **When** a real `osac.Bootstrap`, constructed via the production `osac.New()`
-  (not the package's own unit-test fixtures), is pointed at those two
-  addresses and started
+  (not the package's own unit-test fixtures) and configured to trust that
+  same test certificate as its CA, is pointed at those two addresses and
+  started
 - **Then** `Bootstrap.TokenStatus().Valid` becomes `true` and
   `Bootstrap.Probe(ctx).Connected` is `true` within a bounded wait — proving
-  the mock is a genuine, real-transport substitute for OSAC before it is
-  ever wired into `kind`
+  the mock is a genuine, real-transport (including real TLS) substitute for
+  OSAC before it is ever wired into `kind`
 
 ##### AC-MOCK-130: GetKubeconfig round-trips for a known id, NotFound for an unknown one
 
@@ -288,6 +293,14 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
   (M3, `validClusterCreateBody`'s `template_id: "default-hcp"`) succeeds
   `201` against this real mock, rather than 500/INTERNAL from an
   UNIMPLEMENTED `ClusterTemplates/Get`
+
+##### AC-MOCK-150: The gRPC server's TLS config presents the static test certificate
+
+- **Validates:** REQ-MOCK-140
+- **When** `mockprovider.ServerTLSConfig()` is called
+- **Then** it returns a `*tls.Config` whose `Certificates` parses back to
+  exactly the static `testdata/tls-cert.pem`/`tls-key.pem` pair, with no
+  error
 
 ---
 

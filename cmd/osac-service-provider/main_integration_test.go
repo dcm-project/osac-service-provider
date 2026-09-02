@@ -36,6 +36,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -43,10 +44,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
+	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
 
 func TestMainIntegration(t *testing.T) {
@@ -213,13 +216,33 @@ type grpcServerHandle struct {
 	server *grpc.Server
 }
 
+// startCapabilitiesServer serves real TLS (mockprovider's static test
+// certificate, DD-229) — osac-sp's own fulfillment-service dial is
+// unconditionally TLS with no insecure fallback, so this fake server would
+// otherwise be undialable.
 func startCapabilitiesServer(addr string, impl publicv1.CapabilitiesServer) *grpcServerHandle {
 	ln, err := net.Listen("tcp", addr)
 	Expect(err).NotTo(HaveOccurred())
-	s := grpc.NewServer()
+	tlsCfg, err := mockprovider.ServerTLSConfig()
+	Expect(err).NotTo(HaveOccurred())
+	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 	publicv1.RegisterCapabilitiesServer(s, impl)
 	go func() { _ = s.Serve(ln) }()
 	return &grpcServerHandle{server: s}
+}
+
+// writeTestCACertFile writes mockprovider's static self-signed test
+// certificate (its own trust anchor, being self-signed) to a temp file, so
+// a real osac.Bootstrap (via run()'s SP_OSAC_TLS_CERT_FILE) trusts
+// startCapabilitiesServer's TLS listener instead of the system root pool.
+func writeTestCACertFile(t GinkgoTInterface) string {
+	f, err := os.CreateTemp("", "osac-sp-test-ca-*.pem")
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.Write(mockprovider.CertPEM)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(f.Close()).To(Succeed())
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+	return f.Name()
 }
 
 func (h *grpcServerHandle) Stop() { h.server.Stop() }
@@ -389,7 +412,7 @@ func startSPWithOptions(opts spStartOptions) *spHarness {
 	t.Setenv("SP_OSAC_OIDC_ISSUER_URL", issuerURL)
 	t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 	t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
-	t.Setenv("SP_OSAC_TLS_ENABLED", "false")
+	t.Setenv("SP_OSAC_TLS_CERT_FILE", writeTestCACertFile(t))
 	t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
 	t.Setenv("DCM_REGISTRATION_URL", h.environmentAgent.URL())
 	t.Setenv("DCM_NATS_URL", "nats://127.0.0.1:4222")
@@ -664,7 +687,7 @@ var _ = Describe("Full-stack startup fails fast on an invalid version matrix (in
 		t.Setenv("SP_OSAC_OIDC_ISSUER_URL", keycloak.IssuerURL())
 		t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 		t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
-		t.Setenv("SP_OSAC_TLS_ENABLED", "false")
+		t.Setenv("SP_OSAC_TLS_CERT_FILE", writeTestCACertFile(t))
 		t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
 		t.Setenv("DCM_REGISTRATION_URL", environmentAgent.URL())
 		t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")

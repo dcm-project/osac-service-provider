@@ -290,7 +290,7 @@ func (p *Poller) listClusters(ctx context.Context) ([]*publicv1.Cluster, error) 
 		if len(items) == 0 {
 			break
 		}
-		offset += int32(len(items))
+		offset += int32(len(items)) //nolint:gosec // len(items) never exceeds the fixed listPageSize (100) constant above
 		if offset >= resp.GetTotal() {
 			break
 		}
@@ -320,7 +320,7 @@ func (p *Poller) listComputeInstances(ctx context.Context) ([]*publicv1.ComputeI
 		if len(items) == 0 {
 			break
 		}
-		offset += int32(len(items))
+		offset += int32(len(items)) //nolint:gosec // len(items) never exceeds the fixed listPageSize (100) constant above
 		if offset >= resp.GetTotal() {
 			break
 		}
