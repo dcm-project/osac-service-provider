@@ -338,6 +338,10 @@ var _ = Describe("Registrar against a real fake environment-agent server (integr
 		r1 := newIntegrationRegistrar(srv)
 		r1.Start(ctx1)
 		Eventually(func() []capturedRequest { return srv.requestsFor("cluster") }, "1s", "10ms").ShouldNot(BeEmpty())
+		// cluster and vm are independent registration loops (DD-203) with no
+		// ordering guarantee between them — waiting on "cluster" alone raced
+		// with "vm" not having landed yet, panicking on the empty slice.
+		Eventually(func() []capturedRequest { return srv.requestsFor("vm") }, "1s", "10ms").ShouldNot(BeEmpty())
 		firstCluster := srv.requestsFor("cluster")[0]
 		firstVM := srv.requestsFor("vm")[0]
 		cancel1()

@@ -224,3 +224,98 @@ spec:
       port: 8080
       targetPort: http
       protocol: TCP
+---
+# A third osac-sp instance/config, deployed only when the opt-in
+# TC-TB-130 workflow_dispatch variant runs (same unconditional-apply,
+# conditional-wait pattern as osac-service-provider-bad-auth above). Real,
+# correct OIDC settings (so the token comes back valid) but an
+# intentionally unroutable SP_OSAC_FULFILLMENT_ADDRESS, closing the other
+# half of AC-HLT-060 that osac-service-provider-bad-auth doesn't reach:
+# "OSAC unreachable" distinct from "token invalid" (REQ-HLT-070).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osac-service-provider-osac-unreachable
+  labels:
+    app.kubernetes.io/name: osac-service-provider-osac-unreachable
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: osac-service-provider-osac-unreachable
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: osac-service-provider-osac-unreachable
+    spec:
+      containers:
+        - name: osac-service-provider
+          image: osac-service-provider:e2e
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              cp /etc/osac-ca/bundle.pem /etc/pki/ca-trust/source/anchors/osac-ca.pem
+              update-ca-trust extract
+              exec ./osac-service-provider
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # Deliberately unroutable: gRPC dial/probe never connects, so
+            # Bootstrap.Probe() reports connected=false while the OIDC
+            # token fetch below (real issuer, real correct secret) still
+            # succeeds — exactly the "unreachable, token valid" combination
+            # TC-TB-130 asserts.
+            - name: SP_OSAC_FULFILLMENT_ADDRESS
+              value: "osac-sp-osac-unreachable-fulfillment-intentionally-unroutable:8000"
+            - name: SP_OSAC_TLS_ENABLED
+              value: "true"
+            - name: SP_OSAC_TLS_CERT_FILE
+              value: "/etc/osac-ca/bundle.pem"
+            - name: SP_OSAC_OIDC_ISSUER_URL
+              value: "https://ffs-keycloak:8443/realms/osac"
+            - name: SP_OSAC_OIDC_CLIENT_ID
+              value: "osac-admin"
+            - name: SP_OSAC_OIDC_CLIENT_SECRET
+              value: "tierb-osac-admin-secret" # matches tierb-config/realm.json (test-only, NFR-TB-020) — correct on purpose, unlike the bad-auth variant
+            # Same reasoning as osac-service-provider-bad-auth's
+            # DCM_REGISTRATION_URL: an unroutable target keeps this
+            # instance's registration loop from ever reaching the shared
+            # control-plane and racing the good instance for the same
+            # provider names.
+            - name: DCM_REGISTRATION_URL
+              value: "http://osac-sp-osac-unreachable-registration-intentionally-unroutable:8080/api/v1alpha1"
+            - name: DCM_NATS_URL
+              value: "nats://dcm-nats:4222"
+            - name: SP_ENDPOINT
+              value: "http://osac-service-provider-osac-unreachable:8080"
+          volumeMounts:
+            - name: osac-ca
+              mountPath: /etc/osac-ca
+              readOnly: true
+          # Deliberately no readiness/liveness probes gating on the health
+          # endpoint: this instance is *expected* to report unhealthy
+          # (TC-TB-130), same as osac-service-provider-bad-auth above.
+      volumes:
+        - name: osac-ca
+          configMap:
+            name: ca-bundle
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: osac-service-provider-osac-unreachable
+  labels:
+    app.kubernetes.io/name: osac-service-provider-osac-unreachable
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  selector:
+    app.kubernetes.io/name: osac-service-provider-osac-unreachable
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

@@ -24,6 +24,14 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 `osac-mock-provider` is not present in a Tier B run at all (spec §2, Phase
 1) — it is fully replaced, not layered alongside.
 
+**E2E disposition invariant (DD-230):** same invariant as
+`osac-sp-e2e-suite.test-plan.md` — every `REQ-*`/`AC-*` relevant to this
+tier must carry an explicit disposition (**e2e-covered** via a `TC-TB-*`
+entry, **deferred**, or **integration-tier-sufficient**) recorded in the
+Coverage Matrix (§7) "Notes" column. A `REQ-*`/`AC-*` with no disposition
+recorded in either this file or `osac-sp-e2e-suite.test-plan.md` is an
+undocumented gap and blocks merge on review.
+
 ---
 
 ## 1. Infra readiness
@@ -66,7 +74,15 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 
 ---
 
-## 6. Coverage Matrix
+## 6. OSAC unreachable is genuinely detectable, distinct from an auth failure
+
+| TC ID | Test Name | Validates | Description |
+|-------|-----------|-----------|-------------|
+| TC-TB-130 | An unroutable OSAC address makes `osac-sp` report `unhealthy` with a connectivity-only detail, distinct from TC-TB-050's auth-failure detail | REQ-TB-065, AC-TB-025 | Exercised as an opt-in `workflow_dispatch` variant, same precedent as TC-TB-050 — a third `osac-sp` pod/config variant is deployed with real, correct OIDC credentials but `SP_OSAC_FULFILLMENT_ADDRESS` pointed at an unroutable target; assert its health endpoint converges to `status: "unhealthy"` with body detail equal to exactly `"OSAC fulfillment service unreachable"` (`internal/health`'s exact string, TC-U-032/038) — never combined with or confused for the token-invalid detail. Closes DD-230's e2e disposition gap for the connectivity half of `osac-sp.spec.md`'s AC-HLT-060. |
+
+---
+
+## 7. Coverage Matrix
 
 | Spec Topic | REQ Count | AC Count | TC-TB | Notes |
 |---|---|---|---|---|
@@ -75,4 +91,17 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 | Real auth success (osac-sp) | REQ-TB-030, REQ-TB-040 | AC-TB-010 | 1 (TC-TB-030) | The primary positive-path deliverable — closes DD-132's gap. |
 | Pinned-tag CI hygiene | REQ-TB-050 | — | 1 (TC-TB-040) | Static/lint-shaped, not a runtime Ginkgo spec. |
 | Real auth failure detection | REQ-TB-060 | AC-TB-020 | 1 (TC-TB-050) | Opt-in `workflow_dispatch` variant, matching TC-E2E-080's precedent (avoids doubling steady-state PR runtime). |
-| **Total** | 6 | 2 | **5** | Phase 1 is deliberately thin (one behavior — real auth fidelity — per spec §1's motivation); `TC-TB-060`+ is reserved for Phase 2 (`osac-operator`/BMFO/`osac-aap-mock` provisioning-fidelity assertions) once REQ-TB-090's gate opens. |
+| "OSAC unreachable" health branch | REQ-TB-065 | AC-TB-025 | 1 (TC-TB-130) | Mirrors TC-TB-050's opt-in-variant pattern; closes the other half of `osac-sp.spec.md`'s AC-HLT-060 that TC-TB-050 doesn't reach — "OSAC unreachable, token valid" distinctly from "token invalid" (DD-230). |
+| **Total** | 7 | 3 | **6** | Phase 1 is deliberately thin (one behavior — real auth fidelity — per spec §1's motivation); `TC-TB-060`+ is reserved for Phase 2 (`osac-operator`/BMFO/`osac-aap-mock` provisioning-fidelity assertions) once REQ-TB-090's gate opens. REQ/AC counts sum each row's literal count. |
+
+---
+
+## 8. E2E disposition for milestone-spec `REQ-*`/`AC-*` outside this tier's own scope (DD-230)
+
+| Milestone REQ group | Disposition | Rationale |
+|---|---|---|
+| `REQ-OSAC-040` (custom `TLSCertFile` CA vs. system root pool, as distinct branches) | integration-tier-sufficient | `TC-U-012`/`TC-U-013` already force both branches deterministically; Tier B's real Keycloak/`fulfillment-service` only ever exercises whichever branch this tier's own manifest configures (currently the custom-CA path, DD-151/cert-manager) — exercising the other branch e2e would just mean deploying a second variant to prove config plumbing already covered by config-loading unit tests. |
+
+All other Milestone 5/6 dispositions are recorded once, in
+`osac-sp-e2e-suite.test-plan.md` §7 (not duplicated here) — they apply
+identically regardless of which tier's backend is running underneath.

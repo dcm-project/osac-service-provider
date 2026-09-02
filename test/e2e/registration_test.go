@@ -31,10 +31,20 @@ var _ = Describe("osac-sp registration with real control-plane", Label("tier-b-o
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	// TC-E2E-020 / AC-E2E-020
-	It("registers exactly one cluster-type provider pointing at osac-sp's real endpoint", func() {
+	// TC-E2E-020 / AC-E2E-020, plus REQ-VERSION-050/AC-VERSION-020's
+	// registration-metadata field, over a real HTTP round trip into a real
+	// control-plane (the same field internal/registration's TC-I-500/510
+	// already prove against a fake backend — this is the live-cluster
+	// counterpart, using osac-sp's real, uninjected DefaultMatrix, which
+	// always contains "1.31").
+	It("registers exactly one cluster-type provider pointing at osac-sp's real endpoint, advertising kubernetes_supported_versions", func() {
 		provider := eventuallyFindProvider(client, "cluster")
 		Expect(provider.Endpoint).To(Equal(osacSPEndpoint("clusters")))
+
+		Expect(provider.Metadata).NotTo(BeNil())
+		versions, ok := provider.Metadata.Get("kubernetes_supported_versions")
+		Expect(ok).To(BeTrue())
+		Expect(versions).To(ContainElement("1.31"))
 	})
 
 	// TC-E2E-030 / AC-E2E-020

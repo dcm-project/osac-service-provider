@@ -2767,3 +2767,53 @@ about CRUD.
 **Related:** #28, DD-153 (refined, not reversed — its readiness-race
 rationale for why health checks need polling, not a single-shot check,
 still holds; only the "runs in both tiers" claim changes)
+
+---
+
+## DD-230: e2e coverage gets an explicit "disposition" invariant — not a hard TC-E2E-per-REQ requirement
+
+**Decision:** every `REQ-*`/`AC-*` pair across this repo's milestone specs
+must carry one of three explicit dispositions, recorded in the owning
+e2e test-plan's Coverage Matrix "Notes" column (or the milestone spec's own
+out-of-scope section):
+
+1. **e2e-covered** — a `TC-E2E-*`/`TC-TB-*` entry exists.
+2. **deferred** — a named follow-up with an owning issue/rationale (e.g.
+   Milestone 5's NATS status-event publish, which has no `osac-sp`-side
+   REST surface to assert against yet).
+3. **integration-tier-sufficient** — a one-line reason why real-infra risk
+   is negligible, naming the `TC-I-*`/`TC-U-*` that already proves the same
+   code path over real HTTP or against a `bufconn` fake.
+
+A `REQ-*`/`AC-*` with none of the three recorded is an undocumented gap and
+blocks merge on review — same enforcement posture as the existing `TC-U`+
+`TC-I` pyramid invariant (`.ai/test-plans/osac-sp-m3-cluster-crud.test-plan.md`
+§3 and its siblings).
+
+**Rationale:** a coverage audit (2026-09-01) found several `REQ-*` groups
+with zero e2e-tier presence and no recorded reason why (M4's default-network
+provisioning poll/timeout branches, several M1/M3 error-mapping edge cases)
+— indistinguishable, without re-deriving the whole audit, from groups that
+are *deliberately* out of scope (M5/NATS, M6/version-matrix). The existing
+`TC-U`+`TC-I` pyramid invariant can't extend to e2e as a hard "every REQ
+needs a `TC-E2E-*`" rule: REQs that are pure translation logic (status/
+error-code precedence tables, pagination math) are already fully proven at
+the integration tier through the real HTTP router, and re-running them
+against a live `kind` cluster adds CI time/flakiness risk (see DD-141/
+DD-142's history of timing- and ordering-dependent e2e flakiness in this
+repo) for no new signal. A disposition — not a tier — is the right
+invariant: it forces every gap to be a *documented choice*, not a silent
+omission, without demanding e2e coverage where it wouldn't prove anything
+integration tests don't already prove.
+
+**Consequence:** any new `REQ-*`/`AC-*` added to a milestone spec must be
+given a disposition in the same PR, in whichever e2e test-plan(s) it's
+relevant to. A `REQ-*` that's out of scope for e2e entirely (no
+cross-process/real-infra risk at all) still needs the
+"integration-tier-sufficient" note — silence is what this DD disallows, not
+the absence of e2e coverage itself.
+
+**Related requirements:** cross-cutting; applies to every `REQ-*`/`AC-*` in
+`osac-sp.spec.md`, `osac-sp-m3-cluster-crud.spec.md`,
+`osac-sp-m4-vm-crud.spec.md`, `osac-sp-m5-status-reporting.spec.md`,
+`osac-sp-m6-version-matrix.spec.md`
