@@ -94,13 +94,11 @@ repos last published before the freeze — those are permanently frozen at
 ## 2. Architecture
 
 Two phases, gated on `osac-sp`'s own milestone completion. **Phase 1 is
-fully implemented.** Phase 2 has landed real `ClusterOrder` reconciliation
-(`osac-operator` + `osac-aap-mock`, per REQ-TB-070/080/100) but is still
-ongoing — `BareMetalInstance`'s terminal-state proof is deferred to
-[#46](https://github.com/dcm-project/osac-service-provider/issues/46), and
-routing creation through `osac-sp`'s own `Create` +
-`fulfillment-service`'s `Hub` dispatch (rather than this phase's direct
-`ClusterOrder` CR create) is deferred to
+fully implemented.** Phase 2 has landed real `ClusterOrder` **and
+`BareMetalInstance`** reconciliation (`osac-operator` + BMFO +
+`osac-aap-mock`, per REQ-TB-070/080/100/110) but is still ongoing — routing
+creation through `osac-sp`'s own `Create` + `fulfillment-service`'s `Hub`
+dispatch (rather than this phase's direct CR create) is deferred to
 [#47](https://github.com/dcm-project/osac-service-provider/issues/47).
 
 ### Phase 1 (buildable now — no `osac-sp` code changes needed, M1 scope)
@@ -177,14 +175,15 @@ kind cluster
 | REQ-TB-050 | The workflow MUST pin exact `vX.Y.Z` image/chart tags for every OSAC component (never `main`/`latest`) | MUST | Upstream's own `check-floating-tags.yaml` CI guard confirms `main`/`latest` are untrusted as "current" |
 | REQ-TB-060 | A deliberately wrong/missing client credential MUST result in `osac-sp` reporting `unhealthy` with an auth-failure detail — proving Tier B can actually detect what Phase A's permissive mock structurally cannot | MUST | The core deliverable this tier exists for |
 
-### Phase 2 (REQ-TB-090's M2+ gate satisfied; implementation landing, ongoing — see #46, #47)
+### Phase 2 (REQ-TB-090's M2+ gate satisfied; implementation landing, ongoing — see #47)
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-TB-070 | The Tier B workflow MUST additionally deploy real `osac-operator` and real BMFO (pinned images/charts) on the same `kind` cluster's own API server. `osac-operator` MUST be configured to reconcile `ClusterOrder` CRs for real, through `osac-aap-mock`. BMFO's deployment MUST succeed (proving no CRD/RBAC/chart-install regressions), but its `BareMetalInstance` reconciliation is deploy-only for this phase — see the REQ-TB-100 note | MUST | Requires installing the 4 CRD schemas `fulfillment-service`'s own `it` package uses (`ClusterOrder`, `HostedCluster`, `Tenant`, `BareMetalInstance`), plus 4 more (`BareMetalPool`, `ComputeInstance`, `NodePool`, `BareMetalHost`) added once `osac-operator`/BMFO startup broke without them — 8 total, see `test/e2e/manifests-tierb/crds/README.md` (DD-220/222) |
+| REQ-TB-070 | The Tier B workflow MUST additionally deploy real `osac-operator` and real BMFO (pinned images/charts) on the same `kind` cluster's own API server. `osac-operator` MUST be configured to reconcile `ClusterOrder` CRs for real, through `osac-aap-mock`. BMFO's deployment MUST succeed (proving no CRD/RBAC/chart-install regressions) and MUST be configured to reconcile `BareMetalInstance` CRs for real — see REQ-TB-110 | MUST | Requires installing the 4 CRD schemas `fulfillment-service`'s own `it` package uses (`ClusterOrder`, `HostedCluster`, `Tenant`, `BareMetalInstance`), plus 4 more (`BareMetalPool`, `ComputeInstance`, `NodePool`, `BareMetalHost`) added once `osac-operator`/BMFO startup broke without them — 8 total, see `test/e2e/manifests-tierb/crds/README.md` (DD-220/222) |
 | REQ-TB-080 | `test/cmd/osac-aap-mock/` MUST implement `GetTemplate`, `LaunchJobTemplate`/`LaunchWorkflowTemplate`, `GetJob`, and `CancelJob` against `osac-operator/pkg/aap.Client`'s real REST contract, sufficient for real reconciliation loops to drive a `ClusterOrder` to a terminal success state | MUST | Exact request/response shapes resolved directly from source before implementation — see DD-213..215 |
 | REQ-TB-090 | Phase 2 implementation MUST NOT begin until `osac-sp` itself has real `Create`/`Get` CRUD dispatch for at least one resource type (M2+) — there is nothing for Phase 2's assertions to exercise before then | MUST | Gate, not a deferral-without-reason |
-| REQ-TB-100 | The e2e suite MUST create a `ClusterOrder` CR and assert it reaches a real terminal `Ready`/`Complete` status, driven entirely by real OSAC reconciliation logic through `osac-aap-mock` | MUST | **Scope correction (this landing, DD-216/DD-218):** originally worded to (a) cover `BareMetalInstance` too, and (b) drive the CR via an `osac-sp`-initiated `Create` through `fulfillment-service`'s real dispatch chain (its own `Hub` mechanism). (a) is split to [#46](https://github.com/dcm-project/osac-service-provider/issues/46) — `BareMetalInstance` needs a real host-allocation backend `osac-aap-mock` can't substitute for. (b) is split to [#47](https://github.com/dcm-project/osac-service-provider/issues/47) — `fulfillment-service`'s `Hub` registration is a stateful, multi-step CLI flow with several details (TLS mode, image/tag, cross-invocation config persistence) that need their own live-CI verification pass rather than a first attempt inside this already-large PR. This phase creates the `ClusterOrder` CR directly against the cluster's own API server instead, proving real `osac-operator` reconciliation + `osac-aap-mock` reach `Ready` — the actually-novel thing this phase introduces |
+| REQ-TB-100 | The e2e suite MUST create a `ClusterOrder` CR and assert it reaches a real terminal `Ready`/`Complete` status, driven entirely by real OSAC reconciliation logic through `osac-aap-mock` | MUST | **Scope correction (DD-216/DD-218):** originally worded to (a) cover `BareMetalInstance` too, and (b) drive the CR via an `osac-sp`-initiated `Create` through `fulfillment-service`'s real dispatch chain (its own `Hub` mechanism). (a) is now covered by REQ-TB-110 — a live spike (DD-226/227) found #46's original premise wrong: `BareMetalInstance` does not need a real host-allocation backend, a static `BareMetalHost` fixture is sufficient. (b) is still split to [#47](https://github.com/dcm-project/osac-service-provider/issues/47) — `fulfillment-service`'s `Hub` registration is a stateful, multi-step CLI flow with several details (TLS mode, image/tag, cross-invocation config persistence) that need their own live-CI verification pass rather than a first attempt inside this already-large PR. This phase creates the `ClusterOrder` CR directly against the cluster's own API server instead, proving real `osac-operator` reconciliation + `osac-aap-mock` reach `Ready` — the actually-novel thing this phase introduces |
+| REQ-TB-110 | The e2e suite MUST create two `BareMetalInstance` CRs — one with `runStrategy` unset, one with `runStrategy: Always` — each backed by its own static `BareMetalHost` fixture, and assert each reaches a real terminal `Ready` status, driven entirely by real BMFO reconciliation | MUST | No real Metal3/Ironic/virtual-BMC infrastructure is required: BMFO's `metal3` inventory/management backends operate purely on Kubernetes-object fields they own (`BareMetalHost.status`/`spec.online`/the `reboot.metal3.io` annotation), never on a live BMC/Ironic endpoint — proven via live spike, see DD-226/227. Originally assumed to need real host-allocation infrastructure and split out to [#46](https://github.com/dcm-project/osac-service-provider/issues/46); that assumption was wrong |
 
 ---
 
@@ -213,9 +212,7 @@ kind cluster
 ##### AC-TB-030 (Phase 2): A real `ClusterOrder` reaches a real terminal state
 
 - **Validates:** REQ-TB-070, REQ-TB-080, REQ-TB-100
-- **Given** the Phase 2 stack (real `osac-operator` + `osac-aap-mock`; BMFO
-  also deployed per REQ-TB-070 but not exercised to a terminal state this
-  phase — see REQ-TB-100's note and [#46](https://github.com/dcm-project/osac-service-provider/issues/46))
+- **Given** the Phase 2 stack (real `osac-operator` + `osac-aap-mock`)
 - **When** the e2e suite creates a `ClusterOrder` CR directly against the
   `kind` cluster's own API server (not yet routed through an
   `osac-sp`-initiated `Create` + `fulfillment-service`'s `Hub` dispatch —
@@ -223,6 +220,20 @@ kind cluster
 - **Then** real `osac-operator` reconciliation and `osac-aap-mock` cooperate
   to drive that CR to a real terminal `Ready` status, observable via the
   Kind cluster's own API server
+
+##### AC-TB-040 (Phase 2): A real `BareMetalInstance` reaches a real terminal state, with and without an active `RunStrategy`
+
+- **Validates:** REQ-TB-070, REQ-TB-110
+- **Given** the Phase 2 stack (real BMFO) and two static `BareMetalHost`
+  fixtures, one per `BareMetalInstance` variant
+- **When** the e2e suite creates both `BareMetalInstance` CRs directly
+  against the `kind` cluster's own API server, and — for the
+  `runStrategy: Always` variant only — patches that variant's
+  `BareMetalHost.status.poweredOn` to `true` once, simulating a real
+  `baremetal-operator`'s completed power-on action
+- **Then** both CRs reach a real terminal `status.phase: Ready`, driven
+  entirely by real BMFO reconciliation logic — no real Metal3/Ironic/
+  virtual-BMC infrastructure involved
 
 ---
 
@@ -248,10 +259,13 @@ kind cluster
   were added once `osac-operator`/BMFO startup broke without them
   (DD-220/222) — all in `test/e2e/manifests-tierb/crds/` (see that
   directory's own `README.md` for which are real vs. fixture-grade).
-- **`BareMetalInstance`'s terminal-state proof** — deferred to
-  [#46](https://github.com/dcm-project/osac-service-provider/issues/46); this
-  landing only proves BMFO deploys and stays healthy (TC-TB-100), not that it
-  can drive a `BareMetalInstance` CR to `Ready` (see REQ-TB-100's note).
+- ~~**`BareMetalInstance`'s terminal-state proof**~~ — resolved: a live
+  spike found #46's original premise wrong — BMFO's `metal3` backend
+  requires zero real hardware/BMC/Ironic simulation, since every operation
+  it performs is a plain Kubernetes API read/patch on the `BareMetalHost`
+  object itself (DD-226/227). Implemented as REQ-TB-110/AC-TB-040 using two
+  static `BareMetalHost` fixtures, covering both `runStrategy` unset and
+  `Always` (TC-TB-110/120).
 - **`osac-sp`-initiated `Create` → `fulfillment-service` `Hub` dispatch** —
   deferred to [#47](https://github.com/dcm-project/osac-service-provider/issues/47);
   this landing creates the `ClusterOrder` CR directly against the cluster's

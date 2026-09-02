@@ -105,14 +105,26 @@ pattern is identical; see `test/cmd/osac-aap-mock/main_unit_test.go` and
 
 ---
 
-## 7. Phase 2: real provisioning fidelity (`ClusterOrder` via real `osac-operator` + `osac-aap-mock`)
+## 7. Phase 2: real provisioning fidelity (`ClusterOrder` via real `osac-operator` + `osac-aap-mock`; `BareMetalInstance` via real BMFO)
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-TB-060 | `osac-operator`, BMFO, and `osac-aap-mock` all reach `Ready` within the bounded wait, on top of Phase 1's already-`Ready` stack | REQ-TB-070, AC-TB-030 (given clause) | Same readiness-polling discipline as TC-TB-010, extended to the 3 new Phase 2 pods plus all 8 vendored CRDs' existence (`kubectl get crd`) — the workflow installs all 8 (the original 4 plus `BareMetalPool`/`ComputeInstance`/`NodePool`/`BareMetalHost`, added once startup broke without them, DD-220/222) and this asserts every one of them, not just the original 4 — assert this completes within NFR-TB-010's overall 25-minute budget. |
 | TC-TB-080 | The e2e suite creates a `ClusterOrder` CR directly against the kind cluster's own API server | REQ-TB-070, REQ-TB-100 | Not yet routed through `osac-sp`/`fulfillment-service`'s dispatch chain — see DD-218, tracked in [#47](https://github.com/dcm-project/osac-service-provider/issues/47). Asserts the CR is accepted (the fixture-grade CRD, DD-213-adjacent precedent, has no schema to reject it) and osac-operator's `ClusterOrderReconciler` picks it up (a non-empty `.status.phase` appears) before the terminal-state wait begins. |
 | TC-TB-090 | That `ClusterOrder` CR reaches a real terminal `Ready` phase, driven by real `osac-operator` reconciliation through `osac-aap-mock` | REQ-TB-080, REQ-TB-100, AC-TB-030 | The core Phase 2 deliverable: polls the CR's `.status.phase` until `Ready` (bounded wait) or fails with the CR's full `.status` (conditions, `provisioningJobs`) for CI triage — not a bare timeout. Real reconciliation, real HyperShift-shaped `HostedCluster` CR creation (fixture-grade per issue #44's comment), real AAP dispatch to `osac-aap-mock`, all exercised for real; only the literal AAP job execution is faked (NFR-TB-030). |
-| TC-TB-100 | BMFO deploys and stays healthy with no `BareMetalInstance` CR present — a deploy-only regression check | REQ-TB-070 | Asserts BMFO's `Deployment` stays `Ready` (no crash-loop from missing CRDs/RBAC/secrets) for the duration of the suite, with zero `BareMetalInstance` CRs ever created — proves the chart/RBAC/CRD install itself is sound without claiming any reconciliation fidelity (DD-216, tracked further in [#46](https://github.com/dcm-project/osac-service-provider/issues/46)). |
+| TC-TB-110 | A `BareMetalInstance` with `runStrategy` unset, backed by a static `BareMetalHost` fixture, reaches a real terminal `Ready` phase | REQ-TB-110, AC-TB-040 | Mirrors TC-TB-080/090's two-step pattern (apply fixture, then poll `.status.phase`) as a single `It` — no separate "reconciler picked it up" intermediate assertion is needed here since the bounded `Ready`-or-timeout wait already fully covers it. Proves BMFO's `metal3` backend allocates the fixture host and drives the CR to `Ready` with zero real hardware/BMC simulation (DD-226/227). |
+| TC-TB-120 | A `BareMetalInstance` with `runStrategy: Always`, backed by its own static `BareMetalHost` fixture, reaches `Ready` only after the suite patches that host's `status.poweredOn` | REQ-TB-110, AC-TB-040 | Exercises the power-synced condition path (`reconcilePower`/`SetPowerState`) that TC-TB-110 never touches. First asserts the CR is genuinely stuck in `Progressing` (`PowerSynced=False`, "node power state is transitioning") *before* the patch — proving the power-sync condition actually gates `Ready`, not a vestigial/never-blocking check — then patches the fixture `BareMetalHost`'s `status.poweredOn: true` via `--subresource=status` (simulating a real `baremetal-operator`'s completed power-on) and asserts the CR converges to `Ready` on the next reconcile (DD-226/227). |
+
+Note: an earlier draft of this plan (superseded) had a `TC-TB-100` ("BMFO
+deploys and stays healthy with no `BareMetalInstance` CR present") as a
+deploy-only regression check, placeholder for the fact that nothing in the
+suite could yet drive `BareMetalInstance` reconciliation (DD-216). It is
+retired, not renumbered, now that TC-TB-110/120 exist: its "zero CRs
+present" premise is no longer true once those specs run, and its
+`deploymentReady("bmf-operator-controller-manager")` half was already fully
+duplicated by TC-TB-060. A passing TC-TB-110/120 already implies BMFO
+deployed and stayed healthy — a strictly stronger claim than TC-TB-100 ever
+made.
 
 ---
 
@@ -126,6 +138,5 @@ pattern is identical; see `test/cmd/osac-aap-mock/main_unit_test.go` and
 | Pinned-tag CI hygiene | REQ-TB-050 | — | 1 (TC-TB-040) | Static/lint-shaped, not a runtime Ginkgo spec. |
 | Real auth failure detection | REQ-TB-060 | AC-TB-020 | 1 (TC-TB-050) | Opt-in `workflow_dispatch` variant, matching TC-E2E-080's precedent (avoids doubling steady-state PR runtime). |
 | `osac-aap-mock` unit coverage | REQ-TB-080 | — | 17 (TC-U-560..576) | Counts toward the repo's 100%-unit-coverage gate, unlike the `TC-TB-*` rows below. |
-| Phase 2 infra/terminal-state (`ClusterOrder`, direct CR create) | REQ-TB-070, REQ-TB-080, REQ-TB-100 | AC-TB-030 | 3 (TC-TB-060/080/090) | The Phase 2 deliverable — real reconciliation through a real AAP-layer fake, scoped to `ClusterOrder` only (DD-216) and a direct CR create rather than an `osac-sp`-driven one (DD-218, #47). |
-| BMFO deploy-only regression check | REQ-TB-070 | — | 1 (TC-TB-100) | Deliberately thin — full `BareMetalInstance` fidelity tracked in #46, not this plan. |
-| **Total** | 8 | 3 | **26** | |
+| Phase 2 infra/terminal-state (`ClusterOrder` + `BareMetalInstance`, direct CR create) | REQ-TB-070, REQ-TB-080, REQ-TB-100, REQ-TB-110 | AC-TB-030, AC-TB-040 | 5 (TC-TB-060/080/090/110/120) | The Phase 2 deliverable — real reconciliation through a real AAP-layer fake (`ClusterOrder`) and real BMFO against a static host fixture (`BareMetalInstance`, DD-226/227), both via a direct CR create rather than an `osac-sp`-driven one (DD-218, #47). Supersedes the retired `TC-TB-100` deploy-only placeholder (DD-216 is now fully resolved, not just partially). |
+| **Total** | 9 | 4 | **27** | |

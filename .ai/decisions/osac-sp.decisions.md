@@ -3152,3 +3152,76 @@ asserts the missing-header case; `TC-U-574` is new, asserting the
 wrong-token case.
 
 **Related requirements:** REQ-TB-080, NFR-TB-030
+
+---
+
+## DD-226: `BareMetalInstance`'s `metal3` backend requires zero real hardware/BMC/Ironic simulation — supersedes DD-216's scope-out
+
+**Decision:** `REQ-TB-110`/`AC-TB-040` prove a real `BareMetalInstance`
+reaches a real terminal `Ready` phase, driven by real BMFO reconciliation,
+using only a static, hand-authored `BareMetalHost` fixture — no OpenStack
+Ironic, no Metal3, no virtual BMC (`sushy-tools`), no real
+`baremetal-operator`.
+
+**Rationale:** a live spike on a real cluster, reading BMFO's actual source
+(`internal/inventory/metal3.go`, `internal/management/metal3.go`,
+`internal/controller/baremetalinstance_controller.go`) line by line, found
+every single operation the `metal3` inventory/management backends perform
+is a plain Kubernetes API read/patch on the `BareMetalHost` object itself —
+label list, `consumerRef` set/clear, `spec.online` patch, the
+`reboot.metal3.io` annotation set/check. BMFO never talks to Ironic, a BMC,
+or the real `baremetal-operator` directly; that component is what would
+*eventually* react to those same fields in production, but nothing in
+BMFO's own code requires it to be present for BMFO's reconciler to observe
+the expected end-state. Proven twice: once with `runStrategy` unset (reaches
+`Ready` with zero extra steps), once with `runStrategy: Always` (gets stuck
+in `Progressing`, `PowerSynced=False`, until the fixture's
+`status.poweredOn` is patched once by hand — the one point where a real or
+fake BMO's reaction genuinely matters).
+
+`DD-216` correctly scoped `BareMetalInstance` out of the prior PR given the
+information available then — `internal/management/metal3.go`'s
+reboot-annotation handling was read as implying a live BMH controller must
+exist for BMFO's reconciler to make progress. This DD corrects that
+inference with empirical evidence: a live BMH controller is what
+*eventually* acts on the fields BMFO writes, not a precondition for BMFO's
+own reconcile loop to reach its own terminal state.
+
+**Related requirements:** REQ-TB-070, REQ-TB-110
+
+---
+
+## DD-227: Static `BareMetalHost` fixture shape — two upstream field-naming gotchas, one config-schema gotcha
+
+**Decision:** the `BareMetalHost`/`BareMetalInstance` fixtures added for
+`REQ-TB-110` (`test/e2e/manifests-tierb/`) use the exact field names/shapes
+below, confirmed against real upstream source rather than inferred from
+BMFO's own Go field names.
+
+**Rationale — three real gotchas hit during the spike:**
+
+1. **`status.hardware`, not `status.hardwareDetails`.** BMFO's own log
+   message ("NIC inventory is missing") and internal Go field are named
+   `HardwareDetails`, but the real upstream `metal3-io/baremetal-operator`
+   JSON tag for that field is `hardware` (`HardwareDetails *HardwareDetails
+   \`json:"hardware,omitempty"\``), with `nics` (plural) as the NIC list
+   key inside it. The vendored fixture CRD's
+   `x-kubernetes-preserve-unknown-fields: true` schema doesn't validate
+   this — a fixture with the wrong key silently round-trips through
+   `kubectl get` (both keys persist side by side) while BMFO just never
+   sees NIC data and reports "no matching hosts."
+2. **Status must be set via `--subresource=status`, not the create/apply
+   body.** The fixture CRD declares `subresources: {status: {}}` (matching
+   the real upstream CRD), so any `status:` block in a plain `kubectl
+   apply` is silently dropped.
+3. **`osac-inventory-config`/`osac-management-config`'s YAML schema**: the
+   `Config` struct (`internal/inventory/client.go`) is `{name, type,
+   options: map[string]any, hostClass}` — the per-backend block (e.g.
+   `metal3: {namespace: ...}`) must be nested under a top-level `options:`
+   key, and `hostClass` is a top-level field, not nested inside the
+   backend's own options block. `DD-217`/`DD-222`'s existing stub secrets
+   happened to already have the right shape (never exercised against a
+   real host before now, so this went unverified) — confirmed correct as
+   part of this spike, not a new fix to those secrets.
+
+**Related requirements:** REQ-TB-070, REQ-TB-110
