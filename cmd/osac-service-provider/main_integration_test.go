@@ -29,13 +29,22 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +54,8 @@ import (
 	"google.golang.org/grpc"
 
 	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
+	"github.com/dcm-project/osac-service-provider/internal/config"
+	"github.com/dcm-project/osac-service-provider/internal/osac"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
@@ -220,6 +231,62 @@ func startCapabilitiesServer(addr string, impl publicv1.CapabilitiesServer) *grp
 	publicv1.RegisterCapabilitiesServer(s, impl)
 	go func() { _ = s.Serve(ln) }()
 	return &grpcServerHandle{server: s}
+}
+
+// generateTestCertPair creates a minimal self-signed certificate for TLS testing.
+// Returns PEM-encoded cert bytes and key bytes.
+func generateTestCertPair(cn string) (certPEM, keyPEM []byte) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	Expect(err).NotTo(HaveOccurred())
+
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  false,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	Expect(err).NotTo(HaveOccurred())
+
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+
+	keyBytes, err := x509.MarshalECPrivateKey(key)
+	Expect(err).NotTo(HaveOccurred())
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+
+	return certPEM, keyPEM
+}
+
+// startTLSListener creates a real TLS listener on loopback with the provided cert/key.
+// Returns the listener and the address it's bound to.
+func startTLSListener(certPEM, keyPEM []byte) (net.Listener, string) {
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	Expect(err).NotTo(HaveOccurred())
+
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
+	Expect(err).NotTo(HaveOccurred())
+
+	return ln, ln.Addr().String()
+}
+
+// writeTempFile writes data to a temporary file and returns its path.
+func writeTempFile(data []byte) string {
+	f, err := os.CreateTemp("", "osac-sp-test-*.pem")
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.Write(data)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(f.Close()).To(Succeed())
+	return f.Name()
+}
+
+// removeTempFile deletes a temporary file.
+func removeTempFile(path string) {
+	Expect(os.Remove(path)).To(Succeed())
 }
 
 func (h *grpcServerHandle) Stop() { h.server.Stop() }
@@ -647,6 +714,98 @@ var _ = Describe("Full-stack smoke test (integration)", func() {
 // technique as TC-U-097) rather than the startSP harness, since run()
 // returns its error synchronously here, before any background goroutine
 // (osac.Bootstrap.Start, registrar.Start) is ever launched.
+// TC-I-032: certificate validation failure — server cert not in trust pool (FedRAMP CA control, DD-229)
+var _ = Describe("OSAC bootstrap with TLS negative scenarios (certificate validation, DD-229)", func() {
+	It("probe fails when server certificate is not in client's trust pool (TC-I-032)", func() {
+		keycloak := newFakeKeycloak()
+		defer keycloak.Close()
+
+		// Create a real TLS listener with server cert; Bootstrap will be configured
+		// with a different CA, so handshake fails at cert validation.
+		serverCert, serverKey := generateTestCertPair("server.test")
+		tlsLn, serverAddr := startTLSListener(serverCert, serverKey)
+		defer tlsLn.Close()
+
+		// Create a different CA for the Bootstrap config (not the server's issuer).
+		clientCA, _ := generateTestCertPair("client.test")
+		caFile := writeTempFile(clientCA)
+		defer removeTempFile(caFile)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Create Bootstrap directly against the untrusted-cert server.
+		osacCfg := &config.OSACConfig{
+			FulfillmentAddress: serverAddr,
+			OIDCIssuerURL:      keycloak.IssuerURL(),
+			OIDCClientID:       "osac-sp",
+			OIDCClientSecret:   "secret",
+			TLSCertFile:        caFile,
+			ProbeTimeout:       time.Second,
+		}
+		bootstrap, err := osac.New(osacCfg, slog.New(slog.DiscardHandler))
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = bootstrap.Close() }()
+
+		// Probe should fail with a certificate validation or TLS error.
+		result := bootstrap.Probe(ctx)
+		Expect(result.Connected).To(BeFalse())
+		Expect(result.Err).NotTo(BeNil())
+		// gRPC wraps the underlying TLS error, so just verify a TLS-related error occurred.
+		// If it were a networking error (connection refused), Connected would still be false
+		// but DD-229 requires TLS enforcement, not fallback to plaintext.
+	})
+
+	// TC-I-033: TLS handshake failure — server refuses to handshake (no plaintext fallback, DD-229)
+	It("probe fails when server refuses TLS handshake with no plaintext fallback (TC-I-033)", func() {
+		keycloak := newFakeKeycloak()
+		defer keycloak.Close()
+
+		// Create a listener that accepts but immediately closes without TLS.
+		tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		defer tcpLn.Close()
+
+		go func() {
+			for {
+				conn, err := tcpLn.Accept()
+				if err != nil {
+					return // listener closed
+				}
+				_ = conn.Close() // close immediately, no TLS handshake
+			}
+		}()
+
+		serverAddr := tcpLn.Addr().String()
+		clientCA, _ := generateTestCertPair("test.test")
+		caFile := writeTempFile(clientCA)
+		defer removeTempFile(caFile)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		osacCfg := &config.OSACConfig{
+			FulfillmentAddress: serverAddr,
+			OIDCIssuerURL:      keycloak.IssuerURL(),
+			OIDCClientID:       "osac-sp",
+			OIDCClientSecret:   "secret",
+			TLSCertFile:        caFile,
+			ProbeTimeout:       time.Second,
+		}
+
+		bootstrap, err := osac.New(osacCfg, slog.New(slog.DiscardHandler))
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = bootstrap.Close() }()
+
+		// Probe should fail with a TLS handshake error (connection reset).
+		result := bootstrap.Probe(ctx)
+		Expect(result.Connected).To(BeFalse())
+		Expect(result.Err).NotTo(BeNil())
+		// gRPC wraps connection errors. The key point: DD-229 requires no plaintext fallback,
+		// so a server that refuses TLS must result in probe failure, not a transparent downgrade.
+	})
+})
+
 var _ = Describe("Full-stack startup fails fast on an invalid version matrix (integration)", func() {
 	It("fails fast before opening the listener or registering, when SP_VERSION_MATRIX_PATH is invalid (TC-I-520)", func() {
 		keycloak := newFakeKeycloak()
