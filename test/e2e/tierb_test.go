@@ -681,8 +681,8 @@ func bareMetalInstanceCondition(status bareMetalInstanceStatus, condType string)
 // kubectl delete (no --wait=false) already blocks until BMFO's
 // handleDeletion finalizer cleanup (UnassignHost) completes (DD-229), so
 // no Eventually is needed at the call site.
-// Note: BMFO stores consumerRef as a reference object; this function
-// extracts the instance name, handling both .name and .uid storage formats.
+// Note: BMFO stores consumerRef with instance UID; this function resolves
+// the instance name by looking up the instance with that UID.
 func getBareMetalHostConsumerRef(name string) string {
 	out, err := exec.Command("kubectl", "get", "baremetalhost", name, "-o", "json").CombinedOutput() //nolint:gosec // fixed args, not user input
 	Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalhost %s failed: %s", name, out)
@@ -701,38 +701,47 @@ func getBareMetalHostConsumerRef(name string) string {
 		return ""
 	}
 
-	// Try .name field (original BMFO API format)
+	// BMFO stores consumerRef as a reference object with uid and name fields
+	// Try .name first (may be populated)
 	if consumerRefName, ok := consumerRef["name"].(string); ok && consumerRefName != "" {
 		return consumerRefName
 	}
 
-	// Fallback: if .name is empty or missing, try .uid and resolve it to instance name
-	if uid, ok := consumerRef["uid"].(string); ok && uid != "" {
-		listOut, err := exec.Command("kubectl", "get", "baremetalinstance", "-o", "json").CombinedOutput() //nolint:gosec // fixed args, not user input
-		Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalinstance failed: %s", listOut)
+	// Get the UID from consumerRef (this is the BareMetalInstance's UID)
+	refUID, ok := consumerRef["uid"].(string)
+	if !ok || refUID == "" {
+		return ""
+	}
 
-		var instances map[string]interface{}
-		err = json.Unmarshal(listOut, &instances)
-		Expect(err).NotTo(HaveOccurred(), "failed to parse instances JSON: %s", listOut)
+	// Look up the BareMetalInstance with this UID and return its name
+	listOut, err := exec.Command("kubectl", "get", "baremetalinstance", "-o", "json").CombinedOutput() //nolint:gosec // fixed args, not user input
+	Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalinstance failed: %s", listOut)
 
-		items, ok := instances["items"].([]interface{})
+	var instances map[string]interface{}
+	err = json.Unmarshal(listOut, &instances)
+	Expect(err).NotTo(HaveOccurred(), "failed to parse instances JSON: %s", listOut)
+
+	items, ok := instances["items"].([]interface{})
+	if !ok {
+		return ""
+	}
+
+	for _, item := range items {
+		instance, ok := item.(map[string]interface{})
 		if !ok {
-			return ""
+			continue
 		}
-
-		for _, item := range items {
-			instance, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			metadata, ok := instance["metadata"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if metadata["uid"] == uid {
-				if instanceName, ok := metadata["name"].(string); ok {
-					return instanceName
-				}
+		metadata, ok := instance["metadata"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		instanceUID, ok := metadata["uid"].(string)
+		if !ok {
+			continue
+		}
+		if instanceUID == refUID {
+			if instanceName, ok := metadata["name"].(string); ok {
+				return instanceName
 			}
 		}
 	}
