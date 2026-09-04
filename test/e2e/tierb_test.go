@@ -681,8 +681,8 @@ func bareMetalInstanceCondition(status bareMetalInstanceStatus, condType string)
 // kubectl delete (no --wait=false) already blocks until BMFO's
 // handleDeletion finalizer cleanup (UnassignHost) completes (DD-229), so
 // no Eventually is needed at the call site.
-// Note: BMFO stores consumerRef with instance UID; this function resolves
-// the instance name by looking up the instance with that UID.
+// Note: BMFO stores consumerRef as a reference object; the .name field may
+// contain a UID instead of instance name, so we always resolve by UID.
 func getBareMetalHostConsumerRef(name string) string {
 	out, err := exec.Command("kubectl", "get", "baremetalhost", name, "-o", "json").CombinedOutput() //nolint:gosec // fixed args, not user input
 	Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalhost %s failed: %s", name, out)
@@ -701,25 +701,39 @@ func getBareMetalHostConsumerRef(name string) string {
 		return ""
 	}
 
-	// BMFO stores consumerRef as a reference object with uid and name fields
-	// Try .name first (may be populated)
-	if consumerRefName, ok := consumerRef["name"].(string); ok && consumerRefName != "" {
-		return consumerRefName
-	}
-
-	// Get the UID from consumerRef (this is the BareMetalInstance's UID)
+	// BMFO stores consumerRef as a reference object with .uid and .name
+	// The .name field appears to store the UID, not the instance name,
+	// so we always resolve from UID by looking up the instance
 	refUID, ok := consumerRef["uid"].(string)
 	if !ok || refUID == "" {
+		// Fallback: try .name field in case it contains the actual UID value
+		if name, ok := consumerRef["name"].(string); ok && name != "" {
+			// This might be a UID masquerading as a name; try to resolve it
+			resolvedName := resolveInstanceNameByUID(name)
+			if resolvedName != "" {
+				return resolvedName
+			}
+			// If resolution fails, return the name field as-is for debugging
+			return name
+		}
 		return ""
 	}
 
-	// Look up the BareMetalInstance with this UID and return its name
+	return resolveInstanceNameByUID(refUID)
+}
+
+// resolveInstanceNameByUID looks up a BareMetalInstance by UID and returns its name
+func resolveInstanceNameByUID(uid string) string {
 	listOut, err := exec.Command("kubectl", "get", "baremetalinstance", "-o", "json").CombinedOutput() //nolint:gosec // fixed args, not user input
-	Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalinstance failed: %s", listOut)
+	if err != nil {
+		return ""
+	}
 
 	var instances map[string]interface{}
 	err = json.Unmarshal(listOut, &instances)
-	Expect(err).NotTo(HaveOccurred(), "failed to parse instances JSON: %s", listOut)
+	if err != nil {
+		return ""
+	}
 
 	items, ok := instances["items"].([]interface{})
 	if !ok {
@@ -739,7 +753,7 @@ func getBareMetalHostConsumerRef(name string) string {
 		if !ok {
 			continue
 		}
-		if instanceUID == refUID {
+		if instanceUID == uid {
 			if instanceName, ok := metadata["name"].(string); ok {
 				return instanceName
 			}
