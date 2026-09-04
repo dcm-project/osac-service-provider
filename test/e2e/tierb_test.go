@@ -677,14 +677,67 @@ func bareMetalInstanceCondition(status bareMetalInstanceStatus, condType string)
 }
 
 // getBareMetalHostConsumerRef returns the named BareMetalHost's
-// spec.consumerRef.name (empty if unset) — TC-TB-160's release assertion.
+// consumerRef instance name (empty if unset) — TC-TB-150/160's assertions.
 // kubectl delete (no --wait=false) already blocks until BMFO's
 // handleDeletion finalizer cleanup (UnassignHost) completes (DD-229), so
 // no Eventually is needed at the call site.
+// Note: BMFO stores consumerRef as a reference object; this function
+// extracts the instance name, handling both .name and .uid storage formats.
 func getBareMetalHostConsumerRef(name string) string {
-	out, err := exec.Command("kubectl", "get", "baremetalhost", name, "-o", "jsonpath={.spec.consumerRef.name}").CombinedOutput() //nolint:gosec // fixed args, not user input
+	out, err := exec.Command("kubectl", "get", "baremetalhost", name, "-o", "json").CombinedOutput() //nolint:gosec // fixed args, not user input
 	Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalhost %s failed: %s", name, out)
-	return strings.TrimSpace(string(out))
+
+	var bmh map[string]interface{}
+	err = json.Unmarshal(out, &bmh)
+	Expect(err).NotTo(HaveOccurred(), "failed to parse BareMetalHost JSON: %s", out)
+
+	spec, ok := bmh["spec"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	consumerRef, ok := spec["consumerRef"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	// Try .name field (original BMFO API format)
+	if consumerRefName, ok := consumerRef["name"].(string); ok && consumerRefName != "" {
+		return consumerRefName
+	}
+
+	// Fallback: if .name is empty or missing, try .uid and resolve it to instance name
+	if uid, ok := consumerRef["uid"].(string); ok && uid != "" {
+		listOut, err := exec.Command("kubectl", "get", "baremetalinstance", "-o", "json").CombinedOutput() //nolint:gosec // fixed args, not user input
+		Expect(err).NotTo(HaveOccurred(), "kubectl get baremetalinstance failed: %s", listOut)
+
+		var instances map[string]interface{}
+		err = json.Unmarshal(listOut, &instances)
+		Expect(err).NotTo(HaveOccurred(), "failed to parse instances JSON: %s", listOut)
+
+		items, ok := instances["items"].([]interface{})
+		if !ok {
+			return ""
+		}
+
+		for _, item := range items {
+			instance, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			metadata, ok := instance["metadata"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if metadata["uid"] == uid {
+				if instanceName, ok := metadata["name"].(string); ok {
+					return instanceName
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 // fetchTokenClaims performs a real client_credentials grant directly
