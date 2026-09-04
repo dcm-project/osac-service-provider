@@ -724,7 +724,7 @@ var _ = Describe("OSAC bootstrap with TLS negative scenarios (certificate valida
 		// with a different CA, so handshake fails at cert validation.
 		serverCert, serverKey := generateTestCertPair("server.test")
 		tlsLn, serverAddr := startTLSListener(serverCert, serverKey)
-		defer tlsLn.Close()
+		defer func() { _ = tlsLn.Close() }()
 
 		// Create a different CA for the Bootstrap config (not the server's issuer).
 		clientCA, _ := generateTestCertPair("client.test")
@@ -750,7 +750,7 @@ var _ = Describe("OSAC bootstrap with TLS negative scenarios (certificate valida
 		// Probe should fail with a certificate validation or TLS error.
 		result := bootstrap.Probe(ctx)
 		Expect(result.Connected).To(BeFalse())
-		Expect(result.Err).NotTo(BeNil())
+		Expect(result.Err).To(HaveOccurred())
 		// gRPC wraps the underlying TLS error, so just verify a TLS-related error occurred.
 		// If it were a networking error (connection refused), Connected would still be false
 		// but DD-229 requires TLS enforcement, not fallback to plaintext.
@@ -764,7 +764,7 @@ var _ = Describe("OSAC bootstrap with TLS negative scenarios (certificate valida
 		// Create a listener that accepts but immediately closes without TLS.
 		tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
 		Expect(err).NotTo(HaveOccurred())
-		defer tcpLn.Close()
+		defer func() { _ = tcpLn.Close() }()
 
 		go func() {
 			for {
@@ -800,7 +800,7 @@ var _ = Describe("OSAC bootstrap with TLS negative scenarios (certificate valida
 		// Probe should fail with a TLS handshake error (connection reset).
 		result := bootstrap.Probe(ctx)
 		Expect(result.Connected).To(BeFalse())
-		Expect(result.Err).NotTo(BeNil())
+		Expect(result.Err).To(HaveOccurred())
 		// gRPC wraps connection errors. The key point: DD-229 requires no plaintext fallback,
 		// so a server that refuses TLS must result in probe failure, not a transparent downgrade.
 	})
