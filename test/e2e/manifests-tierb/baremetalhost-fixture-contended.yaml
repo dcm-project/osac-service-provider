@@ -1,0 +1,15 @@
+# BareMetalHost fixture for AC-TB-050/TC-TB-150: exactly one eligible host,
+# claimed by two competing BareMetalInstance fixtures
+# (baremetalinstance-fixture-contended-{a,b}.yaml). Same "already completed
+# Metal3 registration/inspection" status shape as the TC-TB-110/120
+# fixtures (DD-226/227) — status set via a separate subresource patch, see
+# tierb_test.go's patchBareMetalHostInitialStatus.
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: tierb-bmh-contended
+  labels:
+    osac.openshift.io/host-type: tierb-hosttype-contended
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  online: false

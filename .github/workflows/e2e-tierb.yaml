@@ -1,11 +1,13 @@
 name: E2E Tier B (kind + real OSAC stack)
 
-# Tier B of osac-service-provider#21's e2e effort — Phase 1
-# (.ai/specs/osac-sp-e2e-tier-b.spec.md): real Postgres, real Keycloak
-# (vendored realm, DD-150), and real fulfillment-service (pinned, published
-# chart, DD-151), replacing Phase A's osac-mock-provider, to close the mock
-# provider's structural auth-fidelity gap (Phase A never validates auth at
-# all — see issue #21). dcm-control-plane/osac-service-provider wiring
+# Tier B of osac-service-provider#21's e2e effort
+# (.ai/specs/osac-sp-e2e-tier-b.spec.md). Phase 1: real Postgres, real
+# Keycloak (vendored realm, DD-150), and real fulfillment-service (pinned,
+# published chart, DD-151), replacing Phase A's osac-mock-provider, to
+# close the mock provider's structural auth-fidelity gap (Phase A never
+# validates auth at all — see issue #21). Phase 2 (issue #44): real
+# osac-operator + BMFO + osac-aap-mock, driving a real ClusterOrder CR to a
+# real terminal state. dcm-control-plane/osac-service-provider wiring
 # otherwise unchanged from .github/workflows/e2e.yaml (Phase A).
 
 on:
@@ -32,7 +34,9 @@ env:
   CONTROL_PLANE_REF: c04802d05ecc4fd11e070f3bc604ef9e8671a09b
   CONTROL_PLANE_IMAGE_TAG: c04802d
   CERT_MANAGER_VERSION: v1.20.0
-  FULFILLMENT_SERVICE_CHART_VERSION: "0.0.85" # REQ-TB-050 — pin, never `main`/`latest`
+  FULFILLMENT_SERVICE_CHART_VERSION: "0.0.90" # REQ-TB-050 — pin, never `main`/`latest` (bumped from 0.0.85, DD-149 monorepo pivot)
+  OSAC_OPERATOR_CHART_VERSION: "0.0.12" # REQ-TB-070 — pinned to the osac-project/osac monorepo's own release (DD-149)
+  BMFO_CHART_VERSION: "0.0.12" # REQ-TB-070 — pinned to the osac-project/osac monorepo's own release (DD-149)
 
 jobs:
   e2e-tierb:
@@ -50,6 +54,9 @@ jobs:
       - name: Build osac-service-provider image
         run: docker build -t osac-service-provider:e2e -f Containerfile .
 
+      - name: Build osac-aap-mock image
+        run: docker build -t osac-aap-mock:e2e -f Containerfile.osac-aap-mock .
+
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
@@ -59,6 +66,9 @@ jobs:
 
       - name: Load osac-service-provider image into kind
         run: kind load docker-image osac-service-provider:e2e --name "${{ env.KIND_CLUSTER_NAME }}"
+
+      - name: Load osac-aap-mock image into kind
+        run: kind load docker-image osac-aap-mock:e2e --name "${{ env.KIND_CLUSTER_NAME }}"
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -190,6 +200,34 @@ jobs:
           # report unhealthy) — wait on the pod entering Running instead.
           kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=osac-service-provider-bad-auth --timeout=120s
 
+      # --- Phase 2: real osac-operator + BMFO + osac-aap-mock (REQ-TB-070..100) ---
+      - name: Install vendored CRDs (ClusterOrder, HostedCluster, NodePool, Tenant, BareMetalInstance, BareMetalPool, ComputeInstance, BareMetalHost)
+        run: kubectl apply -f test/e2e/manifests-tierb/crds/
+
+      - name: Deploy BMFO stub secrets (DD-217)
+        run: kubectl apply -f test/e2e/manifests-tierb/bmfo-secrets.yaml
+
+      - name: Install osac-operator
+        run: |
+          helm install osac-operator oci://ghcr.io/osac-project/charts/osac-operator \
+            --version "${{ env.OSAC_OPERATOR_CHART_VERSION }}" \
+            --values test/e2e/tierb-config/osac-operator-values.yaml
+          kubectl rollout status deployment/osac-operator --timeout=3m
+
+      - name: Fill osac-operator's hub-access-hosted-clusters RBAC gap (DD-223)
+        run: kubectl apply -f test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml
+
+      - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-216)
+        run: |
+          helm install bmf-operator oci://ghcr.io/osac-project/charts/bare-metal-fulfillment-operator \
+            --version "${{ env.BMFO_CHART_VERSION }}"
+          kubectl rollout status deployment/bmf-operator-controller-manager --timeout=3m
+
+      - name: Deploy osac-aap-mock
+        run: |
+          kubectl apply -f test/e2e/manifests-tierb/aap-mock.yaml
+          kubectl rollout status deployment/osac-aap-mock --timeout=2m
+
       - name: Start port-forwards
         run: |
           kubectl port-forward svc/dcm-control-plane 18080:8080 >/tmp/pf-control-plane.log 2>&1 &
@@ -215,12 +253,14 @@ jobs:
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
           BAD_AUTH_OSAC_SP_URL: ${{ inputs.bad_auth == true && 'http://localhost:18083' || '' }}
+          TIERB_PHASE2_ENABLED: "true"
         # --label-filter excludes Label("tier-a-only") specs (DD-211):
         # Cluster/VM CRUD hardcode osac-mock-provider-only fixture IDs and
         # rely on its non-validating Create, neither of which holds
         # against this real backend — genuinely exercising CRUD here is
-        # Phase 2 scope (osac-aap-mock, DD-152). e2e.yaml (Phase A) runs
-        # unfiltered on purpose.
+        # Phase 2 scope (osac-aap-mock, DD-152). e2e.yaml (Phase A) excludes
+        # the symmetric Label("tier-b-only") specs instead (#43) — each
+        # workflow only runs what's relevant to its own backend.
         run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --label-filter='!tier-a-only' --timeout=10m
 
       - name: Stop port-forwards
@@ -237,7 +277,8 @@ jobs:
           kubectl get pods -o wide > /tmp/e2e-diagnostics/pods.txt 2>&1 || true
           kubectl get certificates,issuers,clusterissuers -A > /tmp/e2e-diagnostics/certs.txt 2>&1 || true
           kubectl get events --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
-          for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-service-provider-bad-auth ffs-postgres ffs-keycloak; do
+          kubectl get clusterorder tierb-cluster-order -o yaml > /tmp/e2e-diagnostics/clusterorder.yaml 2>&1 || true
+          for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-service-provider-bad-auth ffs-postgres ffs-keycloak osac-operator bare-metal-fulfillment-operator osac-aap-mock; do
             kubectl logs -l "app.kubernetes.io/name=${d}" --all-containers --prefix --tail=-1 > "/tmp/e2e-diagnostics/${d}.log" 2>&1 || true
           done
           kubectl logs -l "app.kubernetes.io/instance=ffs-fulfillment-service" --all-containers --prefix --tail=-1 > /tmp/e2e-diagnostics/ffs-fulfillment-service.log 2>&1 || true

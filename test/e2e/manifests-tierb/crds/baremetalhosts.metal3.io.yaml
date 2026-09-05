@@ -1,0 +1,41 @@
+# Fixture-grade — same posture as hostedclusters.hypershift.openshift.io.yaml
+# and nodepools.hypershift.openshift.io.yaml: the real `metal3-io/baremetal-
+# operator` CRD has a large schema this suite has no business validating, and
+# no BareMetalHost reconciliation is exercised this phase (BMFO's own
+# BareMetalInstance terminal-state proof is deferred to #46 — this stack
+# never creates a BareMetalInstance CR, only deploys BMFO's pod).
+#
+# Needed because BMFO's `metal3` inventory-client backend
+# (internal/inventory/metal3.go's `validateBareMetalHostCRD`) does a
+# discovery check for the `metal3.io/v1alpha1` API group at startup, before
+# any BareMetalInstance is ever reconciled — without this CRD present, the
+# controller-manager fails `unable to setup controller` and the pod never
+# becomes Ready, so TC-TB-100's deploy-only regression check can't pass
+# either. See bmfo-secrets.yaml for the paired `type: metal3` inventory/
+# management config that selects this backend (chosen over `bcm`/`openstack`
+# specifically because it's the only one of the three that doesn't also
+# require a live external endpoint just to construct the client).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: baremetalhosts.metal3.io
+spec:
+  group: metal3.io
+  names:
+    kind: BareMetalHost
+    listKind: BareMetalHostList
+    plural: baremetalhosts
+    singular: baremetalhost
+    shortNames:
+      - bmh
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+      subresources:
+        status: {}

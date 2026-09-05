@@ -1,0 +1,24 @@
+# ClusterOrder fixture for AC-TB-030/TC-TB-080/090 (Phase 2). Created
+# directly against the kind cluster's own API server — not yet routed
+# through osac-sp/fulfillment-service's dispatch chain, see DD-218 and
+# https://github.com/dcm-project/osac-service-provider/issues/47.
+#
+# The vendored CRD (manifests-tierb/crds/clusterorders.osac.openshift.io.yaml)
+# is fixture-grade and unvalidated (x-kubernetes-preserve-unknown-fields),
+# so this only needs to satisfy real osac-operator's own Go-typed
+# ClusterOrderSpec well enough for its reconciler to make progress —
+# templateID and nodeRequests are the two fields osac-operator's
+# ClusterOrderReconciler needs to begin dispatching to AAP; every other
+# field is optional (network/networkAttachment/pullSecret/etc.) and
+# deliberately omitted here.
+apiVersion: osac.openshift.io/v1alpha1
+kind: ClusterOrder
+metadata:
+  name: tierb-cluster-order
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  templateID: tierb_test_template
+  nodeRequests:
+    - resourceClass: standard
+      numberOfNodes: 1

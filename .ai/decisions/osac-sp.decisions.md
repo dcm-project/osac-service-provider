@@ -2138,10 +2138,23 @@ BMFO instead of introducing a new, inconsistent pattern.
 Confirmed as a real, live risk while researching this decision (not
 theoretical): `osac-project/fulfillment-service` (along with `osac-operator`,
 BMFO, and `osac-aap`) was archived and merged into a new monorepo,
-`osac-project/osac`, on 2026-08-04 — the day before this decision was
-written. A live Go dependency on the old repo's `it` package would already
-need remediation; a pinned image/chart tag and a vendored static file are
-both unaffected by the repo move.
+`osac-project/osac`. This entry originally said that move happened on
+2026-08-04, the day before this decision was written — it hadn't actually
+happened yet at that point; the real archival date, re-verified directly
+against each repo's `pushed_at` via the GitHub API on 2026-08-26, is
+**2026-08-15**. Corrected here rather than left standing, per this repo's
+own convention for decision-log entries whose stated facts didn't hold up
+(see [PR #41](https://github.com/dcm-project/osac-service-provider/pull/41)'s
+DD numbering fix for the same treatment applied to a different kind of
+miss). The conclusion this decision reached is unaffected
+either way: a live Go dependency on the old repo's `it` package would still
+need remediation once the repo moved/archived; a pinned image/chart tag and
+a vendored static file remain unaffected by the repo move, whenever it
+actually happened. Also confirmed 2026-08-26: the monorepo's CI publishes
+new releases to the *same* registry coordinates the archived repos used, so
+"pinned image/chart tag" for Tier B Phase 2 (issue #44) means pinning
+against the monorepo's own releases going forward, not whatever the
+archived repos last published before the freeze.
 
 **Related requirements:** REQ-TB-010, REQ-TB-050
 
@@ -2304,7 +2317,9 @@ isn't part of its documented/stable contract.
 ## DD-152: `osac-aap-mock` (Phase 2) is a new, hand-written fake — no reusable upstream AAP-layer test double exists
 
 **Decision:** Tier B's Phase 2 (`.ai/specs/osac-sp-e2e-tier-b.spec.md` §3)
-will introduce a new binary, `cmd/osac-aap-mock/`, implementing enough of
+will introduce a new binary, `test/cmd/osac-aap-mock/` (see DD-224 for why
+it lives under `test/` rather than the repo-root `cmd/`), implementing
+enough of
 AAP's REST surface (`GetTemplate`, `LaunchJobTemplate`/
 `LaunchWorkflowTemplate`, `GetJob`, `CancelJob`) for real `osac-operator`/
 BMFO reconciliation to reach a terminal state — built from scratch, the
@@ -2767,3 +2782,726 @@ about CRUD.
 **Related:** #28, DD-153 (refined, not reversed — its readiness-race
 rationale for why health checks need polling, not a single-shot check,
 still holds; only the "runs in both tiers" claim changes)
+
+---
+
+## DD-213: `osac-aap-mock` hand-rolls its own response structs, not an import of `osac-operator/pkg/aap`
+
+**Decision:** `test/aapmock/` defines its own request/response types
+matching the JSON shapes `osac-operator/pkg/aap.Client` sends/expects
+(confirmed by reading `client.go` directly — issue #44's own comment
+already did this research), rather than importing
+`github.com/osac-project/osac/osac-operator/pkg/aap` for its `Job`/
+`Template`/`Launch*Response` struct definitions.
+
+**Rationale:** matches `DD-152`'s already-recorded posture for
+`osac-mock-provider` ("built from scratch... not adapted from any existing
+OSAC-provided fake") and this repo's general stance of not taking a live Go
+dependency on OSAC's internal types beyond the vendored proto layer
+(`DD-020`). The import-path alternative would also mean pinning to the
+monorepo's multi-module tag scheme
+(`github.com/osac-project/osac/osac-operator@osac-operator/vX.Y.Z`, `DD-149`)
+purely for struct shapes this mock already needs to hand-verify against
+source regardless — no meaningful risk reduction for a new, non-trivial
+dependency.
+
+**Related requirements:** REQ-TB-080
+
+---
+
+## DD-214: `osac-aap-mock`'s jobs are always immediately `"successful"` — no pending/running simulation
+
+**Decision:** `GetJob` on `osac-aap-mock` always reports a launched job's
+status as `"successful"` from the very first poll — there is no
+`pending`/`waiting`/`running` transition window, and no artificial delay.
+
+**Rationale:** `osac-operator/pkg/provisioning/aap_provider.go`'s
+`mapAAPStatusToJobState` maps AAP's `"successful"` string directly to
+`v1alpha1.JobStateSucceeded` (terminal) — reporting this on the first poll
+is the minimum needed to satisfy REQ-TB-100's terminal-state proof, and
+keeps the CI-side polling loop (`ClusterOrderReconciler.StatusPollInterval`)
+from adding wall-clock time against NFR-TB-010's 25-minute budget for no
+test-value gain: AC-TB-030 exists to prove real OSAC reconciliation logic
+runs correctly against a real terminal AAP outcome, not to exercise AAP's
+own job-lifecycle *timing* (never a stated goal of Phase 2, and NFR-TB-030
+already scopes `osac-aap-mock` as a hardware/Ansible boundary replacement,
+not a fidelity simulation of AAP itself). Mirrors `osac-mock-provider`'s own
+precedent of a synchronous, non-validating `Create` (`DD-211`'s framing).
+
+**Related requirements:** REQ-TB-080, REQ-TB-100, NFR-TB-010, NFR-TB-030
+
+---
+
+## DD-215: Phase 2 Helm values explicitly disable unused `osac-operator` controllers and retarget its `ClusterIssuer`
+
+**Decision:** `osac-operator`'s chart install for Phase 2 explicitly sets:
+
+```yaml
+controllers:
+  clusterOrder: true # REQ-TB-070 scope
+  computeInstance: false # avoids kubevirt.io CRD requirement
+  tenant: false # avoids k8s.ovn.org CRD requirement
+  networking: false
+  bareMetalInstance: false # BMFO owns BareMetalInstance reconciliation, not osac-operator
+  storage: false # also skips the label-storageclass pre-install hook (avoids pulling quay.io/openshift/origin-cli:4.20.0, ~164 MB)
+certs:
+  issuerRef:
+    name: osac-ca # chart default `default-ca` doesn't exist; Phase 1 already defines `osac-ca` (DD-151)
+```
+
+**Rationale:** read `osac-operator/cmd/main.go` directly — each controller
+independently gates its own scheme registration
+(`hypershiftv1beta1`/`kubevirtv1`/`ovnv1.AddToScheme` only run if the
+matching flag is enabled), but `enableAllIfNoneSet()` defaults every
+controller to `true` when none are explicitly set, and the chart's own
+`values.yaml` defaults match that. Leaving any of these implicit would pull
+in CRD requirements (KubeVirt, OVN-K) this phase has no use for and no
+CRDs vendored to satisfy — explicit `false` keeps the CRD surface to exactly
+the 4 already identified (`ClusterOrder`, `HostedCluster`, `Tenant`,
+`BareMetalInstance`), no HyperShift/KubeVirt/OVN-K operators needed. The
+chart also unconditionally renders a `cert-manager.io/v1 Certificate` for
+its console-proxy `APIService` (not gated by any values flag) — a new
+dependency not previously documented, but already satisfied by Phase 1's
+existing cert-manager install and `osac-ca` `ClusterIssuer`
+(`test/e2e/manifests-tierb/cert-manager-ca.yaml`, `DD-151`); only the
+issuer name needs overriding.
+
+**Related requirements:** REQ-TB-070
+
+---
+
+## DD-216: `BareMetalInstance`'s terminal-state proof is out of scope this phase — split to #46
+
+**Decision:** `REQ-TB-100`/`AC-TB-030`'s real-terminal-state proof covers
+`ClusterOrder` only in this landing. BMFO is still deployed (satisfying
+`REQ-TB-070`'s "deploy real BMFO" half — proves no CRD/RBAC/chart-install
+regression), but no `BareMetalInstance` CR is created and no AAP/inventory
+backend is wired to it.
+
+**Rationale:** spiked directly against
+`bare-metal-fulfillment-operator/internal/controller/baremetalinstance_controller.go`:
+a `BareMetalInstance` only reaches AAP *after* an `Allocating` phase driven
+by a separate host-management/inventory backend
+(`internal/management`/`internal/inventory`). The only two backends BMFO
+registers are `openstack` (real Ironic via `gophercloud`) and `metal3`
+(reads/writes real `BareMetalHost` CRs, but power operations — confirmed in
+`internal/management/metal3.go`'s reboot-annotation handling — depend on the
+actual `metal3-io/baremetal-operator` driving real Ironic + a BMC). No
+lightweight/fake backend type is registered anywhere in BMFO
+(`NewClientForTest`/`NewMetal3ClientForTest` are Go unit-test helpers, not a
+runtime-selectable config option). Standing up either real OpenStack Ironic
+or Metal3+Ironic+virtual-BMC (e.g. `sushy-tools`) inside `kind` is
+substantial, separate scope from an AAP-layer fake — `osac-aap-mock` cannot
+substitute for infrastructure that sits entirely upstream of where it's
+invoked. Tracked as [#46](https://github.com/dcm-project/osac-service-provider/issues/46).
+
+**Related requirements:** REQ-TB-070, REQ-TB-100
+
+---
+
+## DD-217: BMFO's two non-optional chart secrets (`osac-inventory-config`, `osac-management-config`) are stubbed empty
+
+**Decision:** Phase 2 creates two placeholder Secrets,
+`osac-inventory-config` and `osac-management-config` (the chart's default
+names, `values.yaml`'s `secrets.inventoryConfig`/`secrets.managementConfig`),
+before installing the BMFO chart.
+
+**Rationale:** read the chart's `templates/deployment.yaml` directly — its
+`inventory-config`/`management-config` volumes reference these two Secrets
+without `optional: true` (unlike `clouds`/`profiles`/`bcm-certs`, which are
+all marked optional). Without them, the controller-manager pod fails at
+mount time and never starts, regardless of whether `BareMetalInstance`
+reconciliation is exercised (`DD-216`) — this is a hard pod-start
+requirement, not a lazy-read dependency.
+
+**Correction (2026-08-26):** this entry originally said the Secrets could be
+left fully empty because "content is irrelevant for this phase's scope."
+That was wrong — passing the mount doesn't mean passing BMFO's own startup
+code, which reads and parses these files by name (`cmd/main.go`) and then
+constructs a real inventory/management client from their `type` field before
+the manager can start at all. An empty Secret satisfies the volume mount but
+not the file-read/parse step one layer up; DD-222 covers the actual fix.
+
+**Related requirements:** REQ-TB-070
+
+---
+
+## DD-218: `fulfillment-service` `Hub` registration researched but deferred to #47 — this phase creates `ClusterOrder` directly instead
+
+**Decision:** getting `fulfillment-service` to create real `ClusterOrder` CRs
+on this same `kind` cluster (the link a fully-faithful `REQ-TB-100`/
+`AC-TB-030` would need) requires registering a `Hub` via
+`fulfillment-service`'s own CLI — researched and documented below, but not
+implemented in this phase. This phase's e2e suite creates the `ClusterOrder`
+CR directly instead; the Hub/CLI mechanism is handed off to
+[#47](https://github.com/dcm-project/osac-service-provider/issues/47).
+
+**What was confirmed (for #47's head start):**
+`fulfillment-service/it/it_tool.go` (upstream's own integration-test
+harness) registers a same-cluster Hub by loading a kubeconfig and rewriting
+every cluster entry's `Server` field to `https://kubernetes.default.svc`
+(the in-cluster API server address) before registering it — so
+`fulfillment-service`'s own reconciliation loop
+(`internal/controllers/cluster/cluster_reconciler_function.go`'s
+`buildSpec`, which constructs and creates the real `ClusterOrder` CR from a
+DB-backed `Cluster` record) targets the cluster it's already running in.
+The equivalent, non-`it`-package way to do this is `fulfillment-service`'s
+own CLI (`internal/cmd/cli/login`, `internal/cmd/cli/create/hub`): a
+stateful, two-step flow (`login --address ... --private --issuer ...
+--flow credentials --client-id osac-admin --client-secret ...` persists
+connection/auth config, then `create hub --id ... --kubeconfig ...
+--namespace ...` uses it to call the private `Hubs` gRPC API).
+
+**Why deferred rather than attempted here:** several details need live-CI
+verification before they can be trusted blind in a single PR — whether
+`--plaintext` is required for this cluster's in-cluster gRPC (no TLS
+termination configured anywhere in Phase 1's wiring), which image/tag runs
+the CLI from (a one-off Job vs. `kubectl exec` into the running server
+pod), and whether the CLI's config persists correctly across two separate
+invocations. Given how many new moving pieces that is on top of #44's
+already-large scope (a new binary, 4 new CRDs, two new operators), this is
+lower-risk to verify iteratively in its own smaller, focused PR — same
+judgment call as `DD-216`'s `BareMetalInstance` split, applied here to a
+different (dispatch-chain, not infra-availability) kind of gap.
+
+**Related requirements:** REQ-TB-100
+
+---
+
+## DD-219: Phase 2's CRDs are `kubectl apply`'d directly; `osac-operator-crds`/BMFO's own CRD charts are not used
+
+**Decision:** `e2e-tierb.yaml` installs the 4 vendored CRD YAMLs
+(`test/e2e/manifests-tierb/crds/`, DD-149-adjacent vendoring precedent) via
+a plain `kubectl apply -f`, rather than `helm install`ing the monorepo's own
+separately-published `osac-operator-crds`/`bare-metal-fulfillment-operator-crds`
+charts (confirmed to exist on `ghcr.io/osac-project/charts/`, same
+`0.0.12` release line as the operator charts themselves).
+
+**Rationale:** the vendored copies were already sourced from
+`fulfillment-service/it/crds/` for their fixture-grade `ClusterOrder`/
+`HostedCluster` variants (no schema, deliberately loose — see
+`manifests-tierb/crds/README.md`), and reusing the same file set for all 4
+(including the real, `controller-gen`-generated `Tenant`/`BareMetalInstance`
+schemas) avoids depending on two additional chart installs whose only
+content is CRD manifests anyway. Confirmed via `helm pull` that neither the
+`osac-operator` nor `bare-metal-fulfillment-operator` chart bundles CRDs
+itself (no `crds/` directory in either), so there's no double-install/schema-
+drift risk from skipping the dedicated CRD charts.
+
+**Related requirements:** REQ-TB-070
+
+## DD-220: Three more CRDs vendored after a live spike found `osac-operator`/BMFO fail to reconcile or even start without them
+
+**Decision:** `test/e2e/manifests-tierb/crds/` gains `osac.openshift.io_computeinstances.yaml`,
+`nodepools.hypershift.openshift.io.yaml`, and `osac.openshift.io_baremetalpools.yaml`,
+on top of DD-219's original 4.
+
+**Rationale:** a live spike for issue #47 (building the full Phase 2 stack by
+hand on a real cluster) and this PR's own CI run both hit the same three
+gaps independently:
+
+- `osac-operator`'s startup migration (`migrate-subnetrefs`) unconditionally
+  lists `ComputeInstance`s and crash-loops without the CRD present, even
+  with `controllers.computeInstance: false` — DD-215's controller-disable
+  flags don't prevent this because it runs before the controller-manager
+  even starts controllers.
+- `osac-operator`'s `ClusterOrderReconciler` always registers a watch on
+  `NodePool` (again, regardless of `controllers.*` flags), and without that
+  CRD present the watch's `EventSource` never finishes starting — this is
+  the most dangerous of the three because it's *silent*: the pod stays
+  `Running`, and the main `clusterorder` controller (as opposed to the
+  separate `clusterorder-feedback` one) simply never begins reconciling
+  anything. No upstream fixture exists for this one (neither
+  `fulfillment-service/it/crds/` nor `osac-operator`'s own repo vendor it),
+  so it's authored here from scratch, same fixture-grade
+  (`x-kubernetes-preserve-unknown-fields`) posture as the existing
+  `hostedclusters.hypershift.openshift.io.yaml`.
+- BMFO's manager does a hard `unable to start manager` failure at startup
+  without the `BareMetalPool` CRD present — a real, `controller-gen`-generated
+  schema, sourced the same way `osac.openshift.io_baremetalinstances.yaml`
+  was (BMFO's own `config/crd/bases/`).
+
+**Related requirements:** REQ-TB-070, REQ-TB-100
+
+## DD-221: `hub-access-hosted-clusters` ClusterRole gap is a known, unresolved risk for AC-TB-030's terminal-state assertion
+
+**Finding:** even with DD-220's three CRDs applied, a live spike found
+`osac-operator`'s `ClusterOrderReconciler` gets stuck indefinitely retrying
+`rolebindings.rbac.authorization.k8s.io "{namespace}-hub-access-hosted-clusters"
+not found` on every reconcile of a freshly-created `ClusterOrder` — traced to
+`clusterorder_controller.go`'s `newHubAccessRoleBinding` component and
+`clusterorder_names.go`'s `hubAccessClusterRoleName()`, whose own doc comment
+says the `{namespace}-` prefix "account[s] for the kustomize prefix
+transformer ... in CI/production overlays" — i.e. this `ClusterRole` is
+expected to be pre-created by a kustomize overlay used in upstream's own
+CI/production, and isn't shipped by the public Helm chart at all.
+
+**Resolved (2026-08-26):** see DD-223 — root-caused and fixed via a second
+live repro, same day. Left this entry as-is (rather than deleting it) since
+it captures the original discovery accurately; DD-223 has the fix.
+
+**Related requirements:** REQ-TB-100, AC-TB-030
+
+## DD-222: BMFO's stub inventory/management config (DD-217) selects the `metal3` backend type, not truly empty content
+
+**Decision:** `bmfo-secrets.yaml`'s two Secrets use keys named exactly
+`inventory.yaml`/`management.yaml` (not an arbitrary key name) containing
+`type: metal3` config pointing at the `default` namespace, plus a new
+fixture-grade `baremetalhosts.metal3.io.yaml` CRD.
+
+**Rationale:** this repo's own CI run (not just the #47 spike) hit DD-217's
+gap directly — `cmd/main.go` reads these files from hardcoded default paths
+(`/etc/osac/inventory/inventory.yaml`, `/etc/osac/management/
+management.yaml`) regardless of the Secret's own key name, so DD-217's
+original `config.yaml` key was never actually read. Once read, the content
+is unmarshalled into a `Config{Type, Options, ...}` struct and fed to a
+per-backend client factory — `metal3` was chosen over BMFO's other two
+backends (`bcm`, `openstack`) because it's the only one whose client
+constructor doesn't also require a live external endpoint to succeed. Its
+inventory-side constructor does a CRD-discovery check for
+`metal3.io/v1alpha1` (not an actual object read), satisfied by the new
+fixture-grade `BareMetalHost` CRD; its management-side constructor has no
+such check at all. No `BareMetalHost` objects are ever created this phase,
+so `FindFreeHost`/`AssignHost`/power-control calls are never exercised —
+this only gets BMFO's manager past startup into a `Ready` pod for
+TC-TB-100, consistent with DD-216's terminal-state deferral to #46.
+
+**Related requirements:** REQ-TB-070, REQ-TB-100
+
+## DD-223: DD-221's RoleBinding gap is a genuine chart omission, fixed with a fixture ClusterRole + a scoped `bind` grant
+
+**Decision:** `test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml`
+adds, after `osac-operator` is installed: (1) a `default-hub-access-hosted-clusters`
+ClusterRole granting `get/list/watch` on `hypershift.openshift.io`
+`hostedclusters`/`nodepools`, and (2) a second ClusterRole + ClusterRoleBinding
+granting `osac-operator`'s own ServiceAccount the `bind` verb, scoped via
+`resourceNames` to just that one ClusterRole.
+
+**Root cause (confirmed via a second live repro, a minimal single-operator
+cluster built specifically to isolate this):** the chart's
+`templates/hub-access-clusterrole.yaml` (gated by `.Values.hubAccess.enabled`)
+only creates a `{namespace}-hub-access` ClusterRole (`osac.openshift.io`
+CRUD) — a different ClusterRole, for a different purpose, than the
+`{namespace}-hub-access-hosted-clusters` one the controller code actually
+references. The chart never ships the latter at all; this is a genuine
+upstream gap, not a version-skew or fixture-vendoring artifact.
+
+**Why both pieces were needed, not just the ClusterRole:** creating only the
+ClusterRole (repro'd first) reproduced the *identical* error unchanged —
+including with a ruleset that's an exact subset of `osac-operator-manager`'s
+own existing `hostedclusters`/`nodepools` permissions (confirmed by reading
+that ClusterRole directly off the repro cluster). Kubernetes' RBAC
+escalation check did not treat that pre-existing coverage as sufficient in
+practice; only adding it back after granting `osac-operator`'s ServiceAccount
+`cluster-admin` (isolating the RBAC hypothesis) or, more narrowly, an
+explicit `bind` verb on that specific ClusterRole (the actual fix shipped
+here) made the `RoleBinding` create succeed. After that, reconciliation
+progressed past this component entirely, into real AAP-dispatch behavior
+(confirmed by the next error changing to a template-lookup failure — expected,
+since the repro cluster had no `osac-aap-mock` running).
+
+**Related requirements:** REQ-TB-100, AC-TB-030
+
+---
+
+## DD-224: test-only binaries live under `test/cmd/`, not the repo-root `cmd/`
+
+**Decision:** Both e2e mock binaries — `osac-aap-mock` and
+`osac-mock-provider` — live at `test/cmd/osac-aap-mock/` and
+`test/cmd/osac-mock-provider/` respectively, not repo-root `cmd/`.
+Repo-root `cmd/` is reserved for binaries this repo actually ships as
+product — currently just `cmd/osac-service-provider/`.
+`osac-mock-provider` predates this decision (Phase 1) and was moved
+alongside `osac-aap-mock` in this same PR rather than deferred, once the
+general principle was raised (originally tracked as a separate follow-up in
+[#49](https://github.com/dcm-project/osac-service-provider/issues/49),
+closed as done-here).
+
+**Rationale:** neither binary has any purpose outside e2e testing; keeping
+them out of `cmd/` avoids either being mistaken for production code. Both
+binaries' own implementation packages (`test/aapmock/`, `test/mockprovider/`)
+were already under `test/` — only the `package main` wrappers needed a new
+home, and Go doesn't require `cmd/` at the repo root, so nesting them as
+`test/cmd/<binary>/` keeps the familiar `cmd/<binary>/main.go` shape while
+making the test-only scope obvious from the path.
+
+**Related requirements:** REQ-TB-080, REQ-MOCK-010
+
+---
+
+## DD-225: `osac-aap-mock` enforces exact-match Bearer token auth, not "any/no header accepted"
+
+**Decision:** every request to `osac-aap-mock` must present
+`Authorization: Bearer <token>`, where `<token>` exactly matches the value
+the mock was started with (`MOCK_AAP_TOKEN`) — a shared secret with
+`osac-operator`'s own `aap.token` Helm value
+(`test/e2e/tierb-config/osac-operator-values.yaml`). A missing header, wrong
+scheme, or mismatched token gets a real `401`, checked once in `Handler`'s
+`ServeHTTP` (`test/aapmock/handler.go`) ahead of every route, not per-handler.
+
+**Rationale:** supersedes this PR's own earlier posture — `TC-U-569`
+originally asserted the opposite (any/no `Authorization` header succeeded),
+reasoning by analogy to `DD-132`'s permissive OIDC stub. Reconsidered: a mock
+that's permissive-by-default on auth risks masking a real production
+misconfiguration — a test suite would pass against the mock and only fail
+once pointed at real AAP, the opposite of what an e2e suite is for.
+`NFR-TB-030`'s actual scope ("no real Ansible/hardware access") never
+required this permissiveness in the first place; enforcing a shared-secret
+check costs nothing in fidelity terms and closes the gap. `TC-U-569` now
+asserts the missing-header case; `TC-U-574` is new, asserting the
+wrong-token case.
+
+**Related requirements:** REQ-TB-080, NFR-TB-030
+
+---
+
+## DD-226: `BareMetalInstance`'s `metal3` backend requires zero real hardware/BMC/Ironic simulation — supersedes DD-216's scope-out
+
+**Decision:** `REQ-TB-110`/`AC-TB-040` prove a real `BareMetalInstance`
+reaches a real terminal `Ready` phase, driven by real BMFO reconciliation,
+using only a static, hand-authored `BareMetalHost` fixture — no OpenStack
+Ironic, no Metal3, no virtual BMC (`sushy-tools`), no real
+`baremetal-operator`.
+
+**Rationale:** a live spike on a real cluster, reading BMFO's actual source
+(`internal/inventory/metal3.go`, `internal/management/metal3.go`,
+`internal/controller/baremetalinstance_controller.go`) line by line, found
+every single operation the `metal3` inventory/management backends perform
+is a plain Kubernetes API read/patch on the `BareMetalHost` object itself —
+label list, `consumerRef` set/clear, `spec.online` patch, the
+`reboot.metal3.io` annotation set/check. BMFO never talks to Ironic, a BMC,
+or the real `baremetal-operator` directly; that component is what would
+*eventually* react to those same fields in production, but nothing in
+BMFO's own code requires it to be present for BMFO's reconciler to observe
+the expected end-state. Proven twice: once with `runStrategy` unset (reaches
+`Ready` with zero extra steps), once with `runStrategy: Always` (gets stuck
+in `Progressing`, `PowerSynced=False`, until the fixture's
+`status.poweredOn` is patched once by hand — the one point where a real or
+fake BMO's reaction genuinely matters).
+
+`DD-216` correctly scoped `BareMetalInstance` out of the prior PR given the
+information available then — `internal/management/metal3.go`'s
+reboot-annotation handling was read as implying a live BMH controller must
+exist for BMFO's reconciler to make progress. This DD corrects that
+inference with empirical evidence: a live BMH controller is what
+*eventually* acts on the fields BMFO writes, not a precondition for BMFO's
+own reconcile loop to reach its own terminal state.
+
+**Related requirements:** REQ-TB-070, REQ-TB-110
+
+---
+
+## DD-227: Static `BareMetalHost` fixture shape — two upstream field-naming gotchas, one config-schema gotcha
+
+**Decision:** the `BareMetalHost`/`BareMetalInstance` fixtures added for
+`REQ-TB-110` (`test/e2e/manifests-tierb/`) use the exact field names/shapes
+below, confirmed against real upstream source rather than inferred from
+BMFO's own Go field names.
+
+**Rationale — three real gotchas hit during the spike:**
+
+1. **`status.hardware`, not `status.hardwareDetails`.** BMFO's own log
+   message ("NIC inventory is missing") and internal Go field are named
+   `HardwareDetails`, but the real upstream `metal3-io/baremetal-operator`
+   JSON tag for that field is `hardware` (`HardwareDetails *HardwareDetails
+   \`json:"hardware,omitempty"\``), with `nics` (plural) as the NIC list
+   key inside it. The vendored fixture CRD's
+   `x-kubernetes-preserve-unknown-fields: true` schema doesn't validate
+   this — a fixture with the wrong key silently round-trips through
+   `kubectl get` (both keys persist side by side) while BMFO just never
+   sees NIC data and reports "no matching hosts."
+2. **Status must be set via `--subresource=status`, not the create/apply
+   body.** The fixture CRD declares `subresources: {status: {}}` (matching
+   the real upstream CRD), so any `status:` block in a plain `kubectl
+   apply` is silently dropped.
+3. **`osac-inventory-config`/`osac-management-config`'s YAML schema**: the
+   `Config` struct (`internal/inventory/client.go`) is `{name, type,
+   options: map[string]any, hostClass}` — the per-backend block (e.g.
+   `metal3: {namespace: ...}`) must be nested under a top-level `options:`
+   key, and `hostClass` is a top-level field, not nested inside the
+   backend's own options block. `DD-217`/`DD-222`'s existing stub secrets
+   happened to already have the right shape (never exercised against a
+   real host before now, so this went unverified) — confirmed correct as
+   part of this spike, not a new fix to those secrets.
+
+**Related requirements:** REQ-TB-070, REQ-TB-110
+
+---
+
+## DD-228: `bmfo-secrets.yaml`'s `osac-inventory-config` needs a non-empty `hostClass` — corrects a gap in DD-227's own verification
+
+**Decision:** `test/e2e/manifests-tierb/bmfo-secrets.yaml`'s `inventory.yaml`
+sets `hostClass: tierb-fixture-hostclass` at the top level (sibling to
+`type`/`options`, per DD-227 point 3's own schema description). The checked-in
+fixture never actually set it — a real CI run of `TC-TB-110`/`TC-TB-120`
+(post-merge, not part of the spike itself) timed out on both specs, stuck at
+`Phase: Progressing` indefinitely, `BareMetalInstance`'s own `Allocated`
+condition already `True` for both.
+
+**Rationale — the actual mechanism, confirmed against real upstream BMFO
+source (`internal/inventory/metal3.go`, `internal/controller/
+baremetalinstance_controller.go`) post-merge:** `Metal3Client.hostClass` is
+set once, at client construction, straight from `cfg.HostClass` — every
+`FindFreeHost`/`AssignHost` call returns a `Host` whose `HostClass` field is
+that same (in this case empty) string, never derived from the
+`BareMetalHost` object itself. `BareMetalInstanceReconciler.reconcileInventory`
+writes that value straight into `bareMetalInstance.Spec.HostClass` on every
+successful assignment — and `handleUpdate` picks `reconcileInventory` vs.
+`reconcileManagement` based on `bareMetalInstance.Spec.HostClass == ""`. An
+empty `hostClass` in the inventory config means that check is never
+satisfied: the reconciler re-runs the (idempotent) assign-host steps forever,
+setting `Phase=Progressing`/`Allocated=True` each time, but never once
+reaches `reconcileManagement` — the function that would eventually set
+`Phase=Ready`. This is indistinguishable, from the reconciler's own logs
+alone, from a slow-but-progressing power-management flow (both show
+"Successfully fulfilled BareMetalInstance" repeating), which is why it wasn't
+caught by re-reading those logs alone; it only became clear by tracing
+`Spec.HostClass`'s value through `bmhToHost` back to the empty config field.
+
+**Why DD-227 didn't already catch this**: DD-227 point 3 asserted the
+existing stub secrets' *shape* (nesting) was "confirmed correct... not a new
+fix to those secrets" — true for the YAML structure, but that check verified
+nesting, not that every field the schema allows was actually populated with
+a working value. The interactive spike session that produced DD-226/227 most
+likely ran against a `hostClass` set some other way (e.g. edited directly on
+the live cluster) that was never round-tripped back into this checked-in
+fixture — the gap was in what the spike verified, not in the schema
+description itself.
+
+**Related requirements:** REQ-TB-070, REQ-TB-110
+
+---
+
+## DD-229: `BareMetalInstance` fail-safe/release paths (TC-TB-130..160) — verified against real upstream BMFO source before writing any assertion, one candidate scenario ruled out
+
+**Decision:** REQ-TB-120/AC-TB-050's four negative/release cases
+(no-matching-host, ineligible-host, contended-host, delete-time release)
+are all grounded directly in `bare-metal-fulfillment-operator`'s real
+`main`-branch source (`internal/inventory/metal3.go`'s `FindFreeHost`/
+`AssignHost`, `internal/controller/baremetalinstance_controller.go`'s
+`reconcileInventory`/`handleDeletion`), read before any fixture or
+assertion was written — not inferred from the happy-path behavior
+DD-226/227 already proved:
+
+- **No matching host / ineligible host**: `FindFreeHost`'s candidate filter
+  requires `OperationalStatus == OK`, `Provisioning.State == Available`,
+  and `ConsumerRef == nil` — a host failing any of these is silently
+  excluded from the candidate list, indistinguishable (by the reconciler)
+  from that `hostType` having zero hosts at all. Both converge to the same
+  `reconcileInventory` zero-candidates branch: `Phase = Failed`,
+  `Allocated` condition `False`/reason `"Failed"`/message `"No matching
+  hosts available"`, requeued indefinitely (never a silent `Ready`, never
+  an un-requeued dead end).
+- **Contended host**: `AssignHost` guards against double-claim —
+  `bmh.Spec.ConsumerRef != nil && ...Name != bareMetalInstanceID` returns
+  `nil, nil` (not an error) to the loser, which clears its own
+  `Spec.ExternalHostID` and retries `FindFreeHost`. Once the winner's claim
+  is visible, the loser's retry sees zero candidates (the one host is now
+  `ConsumerRef != nil`) and converges to the identical `Failed` path above.
+  No locking bug risk of both reaching `Ready`: `TryLock`/`AssignHost`'s
+  own re-check is what prevents it, not test-side timing.
+- **Delete-time release**: `handleDeletion`'s inventory-finalizer cleanup
+  calls `UnassignHost`, which clears `Spec.ConsumerRef` — and `kubectl
+  delete` (no `--wait=false`) blocks until that finalizer cleanup has
+  actually completed, so the release assertion needs no `Eventually`.
+
+**One candidate case deliberately dropped**: reverting a `Ready`,
+`runStrategy: Always` instance's host back to `status.poweredOn: false`
+post-`Ready`, to prove BMFO detects the drift. Ruled out by reading the
+same source: `SetupWithManager` only watches `BareMetalInstance` itself
+(no `Watches()` on `BareMetalHost`), and `reconcileManagement`'s own
+`Ready` branch returns `ctrl.Result{}` with no `RequeueAfter` — there is
+no trigger, periodic or event-driven, that would ever cause BMFO to
+re-examine a `BareMetalHost` after its owning instance reaches `Ready`.
+This is a genuine gap in BMFO itself (drift from an already-`Ready` state
+is silently missed), not a gap in this suite's test design — fixing it
+means changing BMFO, out of scope for `osac-service-provider`'s own e2e
+suite. Recorded here so a future reader doesn't re-propose this exact test
+without re-deriving the same finding.
+
+**Related requirements:** REQ-TB-070, REQ-TB-120
+
+---
+## DD-230: TC-TB-090/TC-TB-120 deepened beyond `.status.phase == Ready` — exact condition/field values verified against real upstream source
+
+**Decision:** in response to PR review feedback that TC-TB-090 and
+TC-TB-120 asserted only `.status.phase == "Ready"` (which a reconciler bug
+that set `Ready` via the wrong path would still satisfy), both were
+extended to assert the specific condition and status-field values real
+`osac-operator`/BMFO only set once the underlying work has actually
+happened — each value read directly from the real upstream source before
+being asserted, same discipline as DD-229:
+
+- **TC-TB-090** (`ClusterOrder`, `osac-operator`
+  `internal/controller/clusterorder_controller.go`'s
+  `provisioningCallbacks.OnSuccess`, `api/v1alpha1/conditions.go`,
+  `api/v1alpha1/job_types.go`): asserts `Progressing` condition
+  `False`/reason `"AsExpected"`, and the last `.status.provisioningJobs`
+  entry has `type: "provision"`/`state: "Succeeded"` (`JobTypeProvision`/
+  `JobStateSucceeded`). Both are set only inside the AAP-poll-succeeded
+  branch, not by any other code path that could reach `Phase: Ready`.
+- **TC-TB-120** (`BareMetalInstance`, BMFO
+  `internal/controller/baremetalinstance_controller.go`'s
+  `syncBareMetalInstanceStatus`): asserts `PowerSynced` condition
+  `True`/reason `"PowerOn"`, and `.status.runStrategy: "Always"` — both
+  set only after the reconciler has re-read the host's power state
+  post-patch and found it converged (`poweredOn == true` branch), not
+  merely inferred from `Phase` flipping to `Ready`.
+
+Deliberately did **not** extend TC-TB-110 (the `runStrategy` unset sibling
+of TC-TB-120) — the reviewer's comment named only TC-TB-090/TC-TB-120, and
+TC-TB-110's `PowerSynced`/`runStrategy` values (`PowerOff`/`Halted`, since
+the fixture host is never powered on) aren't a meaningfully different
+regression class from what TC-TB-120's new assertions already cover for
+the power-sync path. Also deliberately did **not** assert on
+`ClusterOrder`'s `ControlPlaneAvailable`/`ClusterAvailable` conditions
+(`clusterorder_controller.go`'s `handleHostedCluster`) — those gate on the
+real `HostedCluster` CR's own status becoming available, which never
+happens in this suite (the vendored `HostedCluster` CRD is fixture-grade
+with no real HyperShift operator reconciling it, DD-218/DD-220), so
+asserting them would either hang or assert a value the suite's own
+architecture makes permanently unreachable.
+
+**Follow-up (same review pass): every asserted field made exact, not just
+present.** A first pass left a few fields either unchecked (discarded via
+`_`) or checked with a loose matcher, on the assumption they might not be
+deterministic. Re-verified each one against real upstream source
+(`osac-operator`'s `pkg/provisioning/provision_lifecycle.go`,
+`pkg/provisioning/aap_provider.go`) and this repo's own
+`test/aapmock/jobstore.go`, and tightened every field that turned out to
+be fully deterministic and within this suite's control:
+
+- **TC-TB-090**: the `Progressing` condition's `message` is the literal
+  `""` osac-operator's `OnSuccess` callback passes — now asserted, not
+  discarded. `.status.provisioningJobs` is asserted `HaveLen(1)` (not
+  `NotTo(BeEmpty())`): `TriggerJob` appends exactly one entry and `PollJob`
+  updates it in place, so a reconciler bug that re-triggered instead of
+  polling (`len > 1`) would have silently passed the old assertion. The
+  job's `message` is asserted `"successful"` — osac-aap-mock's own
+  `GetJob` always reports that literal AAP status string
+  (`test/aapmock/jobstore.go`), and `AAPProvider.getJobStatus`/
+  `MessageWithDetails()` pass it through verbatim when there's no
+  `ErrorDetails` (`pkg/provisioning/aap_provider.go`,
+  `pkg/provisioning/provider.go`) — this suite owns the mock, so this is
+  not an external/uncontrolled value. Left unchecked: the job's `jobID` —
+  an incrementing counter internal to osac-aap-mock
+  (`test/aapmock/jobstore.go`) whose exact numeric value isn't part of the
+  behavior under test.
+- **TC-TB-120**: the `PowerSynced` condition's `message` is likewise the
+  literal `""` BMFO's `syncBareMetalInstanceStatus` passes for the
+  powered-on branch — now asserted.
+- **TC-TB-150**: added a check that the contended `BareMetalHost`'s
+  `spec.consumerRef` equals exactly whichever instance's `.status.phase`
+  resolved to `Ready` (not merely "one Ready, one Failed"). Which of A/B
+  wins is the one genuinely nondeterministic value here and is left
+  unasserted; everything downstream of that outcome is fully determined by
+  `AssignHost` and is now checked.
+
+**Second follow-up: triaged every remaining spec in `tierb_test.go` for the
+same consistency.** Walked the whole file top to bottom (TC-TB-020 through
+TC-TB-160) looking for the same two anti-patterns — a controlled field left
+unchecked, or checked with a matcher looser than the value's actual
+determinism warrants — rather than stopping at the two specs the review
+comment named:
+
+- **TC-TB-050** (auth-failure detectability): was `NotTo(BeEmpty())` +
+  `ContainSubstring("OIDC token invalid")`. Tightened to exact
+  `Equal("OIDC token invalid")` — `internal/health/health.go`'s
+  `unhealthyDetail` (this repo's own code, already covered by
+  `internal/health/health_unit_test.go`) returns that literal string when
+  only the token is invalid, and a *different*, longer string when
+  connectivity is also broken. The old substring match would have let that
+  second, unexpected failure mode pass silently as if this test's one
+  intended failure mode were the only thing wrong.
+- **TC-TB-110/TC-TB-120** (the `BareMetalInstance` happy paths): neither
+  asserted the `Allocated` condition at all, even though TC-TB-130/140
+  (the negative counterparts added in the same PR) assert it exactly on
+  the failure branch. Added the success-branch counterpart to both:
+  `Allocated=True`/reason `"Allocated"` exactly (BMFO's real
+  `reconcileInventory` success path,
+  `internal/controller/baremetalinstance_controller.go`), plus a substring
+  check on the message's two fixture-controlled components — the claimed
+  host's name and `tierb-fixture-hostclass` (this repo's own
+  `manifests-tierb/bmfo-secrets.yaml`, DD-228). Substring rather than full
+  equality specifically because the message's format also embeds the
+  claiming Kubernetes namespace, which is real, controlled data too, but
+  is incidental deployment plumbing rather than part of the behavior this
+  suite is verifying — hard-coding it would add a namespace assumption
+  with no corresponding increase in regression-catching power.
+- **TC-TB-020, TC-TB-060, TC-TB-130/140/150/160**: already fully strict on
+  every controlled field (or already using `Or`/`ContainSubstring` only
+  where the underlying value is genuinely one of several valid real-world
+  shapes, e.g. a JWT `aud` claim being either a bare string or an array —
+  left unchanged.
+- **`health_test.go`'s `Label("tier-b-only")` block** (a different file,
+  but the same Tier B test surface): reviewed for the same patterns and
+  found already fully strict (`BeEmpty()`/`Equal()`/`ConsistOf()` on every
+  field) — pre-existing, already-merged code from an earlier PR, left
+  untouched.
+
+**Related requirements:** REQ-TB-020, REQ-TB-060, REQ-TB-080, REQ-TB-100,
+REQ-TB-110, REQ-TB-120, AC-TB-020, AC-TB-030, AC-TB-040, AC-TB-050
+
+---
+## DD-231: TC-TB-060's deployment-readiness loop dropped as a no-value duplicate of already-enforced CI gates
+
+**Decision:** removed the `deploymentReady(osac-operator/bmf-operator-
+controller-manager/osac-aap-mock)` loop (and its now-unused
+`deploymentReady` helper) from TC-TB-060. `.github/workflows/e2e-tierb.yaml`
+already runs `kubectl rollout status`/`kubectl wait
+--for=condition=Available` against those exact three Deployments (lines
+215, 224, 229) before the Ginkgo suite ever starts — by the time this spec
+ran, the condition it checked was already guaranteed true (or the job would
+already have failed earlier), so it could never catch a regression those
+steps didn't already catch first. It also didn't map to any input-
+validation/fail-safe/boundary-protection/audit-sufficiency category — pure
+infra-existence checking, the textbook "asserts a code path ran, not a
+business outcome" pattern this project treats as no-value (see
+`dcm-testing-methodology`).
+
+The CRD-registration half of TC-TB-060 was kept as is: nothing else in the
+workflow checks CRD registration, and it has a real, documented bug-catch
+on record (DD-220/222 — osac-operator/BMFO once started and reported
+`Available` while still missing a CRD they needed) — a genuinely
+non-duplicated, earned check, unlike the Deployment loop.
+
+Same review pass that produced DD-230's assertion-strictness pass; this is
+a separate, orthogonal finding (test-value, not assertion-strictness) from
+the same "triage the rest of the tests" request. `TC-TB-020` (Keycloak
+claim shape) was also considered and *not* changed: despite superficially
+resembling infra-existence checking, it pins REQ-TB-020's real, stated
+contract (the exact `osac-admin` OIDC client `osac-sp` itself is configured
+with in this stack, `manifests-tierb/osac-service-provider.yaml`) and
+localizes a regression class (claim-shape drift, e.g. DD-150's `groups`-
+omission gotcha) that the end-to-end health check alone can't diagnose.
+
+**Related requirements:** REQ-TB-070, AC-TB-030
+
+---
+## DD-232: `test/aapmock` config tests collapsed from 4 to 2 — no business logic to test beyond a struct-tag typo guard
+
+**Decision:** merged TC-U-570/571 (address load/fail-fast) with TC-U-575/576
+(token load/fail-fast) into just TC-U-570/571, covering both fields.
+`aapmock.LoadConfig` (`test/aapmock/config.go`) is `env.Parse(cfg)` plus an
+`fmt.Errorf` wrap — no logic of this package's own. Both fields go through
+the identical `caarlos0/env` mapping + `,notEmpty` validation mechanism, so
+testing each field's load/fail-fast pair separately (the original 4 tests)
+proved the same third-party behavior twice, not two different code paths.
+
+The one thing worth guarding is real but narrow: a typo in either field's
+`env:"..."` struct-tag string (e.g. `MOCK_AAP_ADRESS`) compiles fine and
+fails silently/confusingly at runtime — the Go compiler can't catch a wrong
+string literal. One positive test (sets both vars, asserts both fields)
+and one negative test (omits one required var, asserts the fail-fast error
+names it) fully cover that risk; a third or fourth test would only
+re-exercise `caarlos0/env`'s own already-tested contract, not this
+package's.
+
+Prompted by the user questioning a pending PR #48 review comment
+(`are we testing the 'env' framework to enforce not empty?`) plus a
+`gciavarrini` review comment suggesting TC-U-570/571 be combined — this
+decision extends that further, to all 4 tests, once it became clear the
+config struct has zero business logic to differentiate the two fields'
+tests in the first place.
+
+**Related requirements:** REQ-TB-080, DD-225

@@ -1,0 +1,41 @@
+# Phase 2 (osac-sp-e2e-tier-b.spec.md §3, REQ-TB-070) values for the
+# osac-operator chart. See DD-215 for the full rationale behind each
+# override below.
+image:
+  tag: "v0.0.12" # REQ-TB-050 — pin, never `main`/`latest` (DD-149 monorepo pivot). Note the `v`
+  # prefix: unlike the chart's own OCI version (bare `0.0.12`, see
+  # OSAC_OPERATOR_CHART_VERSION in e2e-tierb.yaml), the published *image* tags on
+  # ghcr.io/osac-project/osac-operator use a `v` prefix — confirmed live via `skopeo
+  # list-tags` after this repo's own e2e-tierb CI run failed with ImagePullBackOff on
+  # the un-prefixed value.
+
+# Only ClusterOrder reconciliation is exercised this phase (DD-216:
+# BareMetalInstance is owned by BMFO, not this operator, and is tracked
+# separately in #46). Disabling the rest avoids pulling in CRD
+# requirements (KubeVirt, OVN-K) this phase has no use for and no CRDs
+# vendored to satisfy.
+controllers:
+  clusterOrder: true
+  computeInstance: false
+  tenant: false
+  networking: false
+  bareMetalInstance: false
+  storage: false # also skips the label-storageclass pre-install hook (avoids pulling quay.io/openshift/origin-cli:4.20.0, ~164 MB)
+
+# Points osac-operator's AAP client at this phase's own fake (REQ-TB-080).
+# The token is a shared secret with osac-aap-mock's own MOCK_AAP_TOKEN
+# (test/e2e/manifests-tierb/aap-mock.yaml) — osac-aap-mock rejects any
+# request that doesn't present it (DD-225). Still test-only, checked into
+# git, used for nothing but this throwaway kind cluster (NFR-TB-020) — NOT
+# a real credential.
+aap:
+  url: "http://osac-aap-mock:9093"
+  token: "tierb-aap-mock-token"
+  insecureSkipVerify: "true"
+
+# The chart's default (`default-ca`) doesn't exist on this cluster; Phase 1
+# already defines `osac-ca` (DD-151, test/e2e/manifests-tierb/cert-manager-ca.yaml).
+certs:
+  issuerRef:
+    kind: ClusterIssuer
+    name: osac-ca

@@ -48,12 +48,27 @@ other rather than silently diverging.
 
 **Time-sensitive fact this spec depends on:** `osac-project/fulfillment-service`,
 `osac-operator`, `bare-metal-fulfillment-operator` (BMFO), and `osac-aap`
-were all archived on 2026-08-04 and merged into a new monorepo,
+were all archived on 2026-08-15 (corrected — a prior draft of this note
+said 2026-08-04; re-verified directly via `gh api /repos/osac-project/<repo>`,
+all four show `archived: true`, `pushed_at` within the same
+2026-08-15T17:54–18:06Z window) and merged into a new monorepo,
 **`osac-project/osac`**, as subdirectories of the same name. Content was
 byte-identical to the archived repos at merge time (verified). All source
 references, sparse-checkouts, and image/chart names below already assume
 the monorepo location; nothing in this spec depends on the archived repos
 still being reachable.
+
+**Also confirmed (2026-08-26):** the monorepo's own CI publishes to the
+*same* registry coordinates the archived repos used
+(`ghcr.io/osac-project/osac-operator`,
+`ghcr.io/osac-project/bare-metal-fulfillment-operator`,
+`oci://ghcr.io/osac-project/charts/*` — hardcoded literals in the
+monorepo's workflows, not derived from its own repo name), and keeps
+releasing new versions there (e.g. `bare-metal-fulfillment-operator/v0.0.12`,
+2026-08-21 — genuinely post-archival). Phase 2 implementation MUST pin
+against the monorepo's own releases, not whatever version the archived
+repos last published before the freeze — those are permanently frozen at
+`v0.0.10` for both operators and will never receive another update.
 
 **Reference documents:**
 
@@ -78,9 +93,13 @@ still being reachable.
 
 ## 2. Architecture
 
-Two phases, gated on `osac-sp`'s own milestone completion — **only Phase 1
-is implemented now**; Phase 2 is fully specified here so it's ready to build
-without re-design once M2 lands, per REQ-TB-090.
+Two phases, gated on `osac-sp`'s own milestone completion. **Phase 1 is
+fully implemented.** Phase 2 has landed real `ClusterOrder` **and
+`BareMetalInstance`** reconciliation (`osac-operator` + BMFO +
+`osac-aap-mock`, per REQ-TB-070/080/100/110) but is still ongoing — routing
+creation through `osac-sp`'s own `Create` + `fulfillment-service`'s `Hub`
+dispatch (rather than this phase's direct CR create) is deferred to
+[#47](https://github.com/dcm-project/osac-service-provider/issues/47).
 
 ### Phase 1 (buildable now — no `osac-sp` code changes needed, M1 scope)
 
@@ -115,7 +134,7 @@ kind cluster
 ├── (everything from Phase 1)
 ├── ffs-osac-operator      (NEW — pinned image/chart, real reconciliation of ClusterOrder)
 ├── ffs-bmfo               (NEW — pinned image/chart, real reconciliation of BareMetalInstance)
-└── ffs-aap-mock           (NEW — this repo's own binary, cmd/osac-aap-mock/, analogous to osac-mock-provider)
+└── ffs-aap-mock           (NEW — this repo's own binary, test/cmd/osac-aap-mock/, analogous to osac-mock-provider)
 ```
 
 - `osac-operator`/BMFO run **for real**, unmodified — their AAP client is
@@ -139,7 +158,7 @@ kind cluster
 | Keycloak deployment | Official Keycloak image, our own plain manifest, `--import-realm` against the vendored file | Upstream's own chart is unpublished and explicitly dev-only (own README's disclaimer); the Operator-based production path is unnecessary weight for a throwaway CI cluster |
 | Postgres (for Keycloak + fulfillment-service DBs) | Our own manifest, same pattern as `control-plane`'s Postgres | Upstream's own IT-tier Postgres chart is generic/disposable — nothing OSAC-specific to vendor |
 | `fulfillment-service`, `osac-operator`, BMFO | Pin real, versioned images (`ghcr.io/osac-project/fulfillment-service:vX.Y.Z`, etc.) and their published OCI Helm charts directly — **no source build, no `it` package Go dependency** | These are genuine, stable, versioned upstream artifacts (confirmed: 80+ real semver tags on GHCR) — treating them as external dependencies is the same posture already used for `control-plane`'s image in Phase A |
-| `osac-aap-mock` (Phase 2 only) | New, hand-written binary in this repo, `cmd/osac-aap-mock/` | No reusable upstream artifact exists (confirmed — §4/DD-152) |
+| `osac-aap-mock` (Phase 2 only) | New, hand-written binary in this repo, `test/cmd/osac-aap-mock/` (DD-224: test-only binaries stay out of repo-root `cmd/`) | No reusable upstream artifact exists (confirmed — §4/DD-152) |
 
 ---
 
@@ -156,14 +175,16 @@ kind cluster
 | REQ-TB-050 | The workflow MUST pin exact `vX.Y.Z` image/chart tags for every OSAC component (never `main`/`latest`) | MUST | Upstream's own `check-floating-tags.yaml` CI guard confirms `main`/`latest` are untrusted as "current" |
 | REQ-TB-060 | A deliberately wrong/missing client credential MUST result in `osac-sp` reporting `unhealthy` with an auth-failure detail — proving Tier B can actually detect what Phase A's permissive mock structurally cannot | MUST | The core deliverable this tier exists for |
 
-### Phase 2 (specified now; implementation gated on `osac-sp` M2+ landing, REQ-TB-090)
+### Phase 2 (REQ-TB-090's M2+ gate satisfied; implementation landing, ongoing — see #47)
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-TB-070 | The Tier B workflow MUST additionally deploy real `osac-operator` and real BMFO (pinned images/charts), configured to reconcile `ClusterOrder`/`BareMetalInstance` CRs on the same `kind` cluster's own API server | MUST | Requires installing the 4 CRD schemas `fulfillment-service`'s own `it` package uses (`ClusterOrder`, `HostedCluster`, `Tenant`, `BareMetalInstance`) |
-| REQ-TB-080 | `cmd/osac-aap-mock/` MUST implement `GetTemplate`, `LaunchJobTemplate`/`LaunchWorkflowTemplate`, `GetJob`, and `CancelJob` against `osac-operator/pkg/aap.Client`'s real REST contract, sufficient for real reconciliation loops to drive a `ClusterOrder`/`BareMetalInstance` to a terminal success state | MUST | Exact request/response shapes are an open item — research `osac-operator/pkg/aap.Client`'s implementation before Phase 2 implementation begins (§6) |
+| REQ-TB-070 | The Tier B workflow MUST additionally deploy real `osac-operator` and real BMFO (pinned images/charts) on the same `kind` cluster's own API server. `osac-operator` MUST be configured to reconcile `ClusterOrder` CRs for real, through `osac-aap-mock`. BMFO's deployment MUST succeed (proving no CRD/RBAC/chart-install regressions) and MUST be configured to reconcile `BareMetalInstance` CRs for real — see REQ-TB-110 | MUST | Requires installing the 4 CRD schemas `fulfillment-service`'s own `it` package uses (`ClusterOrder`, `HostedCluster`, `Tenant`, `BareMetalInstance`), plus 4 more (`BareMetalPool`, `ComputeInstance`, `NodePool`, `BareMetalHost`) added once `osac-operator`/BMFO startup broke without them — 8 total, see `test/e2e/manifests-tierb/crds/README.md` (DD-220/222) |
+| REQ-TB-080 | `test/cmd/osac-aap-mock/` MUST implement `GetTemplate`, `LaunchJobTemplate`/`LaunchWorkflowTemplate`, `GetJob`, and `CancelJob` against `osac-operator/pkg/aap.Client`'s real REST contract, sufficient for real reconciliation loops to drive a `ClusterOrder` to a terminal success state | MUST | Exact request/response shapes resolved directly from source before implementation — see DD-213..215 |
 | REQ-TB-090 | Phase 2 implementation MUST NOT begin until `osac-sp` itself has real `Create`/`Get` CRUD dispatch for at least one resource type (M2+) — there is nothing for Phase 2's assertions to exercise before then | MUST | Gate, not a deferral-without-reason |
-| REQ-TB-100 | The e2e suite MUST assert that an `osac-sp`-initiated `Create` results in the corresponding CR reaching a real terminal `Ready`/`Complete` status, driven entirely by real OSAC reconciliation logic through `osac-aap-mock` | MUST | Closes the fidelity gap identified in this spec's motivating discussion — the actual deliverable Phase 2 exists for |
+| REQ-TB-100 | The e2e suite MUST create a `ClusterOrder` CR and assert it reaches a real terminal `Ready`/`Complete` status, driven entirely by real OSAC reconciliation logic through `osac-aap-mock` | MUST | **Scope correction (DD-216/DD-218):** originally worded to (a) cover `BareMetalInstance` too, and (b) drive the CR via an `osac-sp`-initiated `Create` through `fulfillment-service`'s real dispatch chain (its own `Hub` mechanism). (a) is now covered by REQ-TB-110 — a live spike (DD-226/227) found #46's original premise wrong: `BareMetalInstance` does not need a real host-allocation backend, a static `BareMetalHost` fixture is sufficient. (b) is still split to [#47](https://github.com/dcm-project/osac-service-provider/issues/47) — `fulfillment-service`'s `Hub` registration is a stateful, multi-step CLI flow with several details (TLS mode, image/tag, cross-invocation config persistence) that need their own live-CI verification pass rather than a first attempt inside this already-large PR. This phase creates the `ClusterOrder` CR directly against the cluster's own API server instead, proving real `osac-operator` reconciliation + `osac-aap-mock` reach `Ready` — the actually-novel thing this phase introduces |
+| REQ-TB-110 | The e2e suite MUST create two `BareMetalInstance` CRs — one with `runStrategy` unset, one with `runStrategy: Always` — each backed by its own static `BareMetalHost` fixture, and assert each reaches a real terminal `Ready` status, driven entirely by real BMFO reconciliation | MUST | No real Metal3/Ironic/virtual-BMC infrastructure is required: BMFO's `metal3` inventory/management backends operate purely on Kubernetes-object fields they own (`BareMetalHost.status`/`spec.online`/the `reboot.metal3.io` annotation), never on a live BMC/Ironic endpoint — proven via live spike, see DD-226/227. Originally assumed to need real host-allocation infrastructure and split out to [#46](https://github.com/dcm-project/osac-service-provider/issues/46); that assumption was wrong |
+| REQ-TB-120 | The e2e suite MUST also prove BMFO's `BareMetalInstance` allocation fails safe (never silently allocates an ineligible host, never double-allocates a contended one) and correctly releases its host on deletion — all driven by real BMFO reconciliation against static fixtures, no new mock/product code | MUST | Verified directly against BMFO's real upstream source (`internal/inventory/metal3.go`, `internal/controller/baremetalinstance_controller.go`) before writing any assertion — see DD-229 |
 
 ---
 
@@ -189,17 +210,51 @@ kind cluster
   unhealthy` with an auth-failure detail — proving this tier can catch what
   Phase A structurally cannot
 
-##### AC-TB-030 (Phase 2): A real cluster/VM create reaches a real terminal state
+##### AC-TB-030 (Phase 2): A real `ClusterOrder` reaches a real terminal state
 
 - **Validates:** REQ-TB-070, REQ-TB-080, REQ-TB-100
-- **Given** the full Phase 2 stack (real `osac-operator`/BMFO +
-  `osac-aap-mock`)
-- **When** the e2e suite drives an `osac-sp` `Create` call for a
-  cluster/VM-backed resource
-- **Then** the corresponding `ClusterOrder`/`BareMetalInstance` CR, real
-  OSAC controllers, and `osac-aap-mock` cooperate to drive that CR to a
-  real terminal `Ready`/`Complete` status, observable via the Kind
-  cluster's own API server
+- **Given** the Phase 2 stack (real `osac-operator` + `osac-aap-mock`)
+- **When** the e2e suite creates a `ClusterOrder` CR directly against the
+  `kind` cluster's own API server (not yet routed through an
+  `osac-sp`-initiated `Create` + `fulfillment-service`'s `Hub` dispatch —
+  see REQ-TB-100's note and [#47](https://github.com/dcm-project/osac-service-provider/issues/47))
+- **Then** real `osac-operator` reconciliation and `osac-aap-mock` cooperate
+  to drive that CR to a real terminal `Ready` status, observable via the
+  Kind cluster's own API server
+
+##### AC-TB-040 (Phase 2): A real `BareMetalInstance` reaches a real terminal state, with and without an active `RunStrategy`
+
+- **Validates:** REQ-TB-070, REQ-TB-110
+- **Given** the Phase 2 stack (real BMFO) and two static `BareMetalHost`
+  fixtures, one per `BareMetalInstance` variant
+- **When** the e2e suite creates both `BareMetalInstance` CRs directly
+  against the `kind` cluster's own API server, and — for the
+  `runStrategy: Always` variant only — patches that variant's
+  `BareMetalHost.status.poweredOn` to `true` once, simulating a real
+  `baremetal-operator`'s completed power-on action
+- **Then** both CRs reach a real terminal `status.phase: Ready`, driven
+  entirely by real BMFO reconciliation logic — no real Metal3/Ironic/
+  virtual-BMC infrastructure involved
+
+##### AC-TB-050 (Phase 2): BMFO's `BareMetalInstance` allocation fails safe, and releases its host on deletion
+
+- **Validates:** REQ-TB-070, REQ-TB-120
+- **Given** the Phase 2 stack (real BMFO) and static `BareMetalHost`
+  fixtures crafted to exercise each failure/release path (absent, present
+  but ineligible, singly contended)
+- **When** the e2e suite creates `BareMetalInstance` CRs against: (a) a
+  `hostType` with no matching `BareMetalHost` at all, (b) a `hostType`
+  whose only `BareMetalHost` has a non-`OK` `operationalStatus`, (c) a
+  single available `BareMetalHost` claimed by two competing
+  `BareMetalInstance`s, and separately deletes a `Ready`
+  `BareMetalInstance` created for this purpose
+- **Then** (a) and (b) both converge to a real terminal `status.phase:
+  Failed` with an `Allocated=False`/`"No matching hosts available"`
+  condition — never silently `Ready` and never stuck retrying forever
+  without a terminal status; (c) converges to exactly one instance
+  `Ready` and the other `Failed`, never both `Ready` (no double
+  allocation); and the deleted instance's `BareMetalHost` has its
+  `spec.consumerRef` cleared, making it reassignable again
 
 ---
 
@@ -213,18 +268,29 @@ kind cluster
 
 ---
 
-## 6. Open items (must resolve before Phase 2 implementation starts)
+## 6. Open items (remaining before Phase 2 is fully complete)
 
-- **Exact `aap.Client` REST contract**: `osac-operator/pkg/aap.Client`'s
-  hand-rolled AAP client's exact request/response JSON shapes for
-  `GetTemplate`/`LaunchJobTemplate`/`LaunchWorkflowTemplate`/`GetJob`/`CancelJob`
-  need to be read directly from source before `osac-aap-mock` can be
-  designed in detail — not yet done as of this spec's writing (deliberately
-  deferred per REQ-TB-090's gate).
-- **CRD schema sourcing**: confirm the 4 CRD YAMLs
-  (`fulfillment-service/it`'s `AddCrdFile` list) are available as
-  standalone files we can vendor/reference without needing
-  `osac-operator`'s/BMFO's own source trees checked out.
+- ~~**Exact `aap.Client` REST contract**~~ — resolved: read directly from
+  `osac-operator/pkg/aap/client.go` and `pkg/provisioning/aap_provider.go`
+  (job-status-to-`JobState` mapping) in the monorepo; `osac-aap-mock`
+  implements that contract (DD-213/214).
+- ~~**CRD schema sourcing**~~ — resolved, though the final count grew from 4
+  to 8: the original 4 are vendored verbatim from `fulfillment-service/it/crds/`,
+  the other 4 (`BareMetalPool`/`ComputeInstance`/`NodePool`/`BareMetalHost`)
+  were added once `osac-operator`/BMFO startup broke without them
+  (DD-220/222) — all in `test/e2e/manifests-tierb/crds/` (see that
+  directory's own `README.md` for which are real vs. fixture-grade).
+- ~~**`BareMetalInstance`'s terminal-state proof**~~ — resolved: a live
+  spike found #46's original premise wrong — BMFO's `metal3` backend
+  requires zero real hardware/BMC/Ironic simulation, since every operation
+  it performs is a plain Kubernetes API read/patch on the `BareMetalHost`
+  object itself (DD-226/227). Implemented as REQ-TB-110/AC-TB-040 using two
+  static `BareMetalHost` fixtures, covering both `runStrategy` unset and
+  `Always` (TC-TB-110/120).
+- **`osac-sp`-initiated `Create` → `fulfillment-service` `Hub` dispatch** —
+  deferred to [#47](https://github.com/dcm-project/osac-service-provider/issues/47);
+  this landing creates the `ClusterOrder` CR directly against the cluster's
+  own API server instead (see REQ-TB-100's note).
 - **Realm secret rotation risk**: the vendored `realm.json`'s client
   secrets are static and checked into git — acceptable for a throwaway
   `kind` cluster (NFR-TB-020), but worth a one-line comment at the vendor

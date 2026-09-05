@@ -59,7 +59,7 @@ repos can pull directly).
 
 | This repo's file/dir | What it is | What differs per SP |
 |---|---|---|
-| `cmd/osac-mock-provider/main.go` | Real `net.Listen`-backed gRPC + HTTP server, no `bufconn` | Which services you register — see §3 |
+| `test/cmd/osac-mock-provider/main.go` | Real `net.Listen`-backed gRPC + HTTP server, no `bufconn` | Which services you register — see §3 |
 | `test/mockprovider/*.go` | The actual fake service implementations + resource stores | Entirely SP-specific: fakes whatever your backend's API looks like |
 | `test/e2e/` (own `go.mod`) | The e2e assertions themselves (Ginkgo v2), plus `kind-config.yaml` | Assertions are SP-specific; the nested-module isolation trick (own `go.mod` so `k8s.io/client-go`/a control-plane REST client never enters your main module) is universal |
 | `test/e2e/manifests/` | Plain `Deployment`+`Service` YAML for your SP + your mock provider | Env-var wiring only |
@@ -73,7 +73,7 @@ wired over `bufconn` for in-process test speed instead of a real TCP
 listener. Converting one into a standalone binary is a small step, not a
 rewrite. This repo's version:
 
-```55:86:cmd/osac-mock-provider/main.go
+```55:86:test/cmd/osac-mock-provider/main.go
 func run(ctx context.Context, logger *slog.Logger) error {
 	cfg, err := mockprovider.LoadConfig()
 	if err != nil {
@@ -276,7 +276,9 @@ neither alone would have been sufficient.
 ## 8. Checklist for adopting this in a new SP repo
 
 - [ ] Convert your existing unit-test gRPC/HTTP fakes into a real
-      `net.Listen`-backed `cmd/<your-sp>-mock-provider/` binary (§3).
+      `net.Listen`-backed `test/cmd/<your-sp>-mock-provider/` binary (§3) —
+      not repo-root `cmd/`, which is reserved for binaries you actually
+      ship (DD-224).
 - [ ] Write `test/e2e/` as its own nested Go module (own `go.mod`) so its
       test-only dependencies never enter your main module.
 - [ ] Write plain `Deployment`+`Service` manifests for your SP + your mock
