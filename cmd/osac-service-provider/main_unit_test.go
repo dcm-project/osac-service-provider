@@ -40,7 +40,6 @@ func setValidEnv(serverAddr string) {
 	t.Setenv("SP_OSAC_OIDC_ISSUER_URL", "https://keycloak.example.com/realms/osac")
 	t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 	t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
-	t.Setenv("SP_OSAC_TLS_ENABLED", "false")
 	t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
 	t.Setenv("DCM_REGISTRATION_URL", "https://environment-agent.example.com/api/v1alpha1")
 	t.Setenv("DCM_NATS_URL", "nats://127.0.0.1:4222")
@@ -107,7 +106,6 @@ var _ = Describe("run's top-level error wrapping (unit)", func() {
 	It("wraps and returns an OSAC bootstrap construction failure (TC-U-096)", func() {
 		setValidEnv(reserveLoopbackAddr())
 		t := GinkgoT()
-		t.Setenv("SP_OSAC_TLS_ENABLED", "true")
 		t.Setenv("SP_OSAC_TLS_CERT_FILE", "/nonexistent/path/ca.pem")
 
 		runErr := run(context.Background(), slog.New(slog.DiscardHandler))

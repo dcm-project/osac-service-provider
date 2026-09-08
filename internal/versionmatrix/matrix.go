@@ -79,7 +79,7 @@ func Load(path string) (Matrix, error) {
 		return DefaultMatrix, nil
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is operator-controlled config (SP_VERSION_MATRIX_PATH), not user input
 	if err != nil {
 		return nil, fmt.Errorf("reading version matrix file %q: %w", path, err)
 	}

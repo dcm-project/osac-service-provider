@@ -14,6 +14,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -22,7 +23,23 @@ import (
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
+	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
+
+// writeTestCACertFile writes mockprovider's static self-signed test
+// certificate (its own trust anchor, being self-signed) to a temp file, so
+// a real osac.Bootstrap can be pointed at it via TLSCertFile. The mock's
+// gRPC server (run(), via mockprovider.ServerTLSConfig) always presents
+// this same certificate (REQ-MOCK-140/DD-229).
+func writeTestCACertFile(t GinkgoTInterface) string {
+	f, err := os.CreateTemp("", "osac-mock-provider-test-ca-*.pem")
+	Expect(err).NotTo(HaveOccurred())
+	_, err = f.Write(mockprovider.CertPEM)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(f.Close()).To(Succeed())
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+	return f.Name()
+}
 
 func TestMainIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -78,12 +95,12 @@ var _ = Describe("Mock provider binary (integration)", func() {
 			return err
 		}, "2s", "10ms").Should(Succeed())
 
-		osacCfg := &config.OSACConfig{
+		osacCfg := &config.OSACConfig{ //nolint:gosec // OIDCClientSecret below is not a credential, a literal test fixture value never sent anywhere
 			FulfillmentAddress: grpcAddr,
 			OIDCIssuerURL:      "http://" + oidcAddr,
 			OIDCClientID:       "osac-sp",
 			OIDCClientSecret:   "unused-by-the-mock",
-			TLSEnabled:         false,
+			TLSCertFile:        writeTestCACertFile(t),
 			ProbeTimeout:       2 * time.Second,
 		}
 		bootstrap, err := osac.New(osacCfg, slog.New(slog.DiscardHandler))

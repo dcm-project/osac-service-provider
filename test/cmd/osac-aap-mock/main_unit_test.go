@@ -66,7 +66,10 @@ var _ = Describe("serveUntilDone (unit)", func() {
 	// TC-U-583: a ctx cancellation (the normal shutdown trigger) is
 	// reported as a nil error once the server has gracefully stopped.
 	It("returns nil when ctx is cancelled (TC-U-583)", func() {
-		srv := &http.Server{Handler: http.NotFoundHandler()}
+		srv := &http.Server{
+			Handler:           http.NotFoundHandler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
 		ln := newLoopbackListener()
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -85,7 +88,10 @@ var _ = Describe("serveUntilDone (unit)", func() {
 	// before Serve is ever called, so it isn't http.ErrServerClosed) is
 	// wrapped and returned as serveUntilDone's error.
 	It("surfaces a genuine Serve error (TC-U-584)", func() {
-		srv := &http.Server{Handler: http.NotFoundHandler()}
+		srv := &http.Server{
+			Handler:           http.NotFoundHandler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
 		ln := newLoopbackListener()
 		Expect(ln.Close()).To(Succeed()) // closed before Serve is ever called
 
@@ -99,11 +105,14 @@ var _ = Describe("serveUntilDone (unit)", func() {
 	// logged, not returned.
 	It("logs, but does not fail, a Shutdown timeout (TC-U-585)", func() {
 		reqStarted := make(chan struct{})
-		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			close(reqStarted)
-			time.Sleep(300 * time.Millisecond)
-			w.WriteHeader(http.StatusOK)
-		})}
+		srv := &http.Server{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				close(reqStarted)
+				time.Sleep(300 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+			}),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
 		ln := newLoopbackListener()
 		addr := ln.Addr().String()
 
@@ -125,7 +134,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 		}, "1s", "5ms").Should(Succeed())
 
 		go func() {
-			resp, err := http.Get("http://" + addr) //nolint:noctx,gosec // test helper hitting a loopback address
+			resp, err := http.Get("http://" + addr) //nolint:noctx // test helper hitting loopback without ctx
 			if err == nil {
 				_ = resp.Body.Close()
 			}
