@@ -61,7 +61,13 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer func() { _ = ln.Close() }()
 
-	srv := &http.Server{Handler: aapmock.NewHandler(cfg.Token)}
+	srv := &http.Server{
+		Handler: aapmock.NewHandler(cfg.Token),
+		// ReadHeaderTimeout mitigates Slowloris-style resource exhaustion
+		// (gosec G112); this binary only ever serves loopback test traffic,
+		// but the fix is free so there's no reason to nolint it instead.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	return serveUntilDone(ctx, logger, shutdownTimeout, srv, ln)
 }
