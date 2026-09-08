@@ -86,6 +86,10 @@ func New(cfg *config.Config, logger *slog.Logger, handler oapigen.ServerInterfac
 		logger: logger,
 		srv: &http.Server{
 			Handler: httpHandler,
+			// ReadHeaderTimeout bounds how long a client can hold a connection
+			// open while trickling in request headers, mitigating Slowloris-
+			// style resource exhaustion (gosec G112).
+			ReadHeaderTimeout: 10 * time.Second,
 		},
 		readinessTimeout:  readinessProbeTimeout,
 		readinessInterval: readinessProbeInterval,

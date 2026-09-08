@@ -59,6 +59,11 @@ func MapStatus(err error, status *publicv1.ComputeInstanceStatus) v1alpha1.VMSta
 	case publicv1.ComputeInstanceState_COMPUTE_INSTANCE_STATE_PAUSED:
 		return v1alpha1.VMStatusPAUSED
 	default:
+		// Coverage exception (documented, not tested): every currently
+		// defined ComputeInstanceState value is already handled above —
+		// this default only guards against a future proto value this SP
+		// hasn't been updated to map yet, which no test fixture can
+		// construct today without inventing a nonexistent enum value.
 		return v1alpha1.VMStatusFAILED
 	}
 }

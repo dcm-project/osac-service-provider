@@ -66,6 +66,12 @@ func MapStatus(err error, status *publicv1.ClusterStatus) v1alpha1.ClusterStatus
 	case publicv1.ClusterState_CLUSTER_STATE_PROGRESSING:
 		return v1alpha1.ClusterStatusPROGRESSING
 	default:
+		// Coverage exception (documented, not tested): every currently
+		// defined ClusterState value is already handled above (UNSPECIFIED,
+		// FAILED, DELETING, DELETE_FAILED, READY, PROGRESSING) — this
+		// default only guards against a future proto value this SP hasn't
+		// been updated to map yet, which no test fixture can construct
+		// today without inventing a nonexistent enum value.
 		return v1alpha1.ClusterStatusFAILED
 	}
 }

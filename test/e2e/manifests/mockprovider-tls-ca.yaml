@@ -1,0 +1,32 @@
+# mockprovider-tls-ca (DD-229/REQ-MOCK-140): osac-service-provider's own
+# fulfillment-service dial is unconditionally TLS with no insecure
+# fallback, so it must trust osac-mock-provider's certificate to dial it in
+# this kind cluster. osac-mock-provider's own binary already embeds and
+# serves this exact certificate (test/mockprovider/testdata/tls-cert.pem,
+# via //go:embed) — this ConfigMap is only how the *other* pod
+# (osac-service-provider) gets a copy of it to mount as SP_OSAC_TLS_CERT_FILE.
+#
+# Not a secret: this is a public certificate (no private key here), and a
+# static, checked-in, test-only fixture either way (see
+# test/mockprovider/testdata/README.md) — paste its exact contents if it is
+# ever regenerated.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mockprovider-tls-ca
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e
+data:
+  ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    MIIBwjCCAWigAwIBAgIUMMfp27d5flD8JyuOtC8i54cAoDEwCgYIKoZIzj0EAwIw
+    HTEbMBkGA1UEAwwSb3NhYy1tb2NrLXByb3ZpZGVyMB4XDTI2MDkwMTIzMTcxOVoX
+    DTM2MDgyOTIzMTcxOVowHTEbMBkGA1UEAwwSb3NhYy1tb2NrLXByb3ZpZGVyMFkw
+    EwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtcN/9mZyVn4fOyL60KXuEwLHfoSO1PBp
+    877WrSgUVs+3Ja2zI5VBSfjY9EG6DjiEqS4A55k16o6ygYNgyTAwdKOBhTCBgjAM
+    BgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIFoDATBgNVHSUEDDAKBggrBgEFBQcD
+    ATAuBgNVHREEJzAlgglsb2NhbGhvc3SCEm9zYWMtbW9jay1wcm92aWRlcocEfwAA
+    ATAdBgNVHQ4EFgQUDChGMnUYnkPU2bGT0anr42gpQYswCgYIKoZIzj0EAwIDSAAw
+    RQIgXVT2xkFglJGbEqgW4jwpljtlxtd54cNCRVTsvDrm+PcCIQD5pCWVo8hE8f9M
+    D9Mjs5fOT/k1uhLYJGPQoQ/grr7dkw==
+    -----END CERTIFICATE-----

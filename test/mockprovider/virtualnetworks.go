@@ -47,7 +47,7 @@ func (s *VirtualNetworksServer) Get(_ context.Context, req *publicv1.VirtualNetw
 
 func (s *VirtualNetworksServer) List(_ context.Context, req *publicv1.VirtualNetworksListRequest) (*publicv1.VirtualNetworksListResponse, error) {
 	items, total := s.store.list(int(req.GetOffset()), int(req.GetLimit()))
-	return &publicv1.VirtualNetworksListResponse{Size: int32(len(items)), Total: int32(total), Items: items}, nil
+	return &publicv1.VirtualNetworksListResponse{Size: int32(len(items)), Total: int32(total), Items: items}, nil //nolint:gosec // in-memory test store, item count bounded by what the test itself creates
 }
 
 func (s *VirtualNetworksServer) Delete(_ context.Context, req *publicv1.VirtualNetworksDeleteRequest) (*publicv1.VirtualNetworksDeleteResponse, error) {

@@ -88,7 +88,13 @@ func (h *OIDCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
+// maxTokenRequestBodyBytes bounds the token endpoint's request body before
+// ParseForm reads it into memory (gosec G120) — a real client_credentials
+// grant body is a handful of short form fields, well under 1 KiB.
+const maxTokenRequestBodyBytes = 64 * 1024
+
 func (h *OIDCHandler) handleToken(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxTokenRequestBodyBytes)
 	if err := r.ParseForm(); err != nil {
 		h.writeTokenError(w, "invalid_request")
 		return

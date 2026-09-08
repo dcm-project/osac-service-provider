@@ -26,7 +26,6 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
@@ -263,8 +262,8 @@ func newBootstrap(cfg *config.OSACConfig, logger *slog.Logger, ts oauth2.TokenSo
 }
 
 // dialOptions builds gRPC dial options for the fulfillment service
-// connection: TLS (REQ-OSAC-040) or insecure (REQ-OSAC-050) transport
-// credentials, plus a per-RPC bearer credential supplier.
+// connection: TLS transport credentials (REQ-OSAC-040, unconditional per
+// DD-229), plus a per-RPC bearer credential supplier.
 func dialOptions(cfg *config.OSACConfig, perRPC credentials.PerRPCCredentials) ([]grpc.DialOption, error) {
 	transportCreds, err := transportCredentials(cfg)
 	if err != nil {
@@ -277,17 +276,13 @@ func dialOptions(cfg *config.OSACConfig, perRPC credentials.PerRPCCredentials) (
 	}, nil
 }
 
-// transportCredentials selects TLS (REQ-OSAC-040) or insecure (REQ-OSAC-050)
-// gRPC transport credentials based on cfg.TLSEnabled. Split out from
-// dialOptions so unit tests can inspect the resulting
+// transportCredentials builds TLS gRPC transport credentials
+// (REQ-OSAC-040) — unconditionally; there is no insecure fallback (DD-229).
+// Split out from dialOptions so unit tests can inspect the resulting
 // credentials.TransportCredentials directly (e.g. Info().SecurityProtocol)
 // without needing to introspect an opaque []grpc.DialOption (TC-U-012,
 // TC-U-013).
 func transportCredentials(cfg *config.OSACConfig) (credentials.TransportCredentials, error) {
-	if !cfg.TLSEnabled {
-		return insecure.NewCredentials(), nil
-	}
-
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.TLSCertFile != "" {
 		pool, err := loadCACertPool(cfg.TLSCertFile)
@@ -300,10 +295,13 @@ func transportCredentials(cfg *config.OSACConfig) (credentials.TransportCredenti
 }
 
 // loadCACertPool reads a PEM-encoded CA bundle from certFile into a fresh
-// x509.CertPool.
+// x509.CertPool. certFile comes from SP_OSAC_TLS_CERT_FILE, an
+// operator-controlled deployment setting (internal/config), never
+// request/user input, so this is not the untrusted-path traversal gosec's
+// G304 guards against.
 func loadCACertPool(certFile string) (*x509.CertPool, error) {
 	pool := x509.NewCertPool()
-	pem, err := os.ReadFile(certFile)
+	pem, err := os.ReadFile(certFile) //nolint:gosec // operator-controlled config path, not user input (see doc comment above)
 	if err != nil {
 		return nil, fmt.Errorf("reading TLS CA file %s: %w", certFile, err)
 	}
@@ -329,11 +327,12 @@ func (c *bearerCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[st
 	return map[string]string{"authorization": "Bearer " + tok}, nil
 }
 
-// RequireTransportSecurity returns false so bearer credentials can be used
-// over an insecure connection in non-TLS deployments (REQ-OSAC-050). OSAC v1
-// uses a single shared service account over a trusted network path when TLS
-// is disabled.
-func (c *bearerCreds) RequireTransportSecurity() bool { return false }
+// RequireTransportSecurity returns true: the transport is unconditionally
+// TLS (DD-229), so this bearer token must never be attached to anything
+// else. Defense in depth — even a future regression that reintroduced an
+// insecure transport would have this credential type itself refuse to
+// attach the token to it.
+func (c *bearerCreds) RequireTransportSecurity() bool { return true }
 
 // Start begins the background OIDC token fetch/refresh loop. It returns
 // immediately; token fetch failures are retried with exponential backoff and
