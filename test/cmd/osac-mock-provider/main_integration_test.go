@@ -95,7 +95,7 @@ var _ = Describe("Mock provider binary (integration)", func() {
 			return err
 		}, "2s", "10ms").Should(Succeed())
 
-		osacCfg := &config.OSACConfig{ //nolint:gosec // OIDCClientSecret below is not a credential, a literal test fixture value never sent anywhere
+		osacCfg := &config.OSACConfig{ //nolint:gosec,nolintlint // G101 in CI; OIDCClientSecret is not a credential, just a test fixture
 			FulfillmentAddress: grpcAddr,
 			OIDCIssuerURL:      "http://" + oidcAddr,
 			OIDCClientID:       "osac-sp",

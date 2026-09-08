@@ -275,7 +275,10 @@ func startTLSListener(certPEM, keyPEM []byte) (net.Listener, string) {
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	Expect(err).NotTo(HaveOccurred())
 
-	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
 	Expect(err).NotTo(HaveOccurred())
 
