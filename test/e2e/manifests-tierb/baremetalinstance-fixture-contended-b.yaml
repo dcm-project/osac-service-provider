@@ -1,0 +1,14 @@
+# BareMetalInstance fixture "B" for AC-TB-050/TC-TB-150 — see
+# baremetalinstance-fixture-contended-a.yaml's comment; identical shape,
+# racing for the same single host. Which of A/B wins is intentionally not
+# asserted (DD-229) — only that exactly one of them does.
+apiVersion: osac.openshift.io/v1alpha1
+kind: BareMetalInstance
+metadata:
+  name: tierb-bmi-contended-b
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  hostType: tierb-hosttype-contended
+  externalHostID: ""
+  templateID: "noop"

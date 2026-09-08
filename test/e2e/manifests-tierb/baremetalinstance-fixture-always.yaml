@@ -1,0 +1,16 @@
+# BareMetalInstance fixture for AC-TB-040/TC-TB-120: `runStrategy: Always`
+# exercises the power-synced condition path (`reconcilePower`/
+# `SetPowerState`) that the unset variant never touches — stays
+# `Progressing` (`PowerSynced=False`) until tierb_test.go patches
+# baremetalhost-fixture-always.yaml's `status.poweredOn` once (DD-226).
+apiVersion: osac.openshift.io/v1alpha1
+kind: BareMetalInstance
+metadata:
+  name: tierb-bmi-always
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  hostType: tierb-hosttype-always
+  externalHostID: ""
+  templateID: "noop"
+  runStrategy: Always

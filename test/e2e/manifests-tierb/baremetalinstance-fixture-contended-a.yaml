@@ -1,0 +1,15 @@
+# BareMetalInstance fixture "A" for AC-TB-050/TC-TB-150: races
+# baremetalinstance-fixture-contended-b.yaml for
+# baremetalhost-fixture-contended.yaml's single eligible host.
+# `runStrategy` left unset (mirrors TC-TB-110) so host contention is the
+# only variable under test — no power-management steps involved.
+apiVersion: osac.openshift.io/v1alpha1
+kind: BareMetalInstance
+metadata:
+  name: tierb-bmi-contended-a
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  hostType: tierb-hosttype-contended
+  externalHostID: ""
+  templateID: "noop"

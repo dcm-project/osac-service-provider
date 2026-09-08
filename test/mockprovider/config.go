@@ -6,7 +6,7 @@ import (
 	env "github.com/caarlos0/env/v11"
 )
 
-// Config holds cmd/osac-mock-provider's own listen addresses (REQ-MOCK-110).
+// Config holds test/cmd/osac-mock-provider's own listen addresses (REQ-MOCK-110).
 // Deliberately not a reuse of internal/config.Config: this binary has none
 // of the real SP's concerns (no HTTP router/middleware chain, no OSAC
 // client to configure), just two independent net.Listen addresses.

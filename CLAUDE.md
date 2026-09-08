@@ -37,7 +37,7 @@ to have.
 | Component | Interaction | Config |
 |---|---|---|
 | [environment-agent](https://github.com/dcm-project/environment-agent) | Registers two independent entries on startup — one `cluster` service type, one `vm` service type — using its generated Go client library (`pkg/client`). Periodically re-registers to refresh capability metadata and to retry past a `409` (per-service-type slot contention, DD-203). | `DCM_REGISTRATION_URL` |
-| [osac-project/fulfillment-service](https://github.com/osac-project/fulfillment-service) | gRPC API for cluster/VM CRUD. OAuth2/OIDC client-credentials auth against OSAC's Keycloak. | `SP_OSAC_FULFILLMENT_ADDRESS`, `SP_OSAC_OIDC_*` |
+| [osac-project/fulfillment-service](https://github.com/osac-project/osac/tree/main/fulfillment-service) | gRPC API for cluster/VM CRUD. OAuth2/OIDC client-credentials auth against OSAC's Keycloak. Archived as a standalone repo ~2026-08-15; now a subdirectory of the `osac-project/osac` monorepo (source of truth for new work; archived repo's history remains reachable but frozen). | `SP_OSAC_FULFILLMENT_ADDRESS`, `SP_OSAC_OIDC_*` |
 
 **Milestone 1 scope** (this repo's current state): scaffold, HTTP server,
 health check, and registration only — no cluster/VM CRUD endpoints yet. See

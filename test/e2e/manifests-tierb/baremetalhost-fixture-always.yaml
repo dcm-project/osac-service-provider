@@ -1,0 +1,19 @@
+# BareMetalHost fixture for AC-TB-040/TC-TB-120 (BareMetalInstance,
+# runStrategy: Always). Same posture as baremetalhost-fixture-unset.yaml
+# (DD-226/227) — status set via a separate subresource patch, no real
+# Metal3/Ironic/virtual-BMC involved.
+#
+# This host's `status.poweredOn` is patched a *second* time, mid-test
+# (tierb_test.go's patchBareMetalHostPoweredOn), to simulate a real
+# baremetal-operator completing a power-on: BMFO itself only ever patches
+# `spec.online`, never `status.poweredOn` (DD-226) — that gap is
+# deliberately what TC-TB-120 exercises.
+apiVersion: metal3.io/v1alpha1
+kind: BareMetalHost
+metadata:
+  name: tierb-bmh-always
+  labels:
+    osac.openshift.io/host-type: tierb-hosttype-always
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  online: false

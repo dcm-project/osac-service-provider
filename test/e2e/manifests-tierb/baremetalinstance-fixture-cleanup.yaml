@@ -1,0 +1,13 @@
+# BareMetalInstance fixture for AC-TB-050/TC-TB-160. `runStrategy` left
+# unset so it reaches Ready with zero power-management steps (mirrors
+# TC-TB-110) — the only thing under test here is deletion, not power sync.
+apiVersion: osac.openshift.io/v1alpha1
+kind: BareMetalInstance
+metadata:
+  name: tierb-bmi-cleanup
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  hostType: tierb-hosttype-cleanup
+  externalHostID: ""
+  templateID: "noop"

@@ -67,7 +67,9 @@ by `control-plane`'s
 [`internal/sp/consumer.StatusConsumer`](https://github.com/dcm-project/control-plane/blob/main/internal/sp/consumer/consumer.go).
 `Events`/`Watch` is a real, working gRPC-streaming RPC (verified against
 `fulfillment-service`'s
-[`internal/servers/events_server.go`](https://github.com/osac-project/fulfillment-service/blob/main/internal/servers/events_server.go)),
+[`internal/servers/events_server.go`](https://github.com/osac-project/osac/blob/main/fulfillment-service/internal/servers/events_server.go)
+— `fulfillment-service` archived as a standalone repo ~2026-08-15, now a
+subdirectory of the `osac-project/osac` monorepo),
 but DD-010 treats it as an optional latency supplement to polling, not the
 primary mechanism — see DD-010's rationale for why. This SP has no current
 consumer for `events_service.proto` simply because Milestone 5 hasn't been

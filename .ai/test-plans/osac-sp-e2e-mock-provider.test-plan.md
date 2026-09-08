@@ -10,7 +10,7 @@ numbering (DD-126).
 `_integration_test.go` suffix. Run a single case with:
 
 ```bash
-go run github.com/onsi/ginkgo/v2/ginkgo -r -v -focus "TC-U-114" ./test/mockprovider/... ./cmd/osac-mock-provider/...
+go run github.com/onsi/ginkgo/v2/ginkgo -r -v -focus "TC-U-114" ./test/mockprovider/... ./test/cmd/osac-mock-provider/...
 ```
 
 **Assertion discipline:** assert actual values (exact IDs, exact status
@@ -92,7 +92,7 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 6. `cmd/osac-mock-provider` — unit
+## 6. `test/cmd/osac-mock-provider` — unit
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -107,7 +107,7 @@ test, no further fake/mock layer needed underneath it.
 
 ---
 
-## 7. `cmd/osac-mock-provider` — integration
+## 7. `test/cmd/osac-mock-provider` — integration
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -124,6 +124,6 @@ test, no further fake/mock layer needed underneath it.
 | `Capabilities` | REQ-MOCK-070 | AC-MOCK-080 | 1 (TC-U-134) | — | |
 | OIDC discovery + token | REQ-MOCK-080, 090, 100 | AC-MOCK-090, 100, 110 | 8 (TC-U-135..141, 152) | — | TC-U-140/141 added post-hoc to close `ParseForm`- and encode-error coverage gaps; TC-U-152 added post-hoc as a regression test for a real cross-pod-unreachability bug found via the e2e infra (DD-139). |
 | Mock config (`test/mockprovider.LoadConfig`) | REQ-MOCK-110 | — | 2 (TC-U-142..143) | — | |
-| Binary wiring (`cmd/osac-mock-provider`) | REQ-MOCK-010, 070, 080, 090, 110 | AC-MOCK-120 | 8 (TC-U-144..151) | 1 (TC-I-031) | `run`/`serveUntilDone` are 100% unit-covered on their own (TC-U-144..151); TC-I-031 closes the pyramid invariant by proving the real transport end to end with a real `osac.Bootstrap`, not a fake. `main`/`mainRun`'s happy path is a documented coverage exception (real-OS-signal-dependent), mirroring `cmd/osac-service-provider/main.go`'s own accepted gap. |
+| Binary wiring (`test/cmd/osac-mock-provider`) | REQ-MOCK-010, 070, 080, 090, 110 | AC-MOCK-120 | 8 (TC-U-144..151) | 1 (TC-I-031) | `run`/`serveUntilDone` are 100% unit-covered on their own (TC-U-144..151); TC-I-031 closes the pyramid invariant by proving the real transport end to end with a real `osac.Bootstrap`, not a fake. `main`/`mainRun`'s happy path is a documented coverage exception (real-OS-signal-dependent), mirroring `cmd/osac-service-provider/main.go`'s own accepted gap. |
 | `Clusters.GetKubeconfig` / `ClusterTemplates` | REQ-MOCK-120, 130 | AC-MOCK-130, 140 | 2 (TC-U-155..156) | — | Both added post-hoc as regression tests for real gaps found while building Milestone 3/4's own e2e CRUD coverage (DD-143, and this suite's `ClusterTemplates` addition). |
 | **Total** | 12 | 13 | **39** | **1** | |

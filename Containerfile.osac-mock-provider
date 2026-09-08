@@ -9,7 +9,7 @@ RUN go mod download
 COPY . .
 
 USER root
-RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o osac-mock-provider ./cmd/osac-mock-provider
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o osac-mock-provider ./test/cmd/osac-mock-provider
 
 # Runtime stage
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest

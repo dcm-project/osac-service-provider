@@ -40,7 +40,7 @@ own spec additions.
 - [Implementation plan (issue #1)](https://github.com/dcm-project/osac-service-provider/issues/1)
 - [SP Registration Flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/sp-registration-flow/sp-registration-flow.md)
 - [SP Health Check](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-provider-health-check/service-provider-health-check.md)
-- OSAC public protos: [`osac-project/fulfillment-service/proto/public/osac/public/v1/`](https://github.com/osac-project/fulfillment-service/tree/main/proto/public/osac/public/v1)
+- OSAC public protos: [`osac-project/fulfillment-service/proto/public/osac/public/v1/`](https://github.com/osac-project/osac/tree/main/fulfillment-service/proto/public/osac/public/v1) (`fulfillment-service` archived as a standalone repo ~2026-08-15; now a subdirectory of the `osac-project/osac` monorepo, the current source of truth)
 - Reference implementations (structure/conventions template): [`k8s-container-service-provider`](https://github.com/dcm-project/k8s-container-service-provider), [`acm-cluster-service-provider`](https://github.com/dcm-project/acm-cluster-service-provider), [`kubevirt-service-provider`](https://github.com/dcm-project/kubevirt-service-provider) — **note:** these also register against `control-plane`'s SP API, via the archived `service-provider-manager` client rather than `control-plane`'s newer `pkg/sp/client/provider`; OSAC SP now targets the same backend as its siblings, just on the newer client (see DD-050)
 - [`dcm-project/control-plane`](https://github.com/dcm-project/control-plane) (`api/sp/v1alpha1/provider/openapi.yaml`) — authoritative Phase 1 registration contract this SP integrates with (see DD-050)
 - [`dcm-project/environment-agent`](https://github.com/dcm-project/environment-agent) — Phase 2 target, deferred pending maturity (see DD-050)
@@ -246,9 +246,10 @@ be resolved via standard OIDC discovery before any token request is made
 milestone. Full generated CRUD stubs
 (`Clusters`, `ComputeInstances`, `Subnets`, `VirtualNetworks`) are generated
 in Milestone 2 via a `buf`/`protoc` pipeline against
-[`osac-project/fulfillment-service`](https://github.com/osac-project/fulfillment-service)'s
-public protos — see DD-020 for why this milestone only generates the minimal
-`Capabilities` client instead of the full set.
+[`osac-project/fulfillment-service`](https://github.com/osac-project/osac/tree/main/fulfillment-service)'s
+public protos (now a subdirectory of the `osac-project/osac` monorepo — see
+the ecosystem table note in `CLAUDE.md`) — see DD-020 for why this milestone
+only generates the minimal `Capabilities` client instead of the full set.
 
 Out of scope: token exchange (RFC 8693, confirmed unsupported by OSAC),
 per-tenant credentials (v1 is single shared service account), retry/circuit
@@ -337,12 +338,26 @@ breaking beyond token refresh and connection backoff.
 - **When** the gRPC connection is created
 - **Then** the connection MUST use TLS transport credentials loaded from the CA file
 
-##### AC-OSAC-050: TLS disabled (default)
+##### AC-OSAC-045: TLS with the system default CA pool
 
-- **Validates:** REQ-OSAC-050
-- **Given** `osac.tlsEnabled=false`
+- **Validates:** REQ-OSAC-040
+- **Given** `tlsCertFile` is unset (default)
 - **When** the gRPC connection is created
-- **Then** the connection MUST use insecure transport credentials
+- **Then** the connection MUST use TLS transport credentials, trusting the system root CA pool
+
+##### AC-OSAC-046: Certificate validation rejects untrusted certificates (FedRAMP CA control)
+
+- **Validates:** REQ-OSAC-040, DD-229
+- **Given** a server presenting a certificate NOT in the client's trust pool (custom CA configured, server cert signed by a different CA)
+- **When** a real `Bootstrap` dials the server and calls `Probe(ctx)`
+- **Then** the probe MUST report `connected=false` with an error indicating a certificate validation failure, not an "unknown CA" fallback
+
+##### AC-OSAC-047: No fallback to plaintext (DD-229 enforcement)
+
+- **Validates:** REQ-OSAC-040, DD-229
+- **Given** a server listening on TCP but refusing a TLS handshake (closing connection immediately, no ServerHello)
+- **When** a real `Bootstrap` dials the server and calls `Probe(ctx)`
+- **Then** the probe MUST report `connected=false` with a TLS handshake error; there is no fallback to plaintext dialing
 
 ##### AC-OSAC-060: Token fetch retry, non-fatal
 

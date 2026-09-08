@@ -1,7 +1,7 @@
 package main
 
 // Unit scope (per .ai/test-plans/osac-sp-e2e-mock-provider.test-plan.md,
-// "6. cmd/osac-mock-provider — unit"): run's top-level error-wrapping
+// "6. test/cmd/osac-mock-provider — unit"): run's top-level error-wrapping
 // branches (each failing before any server starts serving, so no fakes
 // needed) plus serveUntilDone's own failure/shutdown branches, tested
 // directly against real-but-deliberately-broken collaborators (a

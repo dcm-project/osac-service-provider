@@ -1,0 +1,15 @@
+# BareMetalInstance fixture for AC-TB-050/TC-TB-130: `hostType` deliberately
+# matches no `BareMetalHost` fixture anywhere in this suite. Proves BMFO's
+# real `reconcileInventory` zero-candidates branch converges to a terminal
+# `Phase: Failed` with an `Allocated=False`/"No matching hosts available"
+# condition, not an indefinite `Progressing`/`Allocating` (DD-229).
+apiVersion: osac.openshift.io/v1alpha1
+kind: BareMetalInstance
+metadata:
+  name: tierb-bmi-nohost
+  labels:
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  hostType: tierb-hosttype-nohost
+  externalHostID: ""
+  templateID: "noop"

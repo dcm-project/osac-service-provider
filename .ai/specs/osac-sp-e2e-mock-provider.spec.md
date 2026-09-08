@@ -3,7 +3,9 @@
 ## 1. Overview
 
 Phase 1 of [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17)
-(FLPATH-4759): a standalone binary, `cmd/osac-mock-provider`, that fakes the
+(FLPATH-4759): a standalone binary, `test/cmd/osac-mock-provider` (moved
+from repo-root `cmd/osac-mock-provider` per DD-224: test-only binaries stay
+out of `cmd/`, which is reserved for shipped product code), that fakes the
 **OSAC backend side** of the gRPC contract `osac-sp` dials — a real
 `net.Listen`-backed `grpc.Server` implementing `osac.public.v1`'s
 `Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`, and
@@ -92,7 +94,7 @@ possible without needing OSAC's real `fulfillment-service` or Keycloak.
                      | HTTP                     | gRPC
                      v                          v
         +--------------------------------------------------------+
-        |                 cmd/osac-mock-provider                  |
+        |              test/cmd/osac-mock-provider                 |
         |                                                          |
         |  test/mockprovider/oidc.go (HTTP)                    |
         |    GET  /.well-known/oauth-authorization-server          |
@@ -135,7 +137,7 @@ distinct URLs/addresses.
   the dependency (see REQ-MOCK-130's own rationale column).
 - `oidc.go` — the HTTP discovery + token stub (REQ-MOCK-070/080).
 
-### New binary: `cmd/osac-mock-provider`
+### New binary: `test/cmd/osac-mock-provider`
 
 Config (`test/mockprovider/config.go` or inlined in `main.go` — decided
 at implementation time), two `net.Listen` calls, `signal.NotifyContext`
@@ -259,7 +261,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 ##### AC-MOCK-120: A real `osac.Bootstrap` fetches a token and probes successfully against the real mock binary
 
 - **Validates:** REQ-MOCK-010, REQ-MOCK-080, REQ-MOCK-090, REQ-MOCK-070, REQ-MOCK-110
-- **Given** the real `cmd/osac-mock-provider` binary's `test/mockprovider`
+- **Given** the real `test/cmd/osac-mock-provider` binary's `test/mockprovider`
   gRPC server and OIDC HTTP server both running on real, ephemeral
   `net.Listen` ports (in-process, not `bufconn`)
 - **When** a real `osac.Bootstrap`, constructed via the production `osac.New()`
