@@ -49,9 +49,10 @@ var insecureHTTPClient = &http.Client{
 
 // Env vars set only by .github/workflows/e2e-tierb.yaml.
 const (
-	envKeycloakURL      = "KEYCLOAK_URL"       // e.g. http://localhost:18082/realms/osac
-	envTierBAdminSecret = "TIERB_ADMIN_SECRET" // osac-admin's client secret (tierb-config/realm.json)
-	envBadAuthOSACSPURL = "BAD_AUTH_OSAC_SP_URL"
+	envKeycloakURL              = "KEYCLOAK_URL"       // e.g. http://localhost:18082/realms/osac
+	envTierBAdminSecret         = "TIERB_ADMIN_SECRET" // osac-admin's client secret (tierb-config/realm.json)
+	envBadAuthOSACSPURL         = "BAD_AUTH_OSAC_SP_URL"
+	envOSACUnreachableOSACSPURL = "OSAC_UNREACHABLE_OSAC_SP_URL"
 	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
 	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
 	// deploys that stack, distinct from Phase 1's envKeycloakURL gate.
@@ -115,6 +116,33 @@ var _ = Describe("Tier B: a real auth failure is genuinely detectable", func() {
 		// were the only thing wrong.
 		Expect(h.Detail).To(Equal("OIDC token invalid"),
 			"a wrong client secret must surface as exactly a token-fetch failure, not an opaque connectivity error or a compounded one")
+	})
+})
+
+var _ = Describe("Tier B: OSAC unreachable is genuinely detectable, distinct from a token failure", func() {
+	// TC-TB-131 / REQ-TB-065 / AC-TB-025 — opt-in workflow_dispatch
+	// variant only (e2e-tierb.yaml); OSAC_UNREACHABLE_OSAC_SP_URL is
+	// unset on every regular PR run. Closes the other half of AC-HLT-060
+	// that TC-TB-050 above doesn't reach: a real, valid OIDC token
+	// (correct client secret, real Keycloak) paired with an unroutable
+	// SP_OSAC_FULFILLMENT_ADDRESS, so the health response's "unreachable"
+	// detail is proven distinct from the "token invalid" one — both
+	// against real infra, not a bufconn fake's simulation of either
+	// (internal/health's TC-U-031/032/033 already cover the fake side).
+	It("reports unhealthy with a connectivity-only detail when OSAC is unreachable but the token is valid", func() {
+		osacUnreachableURL := os.Getenv(envOSACUnreachableOSACSPURL)
+		if osacUnreachableURL == "" {
+			Skip("opt-in variant only: " + envOSACUnreachableOSACSPURL + " is unset")
+		}
+
+		var h health
+		Eventually(func() string {
+			h = getHealthAt(osacUnreachableURL, "/api/v1alpha1/clusters/health")
+			return h.Status
+		}, 30*time.Second, 500*time.Millisecond).Should(Equal("unhealthy"))
+
+		Expect(h.Detail).To(Equal("OSAC fulfillment service unreachable"),
+			"OSAC unreachable with a valid token must surface as exactly the connectivity-only detail, never combined with the token-invalid one")
 	})
 })
 

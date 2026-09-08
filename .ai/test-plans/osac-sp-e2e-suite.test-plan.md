@@ -30,6 +30,18 @@ built/pulled artifacts (§2 of the spec) — nothing under test is a fake.
 backend; that substitution is the one documented, deliberate scope boundary
 (spec §1/§6), not a gap in this tier's own fidelity.
 
+**E2E disposition invariant (DD-230):** every `REQ-*`/`AC-*` this test plan
+or its milestone specs define must carry an explicit disposition —
+**e2e-covered** (a `TC-E2E-*` entry exists), deliberately **deferred**
+(named follow-up, owning issue), or **integration-tier-sufficient** (pure
+translation logic already proven by a `TC-I-*`/`TC-U-*` over real HTTP or a
+`bufconn` fake). This is not the same invariant as the `TC-U`+`TC-I`
+pyramid — e2e coverage is a judgment call about real cross-process/timing/
+wire risk, not a hard per-REQ requirement — but a `REQ-*`/`AC-*` with *no*
+disposition recorded anywhere is an undocumented gap and blocks merge on
+review. See the Coverage Matrix (§6) "Notes" column for where each
+disposition is recorded.
+
 ---
 
 ## 1. Infra readiness
@@ -51,7 +63,7 @@ duplication once Tier B existed to run them for real.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-E2E-020 | `osac-sp` registers a `cluster`-type provider with real `control-plane` | REQ-E2E-050, AC-E2E-020 | `GET` `control-plane`'s real provider-listing endpoint; assert exactly one entry has `serviceType == "cluster"` (or the real API's equivalent enum/string — confirmed against `control-plane`'s actual REST schema at implementation time) and `endpoint` equal to `osac-service-provider`'s real in-cluster `SP_ENDPOINT`. |
+| TC-E2E-020 | `osac-sp` registers a `cluster`-type provider with real `control-plane`, advertising `kubernetes_supported_versions` | REQ-E2E-050, REQ-E2E-051, AC-E2E-020, AC-E2E-021 | `GET` `control-plane`'s real provider-listing endpoint; assert exactly one entry has `serviceType == "cluster"` (or the real API's equivalent enum/string — confirmed against `control-plane`'s actual REST schema at implementation time) and `endpoint` equal to `osac-service-provider`'s real in-cluster `SP_ENDPOINT`; assert its `metadata.kubernetes_supported_versions` contains `"1.31"` — a key from `osac-sp`'s real, uninjected `DefaultMatrix` (closes DD-230's REQ-VERSION-050 disposition gap). |
 | TC-E2E-030 | `osac-sp` registers a `vm`-type provider with real `control-plane` | REQ-E2E-050, AC-E2E-020 | Same as TC-E2E-020, asserting the independent `vm`-type entry — proves the two registration loops are genuinely independent against a real backend, not just in `internal/registration`'s own fakes. |
 | TC-E2E-040 | Both registrations persist across a re-registration cycle (no duplicates) | REQ-E2E-050, AC-E2E-020 | Wait past `internal/registration.Registrar`'s periodic re-registration interval; re-`GET` the provider listing; assert still exactly one `cluster` and one `vm` entry each (idempotent re-POST, DD-established behavior, now proven against a real, independently-built `control-plane` rather than the repo's own `fakeControlPlaneServer`). |
 
@@ -93,6 +105,7 @@ signal.
 | TC-E2E-100 | VM Create → Get → List → Delete round-trips over real HTTP into the real mock backend | REQ-E2E-100, AC-E2E-060 | Same shape as TC-E2E-090 against `/api/v1alpha1/vms`, asserting `status == "RUNNING"` (no polling — `COMPUTE_INSTANCE_STATE_RUNNING` is set synchronously on `Create`, REQ-MOCK-030). |
 | TC-E2E-101 | VM Delete tolerates an already-deleted id | REQ-E2E-101, AC-E2E-060 | Same shape as TC-E2E-091 against `/api/v1alpha1/vms`. |
 | TC-E2E-102 | VM Create is idempotent against the real mock's `ALREADY_EXISTS` | REQ-E2E-102, AC-E2E-061 | Same shape as TC-E2E-092 against `/api/v1alpha1/vms` (REQ-VMCREATE-070). |
+| TC-E2E-103 | Cluster Create rejects an unknown `template_id` as 400, not 404 | REQ-E2E-103, AC-E2E-052 | `POST` a Create body whose `template_id` doesn't match the real mock's fixture default; assert `400` with RFC 9457 `type` exactly `.../invalid-argument`, and the id absent from a subsequent `List` — proves the real mock's own, unmodified `ClusterTemplatesServer.Get` NotFound (not a bufconn fake's simulation of it) round-trips through REQ-CREATE-100's mapping (closes DD-230's disposition gap). |
 
 ---
 
@@ -101,9 +114,37 @@ signal.
 | Spec Topic | REQ Count | AC Count | TC-E2E | Notes |
 |---|---|---|---|---|
 | Infra bring-up/readiness | REQ-E2E-010, 020, 030, 040 | AC-E2E-010 | 1 (TC-E2E-010) | Infra preconditions gate every other TC in this plan; not itself a behavioral assertion about `osac-sp`. |
-| Registration contract | REQ-E2E-050 | AC-E2E-020 | 3 (TC-E2E-020..040) | |
+| Registration contract | REQ-E2E-050, 051 | AC-E2E-020, 021 | 3 (TC-E2E-020..040) | REQ-E2E-051/AC-E2E-021 (kubernetes_supported_versions) ride TC-E2E-020's existing assertion, not a new TC. |
 | Health-check propagation | REQ-E2E-060 | AC-E2E-030 | 3 (TC-E2E-050..070) | |
 | CI failure-mode hygiene | REQ-E2E-040, 070 | AC-E2E-040 | 1 (TC-E2E-080) | Manual/opt-in variant, not run on every PR (would otherwise double the job's steady-state runtime for a check that doesn't need re-proving every merge). |
-| Cluster CRUD (Milestone 3) | REQ-E2E-090, 091, 092 | AC-E2E-050, 051 | 3 (TC-E2E-090, 091, 092) | |
+| Cluster CRUD (Milestone 3) | REQ-E2E-090, 091, 092, 103 | AC-E2E-050, 051, 052 | 4 (TC-E2E-090, 091, 092, 103) | |
 | VM CRUD (Milestone 4) | REQ-E2E-100, 101, 102 | AC-E2E-060, 061 | 3 (TC-E2E-100, 101, 102) | |
-| **Total** | 14 | 8 | **14** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. |
+| **Total** | 16 | 10 | **15** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. REQ/AC counts sum each row's literal count (not deduplicated across rows). |
+
+---
+
+## 7. E2E disposition for milestone-spec `REQ-*`/`AC-*` outside this suite's own `REQ-E2E-*` scope (DD-230)
+
+The Coverage Matrix above only tracks this suite's *own* `REQ-E2E-*`/
+`AC-E2E-*` IDs. DD-230 requires every `REQ-*`/`AC-*` defined by the
+milestone specs (`osac-sp.spec.md`, `osac-sp-m3-cluster-crud.spec.md`,
+`osac-sp-m4-vm-crud.spec.md`, `osac-sp-m5-status-reporting.spec.md`,
+`osac-sp-m6-version-matrix.spec.md`) to carry an explicit disposition
+somewhere — this table is that record for the ones with no `TC-E2E-*`/
+`TC-TB-*` coverage of their own.
+
+| Milestone REQ group | Disposition | Rationale |
+|---|---|---|
+| `REQ-CREATE-100` (unknown `template_id` → `400`) | **e2e-covered** | `TC-E2E-103` (§5). |
+| `REQ-VERSION-050` (registration metadata carries `kubernetes_supported_versions`) | **e2e-covered** | `TC-E2E-020`'s updated assertion (§2). |
+| `REQ-STATUS-020` (10-rule status precedence table) | integration-tier-sufficient | Pure translation logic; `TC-I-240` already proves the same mapper over real HTTP against the real router — a live cluster adds no new signal, only CI time. |
+| `REQ-ERR-010/020/030`, `REQ-VMERR-010/020/030` (gRPC-code→HTTP tables) | integration-tier-sufficient | `TC-I-250`/`TC-I-360` already exercise the full tables over real HTTP. |
+| `REQ-LIST-020/040` (pagination round-trip, `Size`/`Total` mismatch) | integration-tier-sufficient | `TC-I-221`/`TC-I-223` already prove this via two real, sequential HTTP requests. |
+| `REQ-VMSTATUS-020` (8-value VM status precedence) | integration-tier-sufficient | `TC-I-350` already proves it over real HTTP. |
+| `REQ-VMNET-020/030/040` (default-network provision/poll/timeout) | **deferred** | Genuinely untested at any e2e tier today — the mock always resolves `READY` synchronously, so `osac-sp`'s poll loop never iterates in a live run. Closing this needs a mock-side delayed-ready simulation plus an order-independent reset hook (the shared default network is provisioned once per pod lifetime); tracked as a follow-up rather than closed here. |
+| `REQ-HTTP-030/040` (graceful shutdown on SIGTERM/SIGINT) | integration-tier-sufficient | `TC-I-003`/`TC-I-004` already drain a real in-flight request against a real signal; process-lifecycle behavior, not a cross-process/wire-contract risk this tier's live cluster would add signal to. |
+| `REQ-HTTP-070` (panic recovery → RFC 9457) | integration-tier-sufficient | Unusually well-tested already at the unit tier (`TC-U-070/073/075/087/088`); a live-cluster panic would just re-prove the same in-process recovery middleware. |
+| `REQ-OSAC-011/012` (RFC 8414-then-OIDC-discovery fallback order) | integration-tier-sufficient | `TC-U-023/024/025` force both the success and fallback branches deterministically; Tier B's real Keycloak (`TC-TB-030`) only ever proves *a* real token is issued, not that the fallback branch specifically fired — forcing that branch e2e would need a deliberately-RFC-8414-less Keycloak variant for marginal added confidence. |
+| `REQ-REG-080/090` (409-not-fatal / other-4xx-fatal registration branching) | integration-tier-sufficient | `TC-I-023/024` prove both branches against a fake backend; `TC-I-029` additionally proves the 409 branch against a **real** `environment-agent` build (`make test-realbackend-environment-agent`). Deliberately forcing a 409/4xx from a live e2e `environment-agent` pod would require racing two registrations for the same slot — high flakiness risk for coverage already proven twice over. |
+| `REQ-PUBLISH-*`, `REQ-POLL-*` (Milestone 5, NATS status-event publish) | **deferred** | See this table's own header note above — no `osac-sp`-side REST surface exists to assert delivery against yet. |
+| `REQ-VERSION-010..040, 060..090` (Milestone 6, version-matrix internals beyond the registration metadata field) | integration-tier-sufficient | `Lookup`/`SupportedVersions`/`Load`/pre-flight-400 are pure config/translation logic, already fully unit/integration-tested (`osac-sp-m6-version-matrix.test-plan.md`); no cross-process/real-infra risk a live cluster would add signal to. |

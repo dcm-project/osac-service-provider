@@ -102,12 +102,14 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | REQ-E2E-030 | The job MUST apply this repo's own plain-manifest `Deployment`+`Service` pair for `osac-service-provider` and for `osac-mock-provider`, wired per §2's table | MUST | Not part of the upstream chart (yet) |
 | REQ-E2E-040 | The job MUST wait, with a bounded timeout, for every component's Kubernetes readiness (`kubectl wait --for=condition=Available`) before starting the e2e suite, and MUST fail the job (not hang) if the timeout is exceeded. Where the suite separately polls `osac-sp`'s own `GET /api/v1alpha1/clusters/health` and `/vms/health` for `status: healthy` (see AC-E2E-030), that polling is deliberately not gated by this job-level wait, to avoid a hidden test-ordering assumption (DD-142) | MUST | Reuses each component's existing health endpoint — no new one invented. As of DD-212 (#28), the health-polling `Describe` block is `Label("tier-b-only")`, so `e2e.yaml` (Phase A) no longer does this at all — only `e2e-tierb.yaml`'s run of the suite does; this job-level readiness wait itself still applies to both |
 | REQ-E2E-050 | The e2e suite MUST assert that `osac-sp`, running for real against real `control-plane`, successfully self-registers **both** the `cluster` and `vm` service types (2 independent registrations, per `internal/registration.Registrar`'s existing design) | MUST | First real cross-repo assertion of the SP↔control-plane registration contract. As of DD-212 (#28), this only runs in `e2e-tierb.yaml`, not `e2e.yaml` — neither the OSAC backend nor its mock is relevant to this assertion at all |
+| REQ-E2E-051 | The `cluster` registration's metadata, as observed over real HTTP through `control-plane`'s own REST API, MUST carry a non-empty `kubernetes_supported_versions` list containing the real, uninjected `internal/versionmatrix.DefaultMatrix`'s `"1.31"` key, mirroring `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-050 | MUST | Milestone 6 — closes DD-230's disposition gap for REQ-VERSION-050 specifically; the rest of Milestone 6 remains integration-tier-sufficient (`osac-sp-e2e-suite.test-plan.md` §7) |
 | REQ-E2E-060 | The e2e suite MUST assert that `osac-sp`'s own two health endpoints report `status: healthy` against a real backend (real gRPC dial + real OIDC token fetch, not bufconn) | MUST | Exercises `internal/osac.Bootstrap` end-to-end for the first time outside its own unit/integration tests; the `Health` schema (`api/v1alpha1/openapi.yaml`) has no `connected` field — `status`/`detail` are the only signal. As of DD-212 (#28), this only runs in `e2e-tierb.yaml` against Tier B's real `fulfillment-service`, not `e2e.yaml`/`osac-mock-provider` — the mock case added no signal beyond `internal/osac`'s own bufconn tests |
 | REQ-E2E-070 | The job MUST tear down the `kind` cluster on both success and failure, and MUST upload each component's logs as a build artifact on failure | MUST | Matches `fulfillment-service`'s own IT harness convention (verified in the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19)) |
 | REQ-E2E-080 | The e2e suite MUST run as a separate nested Go module (own `go.mod`) so its dependencies (a `control-plane` REST client, `k8s.io/client-go` if used for readiness polling) never enter the main module's `go.mod`/`go.sum` | MUST | Same isolation rationale as the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19) |
 | REQ-E2E-090 | The e2e suite MUST exercise a full Cluster CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend (not the bufconn fakes Milestone 3's own unit/integration tests use), asserting `Create`'s response reaches the mock's terminal ready status (`ACTIVE`) and the subsequent `Get`'s response additionally carries a non-empty `kubeconfig` — `Create` itself never populates `kubeconfig` (`osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-050; only `Get` does, conditionally on `ACTIVE`, REQ-GET-020) — without any polling for convergence, since the real mock resolves `Create` synchronously to `CLUSTER_STATE_READY` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 3 (Cluster CRUD) |
 | REQ-E2E-091 | Cluster `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-DELETE-020 | MUST | Milestone 3 |
 | REQ-E2E-092 | Cluster `Create` MUST be idempotent when exercised over real HTTP against the real mock backend: a second `Create` for an `id` that already exists MUST return `201` with the existing cluster's current state (not an error), mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-040/DD-100 — this is the one scenario `osac-mock-provider`'s own `ALREADY_EXISTS` behavior (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-020) was purpose-built to make testable against a real backend, not a bufconn fake | MUST | Milestone 3 |
+| REQ-E2E-103 | Cluster `Create` MUST reject an unknown `template_id` with `400 Bad Request` (`InvalidArgument`), not `404`, when exercised over real HTTP against the real mock backend's own, unmodified `ClusterTemplatesServer.Get` (which returns real gRPC `NotFound` for any id other than its fixture default), mirroring `osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-100 | MUST | Milestone 3 — closes DD-230's disposition gap for REQ-CREATE-100 |
 | REQ-E2E-100 | The e2e suite MUST exercise a full VM CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend, asserting the created object reaches the mock's terminal ready status (`RUNNING`) without any polling for convergence — the real mock resolves `Create` synchronously to `COMPUTE_INSTANCE_STATE_RUNNING` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 4 (VM CRUD) |
 | REQ-E2E-101 | VM `Delete` MUST be idempotent when exercised over real HTTP against the real mock backend: a `Delete` of an id that was already deleted MUST still return `204`, mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMDELETE-020 | MUST | Milestone 4 |
 | REQ-E2E-102 | VM `Create` MUST be idempotent when exercised over real HTTP against the real mock backend: a second `Create` for an `id` that already exists MUST return `201` with the existing VM's current state (not an error), mirroring `osac-sp-m4-vm-crud.spec.md` REQ-VMCREATE-070 (itself mirroring Milestone 3's DD-100) — same `osac-mock-provider` `ALREADY_EXISTS` contract as REQ-E2E-092, exercised through the VM surface instead of Cluster's | MUST | Milestone 4 |
@@ -135,6 +137,16 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
   registered providers
 - **Then** it finds exactly one `cluster`-type and one `vm`-type provider
   entry, both pointing at `osac-service-provider`'s real `SP_ENDPOINT`
+
+##### AC-E2E-021: `osac-sp`'s cluster registration advertises its real supported Kubernetes versions
+
+- **Validates:** REQ-E2E-051
+- **Given** the healthy stack from AC-E2E-010
+- **When** the e2e suite queries `control-plane`'s real REST API for the
+  registered `cluster`-type provider found by AC-E2E-020
+- **Then** its metadata's `kubernetes_supported_versions` field contains
+  `"1.31"` — a key from `osac-sp`'s real, uninjected `DefaultMatrix`, not a
+  test-injected fake
 
 ##### AC-E2E-030: `osac-sp`'s health reflects real backend connectivity
 
@@ -173,6 +185,16 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 - **Then** both calls return `201` with identical `id`/`status`, and a
   subsequent `List` shows exactly one entry for that id
 
+##### AC-E2E-052: Cluster `Create` rejects an unknown `template_id` as 400, not 404
+
+- **Validates:** REQ-E2E-103
+- **Given** the healthy stack from AC-E2E-010
+- **When** the e2e suite `POST`s a Cluster Create referencing a
+  `template_id` the real mock backend's `ClusterTemplatesServer.Get`
+  doesn't recognize
+- **Then** the response is `400 Bad Request` with RFC 9457 `type` exactly
+  `.../invalid-argument`, and the id never appears in a subsequent `List`
+
 ##### AC-E2E-060: VM CRUD round-trips end-to-end against the real mock backend
 
 - **Validates:** REQ-E2E-100, REQ-E2E-101
@@ -210,8 +232,11 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
   part of VM Default Network Provisioning (M4 §4.5), with no dedicated
   `osac-sp` REST endpoint of their own to assert against here.
 - **NATS status-event round-trip** — Milestone 5, not yet designed.
-- **Version-matrix (Milestone 6) validation over real HTTP** — a separate
-  follow-up; not part of this phase's REQ-E2E-090..102 CRUD coverage.
+- **Version-matrix (Milestone 6) validation over real HTTP, beyond the
+  registration-metadata field** — REQ-E2E-051 now closes the registration
+  side specifically; `Lookup`/`SupportedVersions`/`Load`/pre-flight-400
+  remain integration-tier-sufficient (`osac-sp-e2e-suite.test-plan.md` §7,
+  DD-230) rather than a follow-up planned here.
 - **Real `fulfillment-service` + real Keycloak** (Tier B, closing the
   auth-claims-fidelity gap identified after Phase 1 — see
   [#19](https://github.com/dcm-project/osac-service-provider/pull/19)'s
