@@ -68,7 +68,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 	It("returns nil when ctx is cancelled (TC-U-583)", func() {
 		srv := &http.Server{
 			Handler:           http.NotFoundHandler(),
-			ReadHeaderTimeout: 10 * time.Second, //nolint:gosec // test helper hitting loopback
+			ReadHeaderTimeout: 10 * time.Second,
 		}
 		ln := newLoopbackListener()
 
@@ -90,7 +90,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 	It("surfaces a genuine Serve error (TC-U-584)", func() {
 		srv := &http.Server{
 			Handler:           http.NotFoundHandler(),
-			ReadHeaderTimeout: 10 * time.Second, //nolint:gosec // test helper hitting loopback
+			ReadHeaderTimeout: 10 * time.Second,
 		}
 		ln := newLoopbackListener()
 		Expect(ln.Close()).To(Succeed()) // closed before Serve is ever called
@@ -111,7 +111,7 @@ var _ = Describe("serveUntilDone (unit)", func() {
 				time.Sleep(300 * time.Millisecond)
 				w.WriteHeader(http.StatusOK)
 			}),
-			ReadHeaderTimeout: 10 * time.Second, //nolint:gosec // test helper hitting loopback
+			ReadHeaderTimeout: 10 * time.Second,
 		}
 		ln := newLoopbackListener()
 		addr := ln.Addr().String()
