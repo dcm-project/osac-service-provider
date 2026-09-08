@@ -723,15 +723,37 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 		// All infrastructure below is in place and ready to uncomment/enable.
 
 		// Call osac-sp's Create endpoint (not direct CR creation)
-		// Note: once OSAC-4826 is fixed upstream, this can call osac-sp's actual Create endpoint:
-		//   POST {osacSPURL}/api/v1alpha1/clusters?id=tc-tb-200-osac-dispatch-{random-id}
-		// For now, assume ClusterOrder is created (perhaps manually for testing)
+		clusterID := "tc-tb-200-osac-dispatch-" + randomID()
+		createPayload := map[string]interface{}{
+			"template_id": "default-hcp", // or the Hub-configured template
+			"cloud_provider": "generic",
+			"control_plane_replicas": 3,
+		}
+
+		payload, err := json.Marshal(createPayload)
+		Expect(err).NotTo(HaveOccurred())
+
+		// POST to osac-sp's cluster Create endpoint
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			fmt.Sprintf("%s/api/v1alpha1/clusters?id=%s", osacSPURL, clusterID),
+			bytes.NewReader(payload))
+		Expect(err).NotTo(HaveOccurred())
+
+		resp, err := http.DefaultClient.Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+
+		// 202 Accepted or 201 Created expected
+		Expect(resp.StatusCode).To(Or(Equal(http.StatusCreated), Equal(http.StatusAccepted)))
 
 		// Eventually, the real ClusterOrder CR reaches Ready via osac-operator + osac-aap-mock
 		// Same as AC-TB-030, but triggered via osac-sp's REST API + fulfillment-service dispatch,
 		// not direct CR creation
 		Eventually(func() string {
-			status := getClusterOrderStatus()
+			status := getClusterOrderStatus(clusterID)
 			return status.Phase
 		}, "5m", "5s").Should(Equal("Ready"))
 	})
