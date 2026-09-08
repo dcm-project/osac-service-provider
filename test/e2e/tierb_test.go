@@ -601,6 +601,63 @@ var _ = Describe("Tier B Phase 2: BareMetalInstance allocation fails safe, and r
 	})
 })
 
+var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfillment-service Hub dispatch", func() {
+	// TC-TB-200 / REQ-TB-100 / AC-TB-060: validate osac-sp's POST /api/v1alpha1/clusters
+	// routes through fulfillment-service's dispatch layer to create a real ClusterOrder
+	// on a registered Hub, driving it to Ready via real osac-operator + osac-aap-mock.
+	//
+	// Status: PENDING OSAC-4826 (fulfillment-service `osac create hub` CLI fix).
+	// Hub registration requires the CLI to support --name flag (currently fails with
+	// "metadata is required"). See https://redhat.atlassian.net/browse/OSAC-4826
+	//
+	// Once OSAC-4826 lands:
+	// 1. Remove this Skip() marker
+	// 2. Uncomment the Hub registration step in .github/workflows/e2e-tierb.yaml
+	// 3. This test becomes fully functional, validating the complete dispatch flow
+	It("routes osac-sp Create through fulfillment-service dispatch to a real ClusterOrder (TC-TB-200)", func() {
+		Skip("Pending OSAC-4826: fulfillment-service osac create hub CLI fix")
+
+		// This test assumes a Hub has been registered via the fulfillment-service CLI.
+		// Until OSAC-4826 is fixed, the Hub registration step in the workflow is skipped.
+		// All infrastructure below is in place and ready to uncomment/enable.
+
+		// Call osac-sp's Create endpoint (not direct CR creation)
+		clusterID := "tc-tb-200-osac-dispatch-" + randomID()
+		createPayload := map[string]interface{}{
+			"template_id":      "default-hcp", // or the Hub-configured template
+			"cloud_provider":   "generic",
+			"control_plane_replicas": 3,
+		}
+
+		payload, err := json.Marshal(createPayload)
+		Expect(err).NotTo(HaveOccurred())
+
+		// POST to osac-sp's cluster Create endpoint
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			fmt.Sprintf("%s/api/v1alpha1/clusters?id=%s", osacSPURL, clusterID),
+			bytes.NewReader(payload))
+		Expect(err).NotTo(HaveOccurred())
+
+		resp, err := http.DefaultClient.Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+
+		// 202 Accepted or 201 Created expected
+		Expect(resp.StatusCode).To(Or(Equal(http.StatusCreated), Equal(http.StatusAccepted)))
+
+		// Eventually, the real ClusterOrder CR reaches Ready via osac-operator + osac-aap-mock
+		// Same as AC-TB-030, but triggered via osac-sp's REST API + fulfillment-service dispatch,
+		// not direct CR creation
+		Eventually(func() string {
+			status := getClusterOrderStatus(clusterID)
+			return status.Phase
+		}, "5m", "5s").Should(Equal("Ready"))
+	})
+})
+
 // getBareMetalInstanceStatus mirrors getClusterOrderStatus's own
 // kubectl-shell-out approach (see that function's doc comment for why: no
 // client-go dependency in this module, kubectl is already configured for
