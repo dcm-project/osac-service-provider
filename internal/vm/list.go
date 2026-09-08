@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"encoding/base64"
+	"math"
 	"strconv"
 
 	"google.golang.org/grpc/codes"
@@ -61,7 +62,7 @@ func (s *Service) List(ctx context.Context, params v1alpha1.ListVMsParams) (v1al
 	// server-reported resp.GetSize() (DD-134) — see internal/cluster's
 	// List (same fix, same rationale).
 	if len(results) > 0 {
-		nextOffset := offset + int32(len(results))
+		nextOffset := offset + int32(len(results)) //nolint:gosec // see internal/cluster's List (same fix, same rationale): len(results) never exceeds the already-int32 requested limit
 		if nextOffset < resp.GetTotal() {
 			list.NextPageToken = util.Ptr(encodePageToken(nextOffset))
 		}
@@ -87,5 +88,11 @@ func decodePageToken(token string) (int32, error) {
 	if err != nil {
 		return 0, grpcstatus.Errorf(codes.InvalidArgument, "invalid page_token: %v", err)
 	}
-	return int32(n), nil
+	// Reject a decoded value outside int32 range explicitly rather than
+	// let the narrowing conversion below silently wrap it (gosec G109) —
+	// see internal/cluster's decodePageToken (same fix, same rationale).
+	if n < 0 || n > math.MaxInt32 {
+		return 0, grpcstatus.Errorf(codes.InvalidArgument, "invalid page_token: offset out of range")
+	}
+	return int32(n), nil //nolint:gosec // range-checked immediately above; gosec's G109 pattern match doesn't see the manual bounds check
 }

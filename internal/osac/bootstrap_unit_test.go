@@ -424,25 +424,25 @@ var _ = Describe("Bootstrap", func() {
 		})
 	})
 
-	Describe("transportCredentials (gRPC transport credentials, DD-020)", func() {
-		// TC-U-012: TLS disabled -> insecure transport credentials.
-		It("builds insecure transport credentials when TLS is disabled (TC-U-012)", func() {
+	Describe("transportCredentials (gRPC transport credentials, DD-020/DD-229)", func() {
+		// TC-U-012: no custom CA configured -> real TLS transport
+		// credentials trusting the system default CA pool. TLS is
+		// unconditional (DD-229) — there is no "disabled" branch anymore.
+		It("builds TLS transport credentials with the system default CA pool when no custom CA is configured (TC-U-012)", func() {
 			cfg := testCfg()
-			cfg.TLSEnabled = false
+			cfg.TLSCertFile = ""
 
 			creds, err := transportCredentials(cfg)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(creds.Info().SecurityProtocol).To(Equal("insecure"))
+			Expect(creds.Info().SecurityProtocol).To(Equal("tls"))
 		})
 
-		// TC-U-013: TLS enabled -> real TLS transport credentials, with the
-		// configured CA loaded into the cert pool (checked exactly, not
-		// just "no error").
-		It("builds TLS transport credentials with exactly the configured CA when TLS is enabled (TC-U-013)", func() {
+		// TC-U-013: a configured custom CA is loaded into the cert pool
+		// (checked exactly, not just "no error").
+		It("builds TLS transport credentials with exactly the configured CA (TC-U-013)", func() {
 			caPEM, caFile := generateTestCACert()
 
 			cfg := testCfg()
-			cfg.TLSEnabled = true
 			cfg.TLSCertFile = caFile
 
 			creds, err := transportCredentials(cfg)
@@ -461,7 +461,6 @@ var _ = Describe("Bootstrap", func() {
 		// without a custom CA.
 		It("fails when the configured TLS CA file cannot be read", func() {
 			cfg := testCfg()
-			cfg.TLSEnabled = true
 			cfg.TLSCertFile = nonexistentCAFile
 
 			_, err := transportCredentials(cfg)
@@ -478,7 +477,6 @@ var _ = Describe("Bootstrap", func() {
 			DeferCleanup(func() { _ = os.Remove(f.Name()) })
 
 			cfg := testCfg()
-			cfg.TLSEnabled = true
 			cfg.TLSCertFile = f.Name()
 
 			_, err = transportCredentials(cfg)
@@ -638,7 +636,6 @@ var _ = Describe("Bootstrap", func() {
 		// propagates a TLS credential construction failure.
 		It("propagates a TLS credential construction failure (TC-U-110)", func() {
 			cfg := testCfg()
-			cfg.TLSEnabled = true
 			cfg.TLSCertFile = nonexistentCAFile
 
 			opts, err := dialOptions(cfg, &bearerCreds{})
@@ -650,7 +647,6 @@ var _ = Describe("Bootstrap", func() {
 		// its own wrapping message, returning a nil Bootstrap.
 		It("surfaces a dial-options construction failure (TC-U-111)", func() {
 			cfg := testCfg()
-			cfg.TLSEnabled = true
 			cfg.TLSCertFile = nonexistentCAFile
 
 			b, err := New(cfg, discardLogger)

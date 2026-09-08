@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"math"
 
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
@@ -45,6 +46,12 @@ func (h *Handler) validateCreateRequest(req oapigen.CreateClusterRequestObject) 
 		return grpcstatus.Error(codes.InvalidArgument, "spec.version is required")
 	case req.Body.Spec.Nodes.Worker.Count <= 0:
 		return grpcstatus.Error(codes.InvalidArgument, "spec.nodes.worker.count must be greater than 0")
+	case req.Body.Spec.Nodes.Worker.Count > math.MaxInt32:
+		// translate.go's toOSACCluster narrows this to int32 for OSAC's
+		// wire type (gosec G115) — reject out-of-range values here,
+		// rather than let that conversion silently wrap (see DD-113's
+		// fail-fast-validation precedent).
+		return grpcstatus.Error(codes.InvalidArgument, "spec.nodes.worker.count must not exceed 2147483647")
 	case req.Body.Spec.Metadata.Name == "":
 		return grpcstatus.Error(codes.InvalidArgument, "spec.metadata.name is required")
 	case req.Body.Spec.ProviderHints.Osac.TemplateId == "":

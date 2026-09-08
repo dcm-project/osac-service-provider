@@ -57,7 +57,7 @@ func (f *fakeClustersClient) Calls() []*publicv1.ClustersListRequest {
 func (f *fakeClustersClient) SetItems(items []*publicv1.Cluster) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	total := int32(len(items))
+	total := int32(len(items)) //nolint:gosec // fixture item count, hardcoded in-test, never remotely near int32 range
 	f.responder = func(int32) (*publicv1.ClustersListResponse, error) {
 		return &publicv1.ClustersListResponse{Items: items, Size: total, Total: total}, nil
 	}
@@ -67,7 +67,7 @@ func (f *fakeClustersClient) SetItems(items []*publicv1.Cluster) {
 func (f *fakeClustersClient) SetPages(pageSize int32, items []*publicv1.Cluster) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	total := int32(len(items))
+	total := int32(len(items)) //nolint:gosec // fixture item count, hardcoded in-test, never remotely near int32 range
 	f.responder = func(offset int32) (*publicv1.ClustersListResponse, error) {
 		if offset > total {
 			offset = total
@@ -77,7 +77,7 @@ func (f *fakeClustersClient) SetPages(pageSize int32, items []*publicv1.Cluster)
 			end = total
 		}
 		page := items[offset:end]
-		return &publicv1.ClustersListResponse{Items: page, Size: int32(len(page)), Total: total}, nil
+		return &publicv1.ClustersListResponse{Items: page, Size: int32(len(page)), Total: total}, nil //nolint:gosec // fixture item count, hardcoded in-test, never remotely near int32 range
 	}
 }
 
@@ -139,7 +139,7 @@ func (f *fakeComputeInstancesClient) Calls() []*publicv1.ComputeInstancesListReq
 func (f *fakeComputeInstancesClient) SetItems(items []*publicv1.ComputeInstance) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	total := int32(len(items))
+	total := int32(len(items)) //nolint:gosec // fixture item count, hardcoded in-test, never remotely near int32 range
 	f.responder = func(int32) (*publicv1.ComputeInstancesListResponse, error) {
 		return &publicv1.ComputeInstancesListResponse{Items: items, Size: total, Total: total}, nil
 	}
@@ -148,7 +148,7 @@ func (f *fakeComputeInstancesClient) SetItems(items []*publicv1.ComputeInstance)
 func (f *fakeComputeInstancesClient) SetPages(pageSize int32, items []*publicv1.ComputeInstance) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	total := int32(len(items))
+	total := int32(len(items)) //nolint:gosec // fixture item count, hardcoded in-test, never remotely near int32 range
 	f.responder = func(offset int32) (*publicv1.ComputeInstancesListResponse, error) {
 		if offset > total {
 			offset = total
@@ -158,7 +158,7 @@ func (f *fakeComputeInstancesClient) SetPages(pageSize int32, items []*publicv1.
 			end = total
 		}
 		page := items[offset:end]
-		return &publicv1.ComputeInstancesListResponse{Items: page, Size: int32(len(page)), Total: total}, nil
+		return &publicv1.ComputeInstancesListResponse{Items: page, Size: int32(len(page)), Total: total}, nil //nolint:gosec // fixture item count, hardcoded in-test, never remotely near int32 range
 	}
 }
 

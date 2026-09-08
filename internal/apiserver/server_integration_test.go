@@ -142,7 +142,7 @@ func startRunningServer(cfg *config.Config, logger *slog.Logger, handler oapigen
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	Expect(err).NotTo(HaveOccurred())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // stored in runningServer.cancel and called by every caller (see rs.cancel() below) — gosec can't trace a cancel func returned across the function boundary
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx, ln) }()
 

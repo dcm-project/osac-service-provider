@@ -78,7 +78,7 @@ func (s *Service) toOSACCluster(id string, spec v1alpha1.ClusterSpec, nodeSetKey
 	osacSpec := &publicv1.ClusterSpec{
 		Template: templateID,
 		NodeSets: map[string]*publicv1.ClusterNodeSet{
-			nodeSetKey: {Size: int32(spec.Nodes.Worker.Count)},
+			nodeSetKey: {Size: int32(spec.Nodes.Worker.Count)}, //nolint:gosec // range-checked by validateCreateRequest before Create ever reaches here
 		},
 		ReleaseImage: s.releaseImage(spec),
 		PullSecret:   spec.ProviderHints.Osac.PullSecret,

@@ -127,7 +127,8 @@ this milestone is limited to the health endpoint; later milestones add
 cluster/VM routes generated from the OpenAPI spec.
 
 Out of scope: TLS termination (handled by infrastructure/ingress),
-authentication/authorization middleware on the DCM-facing API, rate limiting.
+authentication/authorization middleware on the DCM-facing API (delegated
+entirely to `environment-agent` and OSAC — see DD-228), rate limiting.
 
 #### Requirements
 
@@ -264,8 +265,7 @@ breaking beyond token refresh and connection backoff.
 | REQ-OSAC-012 | The SP MUST extract `token_endpoint` from whichever discovery document succeeds, rather than treating `oidcIssuerUrl` itself as the token endpoint or querying only one of the two documents | MUST | DD-060 |
 | REQ-OSAC-020 | The SP MUST refresh the OIDC token before expiry and supply it as a gRPC bearer credential (`PerRPCCredentials`) on every call to the fulfillment service | MUST | |
 | REQ-OSAC-030 | The SP MUST establish a gRPC `ClientConn` to `fulfillmentAddress` | MUST | |
-| REQ-OSAC-040 | When `tlsEnabled=true`, the gRPC connection MUST use TLS, loading a CA certificate from `tlsCertFile` if set | MUST | |
-| REQ-OSAC-050 | When `tlsEnabled=false` (default), the gRPC connection MUST use insecure transport credentials | MUST | |
+| REQ-OSAC-040 | The gRPC connection to the fulfillment service MUST always use TLS — loading a CA certificate from `tlsCertFile` if set, otherwise trusting the system root CA pool | MUST | Unconditional as of DD-229 — superseded REQ-OSAC-050 (insecure fallback) removed; no configuration disables TLS |
 | REQ-OSAC-060 | OIDC discovery failures and token fetch failures MUST be retried with exponential backoff and MUST NOT crash the SP or block server startup | MUST | |
 | REQ-OSAC-070 | The bootstrap component MUST expose a query method reporting current OIDC token validity (has a non-expired cached token) for use by the health handler | MUST | |
 | REQ-OSAC-080 | The bootstrap component MUST expose a query method reporting gRPC connectivity to the fulfillment service, using a lightweight, unauthenticated probe (`osac.public.v1.Capabilities/Get`) with a short timeout | MUST | DD-020 |
@@ -279,8 +279,7 @@ breaking beyond token refresh and connection backoff.
 | osac.oidcIssuerUrl | SP_OSAC_OIDC_ISSUER_URL | - | Yes | Keycloak OIDC issuer URL |
 | osac.oidcClientId | SP_OSAC_OIDC_CLIENT_ID | - | Yes | OAuth 2.0 client ID registered in Keycloak |
 | osac.oidcClientSecret | SP_OSAC_OIDC_CLIENT_SECRET | - | Yes | OAuth 2.0 client secret |
-| osac.tlsEnabled | SP_OSAC_TLS_ENABLED | false | No | Enable TLS for fulfillment service connection |
-| osac.tlsCertFile | SP_OSAC_TLS_CERT_FILE | - | No | Path to TLS CA certificate file |
+| osac.tlsCertFile | SP_OSAC_TLS_CERT_FILE | - | No | Optional custom CA for the (always-TLS, DD-229) fulfillment service connection; unset trusts the system root CA pool |
 | osac.probeTimeout | SP_OSAC_PROBE_TIMEOUT | 5s | No | Timeout for the health-check connectivity probe |
 
 #### Acceptance Criteria
@@ -331,12 +330,12 @@ breaking beyond token refresh and connection backoff.
 - **When** the SP starts
 - **Then** a gRPC `ClientConn` MUST be created targeting that address
 
-##### AC-OSAC-040: TLS enabled
+##### AC-OSAC-040: TLS with a configured CA
 
 - **Validates:** REQ-OSAC-040
-- **Given** `osac.tlsEnabled=true` and a valid `tlsCertFile`
+- **Given** a valid `tlsCertFile`
 - **When** the gRPC connection is created
-- **Then** the connection MUST use TLS transport credentials loaded from the CA file
+- **Then** the connection MUST use TLS transport credentials loaded from that CA file
 
 ##### AC-OSAC-045: TLS with the system default CA pool
 
@@ -347,17 +346,21 @@ breaking beyond token refresh and connection backoff.
 
 ##### AC-OSAC-046: Certificate validation rejects untrusted certificates (FedRAMP CA control)
 
-- **Validates:** REQ-OSAC-040, DD-229
+- **Validates:** REQ-OSAC-040, DD-233
 - **Given** a server presenting a certificate NOT in the client's trust pool (custom CA configured, server cert signed by a different CA)
 - **When** a real `Bootstrap` dials the server and calls `Probe(ctx)`
 - **Then** the probe MUST report `connected=false` with an error indicating a certificate validation failure, not an "unknown CA" fallback
 
-##### AC-OSAC-047: No fallback to plaintext (DD-229 enforcement)
+##### AC-OSAC-047: No fallback to plaintext (DD-233 enforcement)
 
-- **Validates:** REQ-OSAC-040, DD-229
+- **Validates:** REQ-OSAC-040, DD-233
 - **Given** a server listening on TCP but refusing a TLS handshake (closing connection immediately, no ServerHello)
 - **When** a real `Bootstrap` dials the server and calls `Probe(ctx)`
 - **Then** the probe MUST report `connected=false` with a TLS handshake error; there is no fallback to plaintext dialing
+
+~~AC-OSAC-050: TLS disabled (default)~~ — **removed (DD-233):** there is no
+longer a configuration that disables TLS. AC-OSAC-045 above covers the
+"nothing custom configured" case, which now still means TLS.
 
 ##### AC-OSAC-060: Token fetch retry, non-fatal
 
@@ -749,7 +752,6 @@ All configuration is loaded from environment variables.
 | osac.oidcIssuerUrl | SP_OSAC_OIDC_ISSUER_URL | - | Yes | 2 |
 | osac.oidcClientId | SP_OSAC_OIDC_CLIENT_ID | - | Yes | 2 |
 | osac.oidcClientSecret | SP_OSAC_OIDC_CLIENT_SECRET | - | Yes | 2 |
-| osac.tlsEnabled | SP_OSAC_TLS_ENABLED | false | No | 2 |
 | osac.tlsCertFile | SP_OSAC_TLS_CERT_FILE | - | No | 2 |
 | osac.probeTimeout | SP_OSAC_PROBE_TIMEOUT | 5s | No | 2 |
 | dcm.registrationUrl | DCM_REGISTRATION_URL | - | Yes | 4 |

@@ -9,12 +9,13 @@
 # ingress-proxy that terminates TLS itself (see the chart's
 # ingress-proxy/_config.yaml.tpl — "Authentication and authorization are
 # handled by the service itself" only describes JWT validation, TLS
-# termination is envoy's own job) — so, unlike Phase A's plaintext
-# osac-mock-provider, osac-sp must dial with TLS here (SP_OSAC_TLS_ENABLED)
-# and trust the same self-signed `osac-ca` CA fulfillment-service's own
-# certs are issued from (cert-manager-ca.yaml / DD-151), mounted from the
-# `ca-bundle` ConfigMap the workflow creates for that chart's own required
-# `certs.caBundle.configMap` value.
+# termination is envoy's own job) — osac-sp's own dial is unconditionally
+# TLS regardless (DD-229, no insecure fallback exists), and here it also
+# needs to trust the same self-signed `osac-ca` CA fulfillment-service's own
+# certs are issued from (cert-manager-ca.yaml / DD-151, via
+# SP_OSAC_TLS_CERT_FILE), mounted from the `ca-bundle` ConfigMap the
+# workflow creates for that chart's own required `certs.caBundle.configMap`
+# value.
 #
 # ffs-keycloak is *also* HTTPS-only now (DD-151 addendum: real
 # fulfillment-service rejects a plain-HTTP OIDC issuer). SP_OSAC_TLS_CERT_FILE
@@ -65,8 +66,6 @@ spec:
             # "fulfillment-internal-api" (administrator/console access).
             - name: SP_OSAC_FULFILLMENT_ADDRESS
               value: "fulfillment-api:8000"
-            - name: SP_OSAC_TLS_ENABLED
-              value: "true"
             - name: SP_OSAC_TLS_CERT_FILE
               value: "/etc/osac-ca/bundle.pem"
             - name: SP_OSAC_OIDC_ISSUER_URL
@@ -159,8 +158,6 @@ spec:
           env:
             - name: SP_OSAC_FULFILLMENT_ADDRESS
               value: "fulfillment-api:8000"
-            - name: SP_OSAC_TLS_ENABLED
-              value: "true"
             - name: SP_OSAC_TLS_CERT_FILE
               value: "/etc/osac-ca/bundle.pem"
             - name: SP_OSAC_OIDC_ISSUER_URL

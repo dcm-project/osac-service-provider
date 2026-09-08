@@ -52,12 +52,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	agentv1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
+	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
 
 func TestMainIntegration(t *testing.T) {
@@ -224,10 +226,16 @@ type grpcServerHandle struct {
 	server *grpc.Server
 }
 
+// startCapabilitiesServer serves real TLS (mockprovider's static test
+// certificate, DD-229) — osac-sp's own fulfillment-service dial is
+// unconditionally TLS with no insecure fallback, so this fake server would
+// otherwise be undialable.
 func startCapabilitiesServer(addr string, impl publicv1.CapabilitiesServer) *grpcServerHandle {
 	ln, err := net.Listen("tcp", addr)
 	Expect(err).NotTo(HaveOccurred())
-	s := grpc.NewServer()
+	tlsCfg, err := mockprovider.ServerTLSConfig()
+	Expect(err).NotTo(HaveOccurred())
+	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
 	publicv1.RegisterCapabilitiesServer(s, impl)
 	go func() { _ = s.Serve(ln) }()
 	return &grpcServerHandle{server: s}
@@ -289,6 +297,13 @@ func removeTempFile(path string) {
 	Expect(os.Remove(path)).To(Succeed())
 }
 
+// writeTestCACertFile writes a test certificate to a temp file and cleans it up on test completion.
+// Uses mockprovider's static self-signed test certificate as the trust anchor.
+func writeTestCACertFile(t GinkgoTInterface) string {
+	certPath := writeTempFile(mockprovider.CertPEM)
+	t.Cleanup(func() { removeTempFile(certPath) })
+	return certPath
+}
 func (h *grpcServerHandle) Stop() { h.server.Stop() }
 
 // ---- fake environment-agent (real httptest.Server implementing POST
@@ -456,7 +471,7 @@ func startSPWithOptions(opts spStartOptions) *spHarness {
 	t.Setenv("SP_OSAC_OIDC_ISSUER_URL", issuerURL)
 	t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 	t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
-	t.Setenv("SP_OSAC_TLS_ENABLED", "false")
+	t.Setenv("SP_OSAC_TLS_CERT_FILE", writeTestCACertFile(t))
 	t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
 	t.Setenv("DCM_REGISTRATION_URL", h.environmentAgent.URL())
 	t.Setenv("DCM_NATS_URL", "nats://127.0.0.1:4222")
@@ -804,6 +819,45 @@ var _ = Describe("OSAC bootstrap with TLS negative scenarios (certificate valida
 		// gRPC wraps connection errors. The key point: DD-229 requires no plaintext fallback,
 		// so a server that refuses TLS must result in probe failure, not a transparent downgrade.
 	})
+
+	// TC-I-034: Certificate hostname mismatch rejection (RFC 6125 hostname validation, ASVS control)
+	It("probe fails when server certificate CN does not match connection hostname (TC-I-034)", func() {
+		keycloak := newFakeKeycloak()
+		defer keycloak.Close()
+
+		// Create a certificate with CN=server.test, but connect via 127.0.0.1
+		// (hostname mismatch). Go's tls.Dial performs hostname verification on the CN.
+		serverCert, serverKey := generateTestCertPair("server.test")
+		tlsLn, serverAddr := startTLSListener(serverCert, serverKey)
+		defer func() { _ = tlsLn.Close() }()
+
+		// Use a self-signed CA that matches the server cert (so cert is trusted),
+		// but hostname validation will fail (127.0.0.1 != server.test).
+		caFile := writeTempFile(serverCert)
+		defer removeTempFile(caFile)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		osacCfg := &config.OSACConfig{
+			FulfillmentAddress: serverAddr,
+			OIDCIssuerURL:      keycloak.IssuerURL(),
+			OIDCClientID:       "osac-sp",
+			OIDCClientSecret:   "secret",
+			TLSCertFile:        caFile,
+			ProbeTimeout:       time.Second,
+		}
+
+		bootstrap, err := osac.New(osacCfg, slog.New(slog.DiscardHandler))
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = bootstrap.Close() }()
+
+		// Probe should fail due to hostname verification failure, even though
+		// the cert is signed by a trusted CA.
+		result := bootstrap.Probe(ctx)
+		Expect(result.Connected).To(BeFalse())
+		Expect(result.Err).To(HaveOccurred())
+	})
 })
 
 var _ = Describe("Full-stack startup fails fast on an invalid version matrix (integration)", func() {
@@ -823,7 +877,7 @@ var _ = Describe("Full-stack startup fails fast on an invalid version matrix (in
 		t.Setenv("SP_OSAC_OIDC_ISSUER_URL", keycloak.IssuerURL())
 		t.Setenv("SP_OSAC_OIDC_CLIENT_ID", "osac-sp")
 		t.Setenv("SP_OSAC_OIDC_CLIENT_SECRET", "secret")
-		t.Setenv("SP_OSAC_TLS_ENABLED", "false")
+		t.Setenv("SP_OSAC_TLS_CERT_FILE", writeTestCACertFile(t))
 		t.Setenv("SP_OSAC_PROBE_TIMEOUT", "1s")
 		t.Setenv("DCM_REGISTRATION_URL", environmentAgent.URL())
 		t.Setenv("SP_ENDPOINT", "https://osac-sp.example.com")
