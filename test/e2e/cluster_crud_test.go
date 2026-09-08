@@ -114,10 +114,12 @@ var _ = Describe("Cluster CRUD, against the real mock backend", Label("tier-a-on
 		Expect(status).To(Equal(http.StatusBadRequest), "response body: %s", string(respBody))
 
 		var problem struct {
-			Type string `json:"type"`
+			Type  string `json:"type"`
+			Title string `json:"title"`
 		}
 		Expect(json.Unmarshal(respBody, &problem)).To(Succeed(), "response body: %s", string(respBody))
 		Expect(problem.Type).To(Equal("https://dcm-project.github.io/problems/invalid-argument"))
+		Expect(problem.Title).To(Equal("Bad Request"))
 
 		Expect(listClusterIDs()).NotTo(ContainElement(id), "a rejected Create must never have been dispatched to Clusters/Create")
 	})
