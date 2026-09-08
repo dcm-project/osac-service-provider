@@ -819,6 +819,45 @@ var _ = Describe("OSAC bootstrap with TLS negative scenarios (certificate valida
 		// gRPC wraps connection errors. The key point: DD-229 requires no plaintext fallback,
 		// so a server that refuses TLS must result in probe failure, not a transparent downgrade.
 	})
+
+	// TC-I-034: Certificate hostname mismatch rejection (RFC 6125 hostname validation, ASVS control)
+	It("probe fails when server certificate CN does not match connection hostname (TC-I-034)", func() {
+		keycloak := newFakeKeycloak()
+		defer keycloak.Close()
+
+		// Create a certificate with CN=server.test, but connect via 127.0.0.1
+		// (hostname mismatch). Go's tls.Dial performs hostname verification on the CN.
+		serverCert, serverKey := generateTestCertPair("server.test")
+		tlsLn, serverAddr := startTLSListener(serverCert, serverKey)
+		defer func() { _ = tlsLn.Close() }()
+
+		// Use a self-signed CA that matches the server cert (so cert is trusted),
+		// but hostname validation will fail (127.0.0.1 != server.test).
+		caFile := writeTempFile(serverCert)
+		defer removeTempFile(caFile)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		osacCfg := &config.OSACConfig{
+			FulfillmentAddress: serverAddr,
+			OIDCIssuerURL:      keycloak.IssuerURL(),
+			OIDCClientID:       "osac-sp",
+			OIDCClientSecret:   "secret",
+			TLSCertFile:        caFile,
+			ProbeTimeout:       time.Second,
+		}
+
+		bootstrap, err := osac.New(osacCfg, slog.New(slog.DiscardHandler))
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = bootstrap.Close() }()
+
+		// Probe should fail due to hostname verification failure, even though
+		// the cert is signed by a trusted CA.
+		result := bootstrap.Probe(ctx)
+		Expect(result.Connected).To(BeFalse())
+		Expect(result.Err).To(HaveOccurred())
+	})
 })
 
 var _ = Describe("Full-stack startup fails fast on an invalid version matrix (integration)", func() {
