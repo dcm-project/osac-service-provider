@@ -6,18 +6,27 @@ with DCM. It provisions OpenShift clusters and VMs by translating
 agent-routed requests into OSAC fulfillment service gRPC API calls, and
 reports status changes back via the messaging system.
 
-Registration and dispatch are against `control-plane`'s Service Provider API
-for this first release (Phase 1); the environment agent model originally
-targeted by the enhancement doc is deferred to a future phase once that
-component reaches a defined maturity bar — see DD-050 in
-`.ai/specs/osac-sp.spec.md` and
-[dcm-project/enhancements#95](https://github.com/dcm-project/enhancements/issues/95).
+**Phase 1 (Delivered):** Registration and dispatch are now against
+`environment-agent`'s Service Provider API (Phase 2 per the enhancement doc),
+following the Phase 2 migration in PR #38. The original Phase 1 model
+(`control-plane`'s SP API) is no longer the dispatch target — see DD-203 in
+`.ai/decisions/osac-sp.decisions.md` and
+[dcm-project/enhancements#95](https://github.com/dcm-project/enhancements/issues/95)
+for migration rationale.
 
-**Status:** Milestone 1 (scaffold + registration + health) merged. Milestone
-2 (gRPC client generation) spec merged, implementation in review. See
-[#1](https://github.com/dcm-project/osac-service-provider/issues/1) for the
-full implementation plan and milestone breakdown, and `CLAUDE.md` for the
-current architecture.
+**Current Status:** ✅ **Production-ready.** All milestones delivered and merged to main:
+- ✅ M1 (scaffold + registration + health)
+- ✅ M2 (gRPC client generation: Clusters, ComputeInstances, Subnets, VirtualNetworks)
+- ✅ M3 (Cluster CRUD: Create/Get/List/Delete)
+- ✅ M4 (VM CRUD: Create/Get/List/Delete + default network provisioning)
+- ✅ M5 (status polling + NATS CloudEvents publishing)
+- ✅ M6 (Kubernetes version → OCP release image translation matrix)
+- ✅ M7 (kind-based e2e CI: real control-plane + SP + mocked OSAC backend)
+- ✅ Phase 2 (environment-agent registration)
+- ✅ TLS enforcement + authN/Z delegation
+
+All 388 unit/integration tests passing. See [#1](https://github.com/dcm-project/osac-service-provider/issues/1)
+for the implementation plan and `CLAUDE.md` for the current architecture.
 
 ## Design
 
