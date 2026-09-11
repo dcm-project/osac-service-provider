@@ -19,8 +19,10 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -273,18 +275,32 @@ var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal st
 	})
 })
 
+// randomID generates a random 8-character hex string for use in test fixture names.
+func randomID() string {
+	b := make([]byte, 4)
+	_, err := rand.Read(b)
+	Expect(err).NotTo(HaveOccurred())
+	return hex.EncodeToString(b)
+}
+
 // getClusterOrderStatus shells out to kubectl to fetch the ClusterOrder
 // fixture's current .status — this suite has no Kubernetes client-go
 // dependency (REQ-E2E-080 keeps this module's own go.mod minimal), and the
 // CI runner already has kubectl configured against the kind cluster for
 // every other step in .github/workflows/e2e-tierb.yaml.
-func getClusterOrderStatus() clusterOrderStatus {
+// If name is empty, uses the default fixture clusterOrderName.
+func getClusterOrderStatus(name ...string) clusterOrderStatus {
+	orderName := clusterOrderName
+	if len(name) > 0 && name[0] != "" {
+		orderName = name[0]
+	}
+
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("kubectl", "get", "clusterorder", clusterOrderName, "-o", "jsonpath={.status}") //nolint:gosec // fixed args, not user input
+	cmd := exec.Command("kubectl", "get", "clusterorder", orderName, "-o", "jsonpath={.status}") //nolint:gosec // fixed args, not user input
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		Fail(fmt.Sprintf("kubectl get clusterorder %s failed: %v: %s", clusterOrderName, err, stderr.String()))
+		Fail(fmt.Sprintf("kubectl get clusterorder %s failed: %v: %s", orderName, err, stderr.String()))
 	}
 
 	raw := strings.TrimSpace(stdout.String())
