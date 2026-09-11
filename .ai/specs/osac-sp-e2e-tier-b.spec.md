@@ -269,6 +269,14 @@ kind cluster
   allocation); and the deleted instance's `BareMetalHost` has its
   `spec.consumerRef` cleared, making it reassignable again
 
+##### AC-TB-060 (Phase 2, pending OSAC-4826): osac-sp-initiated Create routes through fulfillment-service Hub dispatch
+
+- **Validates:** REQ-TB-100
+- **Given** a registered fulfillment-service Hub (awaiting OSAC-4826 fix to CLI)
+- **When** the e2e suite calls osac-sp's `POST /api/v1alpha1/clusters?id=...` (not direct CR creation)
+- **Then** the request routes through fulfillment-service's dispatch layer, creates a real ClusterOrder CR on the Hub, and osac-operator + osac-aap-mock drive it to Ready
+- **Note:** Currently deferred in test as TC-TB-200 with Skip marker. Will become active once OSAC-4826 (fulfillment-service `osac create hub` CLI fix) lands.
+
 ---
 
 ## 5. Non-Functional Requirements
