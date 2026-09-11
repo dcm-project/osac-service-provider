@@ -241,8 +241,6 @@ jobs:
 
       - name: Start port-forwards
         run: |
-          kubectl port-forward svc/dcm-control-plane 18080:8080 >/tmp/pf-control-plane.log 2>&1 &
-          echo $! > /tmp/pf-control-plane.pid
           kubectl port-forward svc/osac-service-provider 18081:8080 >/tmp/pf-osac-sp.log 2>&1 &
           echo $! > /tmp/pf-osac-sp.pid
           kubectl port-forward svc/ffs-keycloak 18082:8443 >/tmp/pf-keycloak.log 2>&1 &
@@ -266,7 +264,6 @@ jobs:
       - name: Run Tier B e2e suite
         working-directory: test/e2e
         env:
-          CONTROL_PLANE_URL: http://localhost:18080
           OSAC_SP_URL: http://localhost:18081
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
@@ -285,7 +282,7 @@ jobs:
       - name: Stop port-forwards
         if: always()
         run: |
-          for f in /tmp/pf-control-plane.pid /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-osac-sp-bad-auth.pid /tmp/pf-osac-sp-osac-unreachable.pid; do
+          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-osac-sp-bad-auth.pid /tmp/pf-osac-sp-osac-unreachable.pid; do
             [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
           done
 

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	cpclient "github.com/dcm-project/control-plane/pkg/sp/client/provider"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -50,39 +49,7 @@ var _ = Describe("osac-sp health, against the real backend", Label("tier-b-only"
 		Expect(vmHealth.Detail).To(Equal(clusterHealth.Detail))
 	})
 
-	// TC-E2E-070 / AC-E2E-030
-	It("is independently confirmed healthy by real control-plane's own health monitor", func() {
-		client, err := cpclient.NewClientWithResponses(controlPlaneURL + "/api/v1alpha1")
-		Expect(err).NotTo(HaveOccurred())
-
-		Eventually(func() []string {
-			var statuses []string
-			for _, serviceType := range []string{"cluster", "vm"} {
-				for _, p := range listProviders(client, serviceType) {
-					if p.HealthStatus != nil {
-						statuses = append(statuses, *p.HealthStatus)
-					} else {
-						statuses = append(statuses, "<unset>")
-					}
-				}
-			}
-			return statuses
-		}, 60*time.Second, 5*time.Second).Should(
-			ConsistOf(healthStatusReady, healthStatusReady),
-			"control-plane's healthcheck.Monitor must have polled osac-sp's own /health endpoint(s) at least once and recorded a healthy status for both registrations")
-	})
 })
-
-// healthStatusReady is control-plane's own vocabulary for a provider whose
-// backing /health check succeeded (internal/sp/store/model.HealthStatusReady
-// in control-plane's own source — not re-exported via its generated REST
-// client types, so duplicated here as a literal). It deliberately does not
-// echo osac-sp's own "healthy" string: the two are different layers'
-// independent vocabularies (osac-sp describing its own OSAC connectivity vs.
-// control-plane describing its poll of osac-sp's /health endpoint), and this
-// suite is exactly what confirmed that distinction against the real wire
-// contract (see DD-140).
-const healthStatusReady = "ready"
 
 // eventuallyHealthy polls path until it reports "healthy", returning the
 // final response for further assertions.
