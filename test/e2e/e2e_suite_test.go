@@ -25,13 +25,11 @@ import (
 // Env vars set by .github/workflows/e2e.yaml's "Run e2e suite" step,
 // pointing at the kubectl port-forwards it started.
 const (
-	envControlPlaneURL = "CONTROL_PLANE_URL"
-	envOSACSPURL       = "OSAC_SP_URL"
+	envOSACSPURL = "OSAC_SP_URL"
 )
 
 var (
-	controlPlaneURL string
-	osacSPURL       string
+	osacSPURL string
 )
 
 func TestE2E(t *testing.T) {
@@ -40,9 +38,7 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	controlPlaneURL = os.Getenv(envControlPlaneURL)
 	osacSPURL = os.Getenv(envOSACSPURL)
-	Expect(controlPlaneURL).NotTo(BeEmpty(), "%s must be set (see .github/workflows/e2e.yaml)", envControlPlaneURL)
 	Expect(osacSPURL).NotTo(BeEmpty(), "%s must be set (see .github/workflows/e2e.yaml)", envOSACSPURL)
 
 	// TC-E2E-010: the workflow's own "Wait for osac-sp + osac-mock-provider
@@ -53,7 +49,6 @@ var _ = BeforeSuite(func() {
 	// against an already-running cluster) without that step.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	waitUntilReachable(ctx, "control-plane", fmt.Sprintf("%s/api/v1alpha1/providers", controlPlaneURL))
 	waitUntilReachable(ctx, "osac-sp", fmt.Sprintf("%s/api/v1alpha1/clusters/health", osacSPURL))
 })
 
