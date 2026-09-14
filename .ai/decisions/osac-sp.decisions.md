@@ -3620,3 +3620,46 @@ the absence of e2e coverage itself.
 `osac-sp.spec.md`, `osac-sp-m3-cluster-crud.spec.md`,
 `osac-sp-m4-vm-crud.spec.md`, `osac-sp-m5-status-reporting.spec.md`,
 `osac-sp-m6-version-matrix.spec.md`
+
+---
+## DD-235: Tier B runs environment-agent and JetStream NATS inside kind
+
+**Decision:** `e2e-tierb.yaml` builds the exact environment-agent version
+pinned by `test/e2e/go.mod`, loads it into kind, and deploys it with a plain
+`Deployment`/`Service`. The workflow also deploys a JetStream-enabled NATS
+`Deployment`/`Service`. `osac-service-provider` registers against
+`http://environment-agent:8090/api/v1alpha1`; the agent endpoint is
+port-forwarded to the runner only for test queries.
+
+**Rationale:** environment-agent's health monitor must resolve and call the
+registered provider endpoint. Running the agent on the runner cannot resolve
+kind Service DNS or reliably reach the provider's in-cluster endpoint. NATS is
+an agent startup dependency and must therefore be part of the same controlled
+kind topology rather than an undeclared external prerequisite.
+
+**Consequence:** Tier B owns the environment-agent runtime image and manifests
+used by CI. The agent's unrelated upstream DCM registration is configured with
+an unreachable local URL so it retries without making the Tier B assertions
+depend on a second DCM deployment.
+
+**Related requirements:** REQ-E2E-050, REQ-E2E-051, REQ-TB-010, AC-E2E-020,
+AC-E2E-021
+
+---
+## DD-236: Health connectivity distinction belongs at the integration tier
+
+**Decision:** remove TC-TB-131 and cover REQ-TB-065/AC-TB-025 through TC-I-012.
+Retain the separate REQ-TB-060/AC-TB-020 invalid-credential disposition as
+deferred.
+
+**Rationale:** the business value is distinguishing a valid token from an OSAC
+network failure for operational diagnosis. TC-I-012 now proves that behavior
+through the real SP process, real HTTP health route, successful token fetch, and
+unreachable loopback gRPC endpoint. A third kind deployment would only repeat
+that deterministic application behavior at higher cost and with more CI
+failure modes. TC-TB-050 remains removed because the current Tier B workflow
+has no isolated invalid-credential variant; the unit tests cover the exact
+health-detail mapping until that separate e2e variant exists.
+
+**Related requirements:** REQ-TB-060, REQ-TB-065, AC-TB-020, AC-TB-025,
+REQ-HLT-070

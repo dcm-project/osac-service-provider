@@ -2,33 +2,35 @@
 
 Scope: the e2e assertions for
 [`osac-sp-e2e-suite.spec.md`](../specs/osac-sp-e2e-suite.spec.md), run by
-`.github/workflows/e2e.yaml` against a live `kind` cluster. New ID space —
+`.github/workflows/e2e.yaml` and `.github/workflows/e2e-tierb.yaml` against
+live `kind` clusters. New ID space —
 `TC-E2E-*` — since these run against a real cluster in CI, not `go test`
 locally; they are not part of the `TC-U-*`/`TC-I-*` pyramid tiers and are not
 counted toward the repo's 100%-unit-coverage gate.
 
 **Framework:** Ginkgo v2 + Gomega, same as the rest of the repo, but in a
 **separate nested Go module** (`test/e2e/go.mod`, per REQ-E2E-080) so a
-`control-plane` REST client and any Kubernetes client-go dependency never
+`environment-agent` REST client and any Kubernetes client-go dependency never
 enter the main module. Run locally against a running cluster with:
 
 ```bash
-cd test/e2e && KIND_KUBECONFIG=<path> CONTROL_PLANE_URL=http://localhost:<port> OSAC_SP_URL=http://localhost:<port> \
+cd test/e2e && KIND_KUBECONFIG=<path> ENVIRONMENT_AGENT_URL=http://localhost:<port>/api/v1alpha1 OSAC_SP_URL=http://localhost:<port> \
   go run github.com/onsi/ginkgo/v2/ginkgo -r -v
 ```
 
-(the workflow itself sets these via `kubectl port-forward` or `NodePort`s —
+(the workflow itself sets these via `kubectl port-forward`; the exact ports are
 finalized in the workflow, not fixed by this test plan).
 
 **Assertion discipline:** assert actual response fields (exact service-type
 values, exact `status` strings), not existence-only/200-only checks — same
 discipline as the rest of the repo's test plans.
 
-**What's real here, what's not:** `control-plane` and `osac-sp` are the real
-built/pulled artifacts (§2 of the spec) — nothing under test is a fake.
-`osac-mock-provider` (Phase 1) stands in for the actual external OSAC
-backend; that substitution is the one documented, deliberate scope boundary
-(spec §1/§6), not a gap in this tier's own fidelity.
+**What's real here, what's not:** `environment-agent`, the OSAC backend, and
+`osac-sp` are real built/pulled artifacts (§2 of the Tier B spec) — nothing
+under test is a registration or OSAC fake.
+The Phase A workflow may still use `osac-mock-provider` for its deliberately
+scoped backend tests; Tier B uses real fulfillment-service infrastructure and
+does not layer the mock into its assertions.
 
 **E2E disposition invariant (DD-230):** every `REQ-*`/`AC-*` this test plan
 or its milestone specs define must carry an explicit disposition —
@@ -82,7 +84,6 @@ signal.
 |-------|-----------|-----------|-------------|
 | TC-E2E-050 | `osac-sp`'s cluster health endpoint reports healthy against the real backend | REQ-E2E-060, AC-E2E-030 | `GET osac-service-provider`'s `/api/v1alpha1/clusters/health` directly (via port-forward/NodePort), **polling (`Eventually`, 30s/500ms) rather than a single one-shot request** — `osac-sp`'s real OIDC token fetch + gRPC probe run asynchronously and are not gated by the pod's `Available` condition (DD-010: status is in the body, not the HTTP code), so a single-shot check would only pass reliably by accident of which other spec happened to run first (DD-142); assert the body's `status == "healthy"` once converged and its connectivity/token sub-fields indicate a real, successful OIDC token fetch and gRPC probe — not the bufconn-backed fakes `internal/health`'s own tests use. |
 | TC-E2E-060 | `osac-sp`'s vm health endpoint reports the identical global health condition | REQ-E2E-060, AC-E2E-030 | Same polling discipline as TC-E2E-050, independently applied to `/api/v1alpha1/vms/health` (DD-142); assert its body matches TC-E2E-050's (one global health condition per CLAUDE.md's documented API design, now proven over a real wire, not just asserted from a single in-process handler test). |
-| TC-E2E-070 | `control-plane`'s own health monitor reflects `osac-sp` as healthy | REQ-E2E-060, AC-E2E-030 | Query `control-plane`'s real `ListProviders` REST endpoint's `health_status` field for both registered providers; assert both equal `"ready"` — `control-plane`'s own vocabulary (`internal/sp/store/model.HealthStatusReady`) for "my last poll of this provider's `/health` succeeded," confirmed against the real API/source at implementation time. This is deliberately not the string `"healthy"` `osac-sp`'s own `/health` response uses (TC-E2E-050/060) — the two are independent layers' vocabularies, not one contract; this TC closes the full real, cross-repo propagation loop, not just `osac-sp`'s own view of itself. |
 
 ---
 
@@ -114,11 +115,11 @@ signal.
 |---|---|---|---|---|
 | Infra bring-up/readiness | REQ-E2E-010, 020, 030, 040 | AC-E2E-010 | 1 (TC-E2E-010) | Infra preconditions gate every other TC in this plan; not itself a behavioral assertion about `osac-sp`. |
 | Registration contract | REQ-E2E-050, 051 | AC-E2E-020, 021 | 3 (TC-E2E-020..040) | REQ-E2E-051/AC-E2E-021 (kubernetes_supported_versions) ride TC-E2E-020's existing assertion, not a new TC. |
-| Health-check propagation | REQ-E2E-060 | AC-E2E-030 | 3 (TC-E2E-050..070) | |
+| Health-check propagation | REQ-E2E-060 | AC-E2E-030 | 2 (TC-E2E-050/060) | Environment-agent registration status is covered by TC-E2E-020/030/040; the former control-plane health-monitor TC-E2E-070 was retired with the registration-target migration. |
 | CI failure-mode hygiene | REQ-E2E-040, 070 | AC-E2E-040 | 1 (TC-E2E-080) | Manual/opt-in variant, not run on every PR (would otherwise double the job's steady-state runtime for a check that doesn't need re-proving every merge). |
 | Cluster CRUD (Milestone 3) | REQ-E2E-090, 091, 092, 103 | AC-E2E-050, 051, 052 | 4 (TC-E2E-090, 091, 092, 103) | |
 | VM CRUD (Milestone 4) | REQ-E2E-100, 101, 102 | AC-E2E-060, 061 | 3 (TC-E2E-100, 101, 102) | |
-| **Total** | 16 | 10 | **15** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. REQ/AC counts sum each row's literal count (not deduplicated across rows). |
+| **Total** | 16 | 10 | **14** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. REQ/AC counts sum each row's literal count (not deduplicated across rows). |
 
 ---
 
