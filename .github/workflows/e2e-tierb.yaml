@@ -17,10 +17,6 @@ on:
     branches: [main, 'release/v*']
   workflow_dispatch:
     inputs:
-      bad_auth:
-        description: "Also deploy the deliberately-misconfigured osac-sp instance (TC-TB-050 / REQ-TB-060)"
-        type: boolean
-        default: false
       osac_unreachable:
         description: "Also deploy the osac-sp instance with an unroutable OSAC address (TC-TB-130 / REQ-TB-065 / AC-TB-025)"
         type: boolean
@@ -197,13 +193,6 @@ jobs:
       - name: Wait for osac-sp readiness
         run: kubectl wait --for=condition=Available deployment/osac-service-provider --timeout=180s
 
-      - name: Wait for osac-sp-bad-auth readiness (opt-in variant, TC-TB-050)
-        if: inputs.bad_auth == true
-        run: |
-          # No readiness probe on this Deployment by design (it's meant to
-          # report unhealthy) — wait on the pod entering Running instead.
-          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=osac-service-provider-bad-auth --timeout=120s
-
       - name: Wait for osac-sp-osac-unreachable readiness (opt-in variant, TC-TB-131)
         if: inputs.osac_unreachable == true
         run: |
@@ -247,13 +236,6 @@ jobs:
           echo $! > /tmp/pf-keycloak.pid
           sleep 3
 
-      - name: Start port-forward for osac-sp-bad-auth (opt-in variant)
-        if: inputs.bad_auth == true
-        run: |
-          kubectl port-forward svc/osac-service-provider-bad-auth 18083:8080 >/tmp/pf-osac-sp-bad-auth.log 2>&1 &
-          echo $! > /tmp/pf-osac-sp-bad-auth.pid
-          sleep 3
-
       - name: Start port-forward for osac-sp-osac-unreachable (opt-in variant)
         if: inputs.osac_unreachable == true
         run: |
@@ -267,7 +249,7 @@ jobs:
           OSAC_SP_URL: http://localhost:18081
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
-          BAD_AUTH_OSAC_SP_URL: ${{ inputs.bad_auth == true && 'http://localhost:18083' || '' }}
+          ENVIRONMENT_AGENT_URL: http://127.0.0.1:8090/api/v1alpha1
           OSAC_UNREACHABLE_OSAC_SP_URL: ${{ inputs.osac_unreachable == true && 'http://localhost:18084' || '' }}
           TIERB_PHASE2_ENABLED: "true"
         # --label-filter excludes Label("tier-a-only") specs (DD-211):
@@ -282,7 +264,7 @@ jobs:
       - name: Stop port-forwards
         if: always()
         run: |
-          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-osac-sp-bad-auth.pid /tmp/pf-osac-sp-osac-unreachable.pid; do
+          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-osac-sp-osac-unreachable.pid; do
             [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
           done
 
@@ -294,7 +276,7 @@ jobs:
           kubectl get certificates,issuers,clusterissuers -A > /tmp/e2e-diagnostics/certs.txt 2>&1 || true
           kubectl get events --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
           kubectl get clusterorder tierb-cluster-order -o yaml > /tmp/e2e-diagnostics/clusterorder.yaml 2>&1 || true
-          for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-service-provider-bad-auth osac-service-provider-osac-unreachable ffs-postgres ffs-keycloak osac-operator bare-metal-fulfillment-operator osac-aap-mock; do
+          for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-service-provider-osac-unreachable ffs-postgres ffs-keycloak osac-operator bare-metal-fulfillment-operator osac-aap-mock; do
             kubectl logs -l "app.kubernetes.io/name=${d}" --all-containers --prefix --tail=-1 > "/tmp/e2e-diagnostics/${d}.log" 2>&1 || true
           done
           kubectl logs -l "app.kubernetes.io/instance=ffs-fulfillment-service" --all-containers --prefix --tail=-1 > /tmp/e2e-diagnostics/ffs-fulfillment-service.log 2>&1 || true

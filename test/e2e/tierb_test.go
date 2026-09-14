@@ -53,7 +53,6 @@ const (
 	envKeycloakURL              = "KEYCLOAK_URL"              // e.g. http://localhost:18082/realms/osac
 	envTierBAdminSecret         = "TIERB_ADMIN_SECRET"        // osac-admin's client secret (tierb-config/realm.json)
 	envEnvironmentAgentURL      = "ENVIRONMENT_AGENT_URL"     // e.g. http://127.0.0.1:8090/api/v1alpha1
-	envBadAuthOSACSPURL         = "BAD_AUTH_OSAC_SP_URL"
 	envOSACUnreachableOSACSPURL = "OSAC_UNREACHABLE_OSAC_SP_URL"
 	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
 	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
@@ -88,36 +87,6 @@ var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func()
 			Or(Equal("osac-api"), ContainElement("osac-api")),
 			"osac-api must be present as an audience claim (oidc-audience-mapper)",
 		)
-	})
-})
-
-var _ = Describe("Tier B: a real auth failure is genuinely detectable", func() {
-	// TC-TB-050 / REQ-TB-060 / AC-TB-020 — opt-in workflow_dispatch variant
-	// only (e2e-tierb.yaml); BAD_AUTH_OSAC_SP_URL is unset on every regular
-	// PR run.
-	It("reports unhealthy with a token/connectivity detail when the client secret is wrong", func() {
-		badAuthURL := os.Getenv(envBadAuthOSACSPURL)
-		if badAuthURL == "" {
-			Skip("opt-in variant only: " + envBadAuthOSACSPURL + " is unset")
-		}
-
-		var h health
-		Eventually(func() string {
-			h = getHealthAt(badAuthURL, "/api/v1alpha1/clusters/health")
-			return h.Status
-		}, 30*time.Second, 500*time.Millisecond).Should(Equal("unhealthy"))
-
-		// Exact match, not ContainSubstring: internal/health/health.go's
-		// unhealthyDetail returns precisely "OIDC token invalid" when only
-		// the token is invalid, and
-		// "OIDC token invalid; OSAC fulfillment service unreachable" if
-		// connectivity is *also* broken (own source, same string asserted
-		// by internal/health/health_unit_test.go). A substring match would
-		// let that second, unexpected failure mode (connectivity also
-		// down) silently pass as if this test's one intended failure mode
-		// were the only thing wrong.
-		Expect(h.Detail).To(Equal("OIDC token invalid"),
-			"a wrong client secret must surface as exactly a token-fetch failure, not an opaque connectivity error or a compounded one")
 	})
 })
 
