@@ -144,7 +144,10 @@ func startRunningServer(cfg *config.Config, logger *slog.Logger, handler oapigen
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- srv.Run(ctx, ln) }()
+	go func() {
+		defer cancel()
+		done <- srv.Run(ctx, ln)
+	}()
 
 	addr := ln.Addr().String()
 	Eventually(func() error {
