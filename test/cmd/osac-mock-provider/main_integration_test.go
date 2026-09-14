@@ -95,7 +95,7 @@ var _ = Describe("Mock provider binary (integration)", func() {
 			return err
 		}, "2s", "10ms").Should(Succeed())
 
-		osacCfg := &config.OSACConfig{
+		osacCfg := &config.OSACConfig{ //nolint:gosec,nolintlint // test fixture; not a real credential
 			FulfillmentAddress: grpcAddr,
 			OIDCIssuerURL:      "http://" + oidcAddr,
 			OIDCClientID:       "osac-sp",
