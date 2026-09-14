@@ -275,7 +275,7 @@ func startTLSListener(certPEM, keyPEM []byte) (net.Listener, string) {
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	Expect(err).NotTo(HaveOccurred())
 
-	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
 	Expect(err).NotTo(HaveOccurred())
 
@@ -556,14 +556,24 @@ var _ = Describe("Health end-to-end (integration)", func() {
 		Expect(status).To(Equal(http.StatusOK))
 	})
 
-	// TC-I-012: OSAC gRPC unreachable -> unhealthy, HTTP 200.
+	// TC-I-012: OSAC gRPC unreachable while the token is valid -> unhealthy with
+	// a connectivity-only detail, HTTP 200.
 	It("reports unhealthy (HTTP 200) when the OSAC gRPC server is unreachable (TC-I-012)", func() {
 		h := startSP(false) // gRPC server deliberately not started
 		defer h.stop()
 
+		// Token acquisition runs asynchronously. Poll the detail so this case
+		// cannot accidentally pass while both token and connectivity are still
+		// unhealthy during cold start.
+		Eventually(func() any {
+			_, body := h.getHealth("/api/v1alpha1/clusters/health")
+			return body["detail"]
+		}, "2s", "20ms").Should(Equal("OSAC fulfillment service unreachable"))
+
 		status, body := h.getHealth("/api/v1alpha1/clusters/health")
 		Expect(status).To(Equal(http.StatusOK))
 		Expect(body["status"]).To(Equal("unhealthy"))
+		Expect(body["detail"]).To(Equal("OSAC fulfillment service unreachable"))
 	})
 
 	// TC-I-013: recovers once OSAC becomes reachable, proving the probe is
