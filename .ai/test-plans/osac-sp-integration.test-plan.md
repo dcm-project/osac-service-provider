@@ -131,7 +131,7 @@ locally, see the file's doc comment) or in CI via
 | Spec Section | REQ Count | AC Count | TC Count (this file) | Notes |
 |---|---|---|---|---|
 | 4.1 HTTP Server | 10 | 10 | 6 (TC-I-001..006) | Lifecycle/signal-handling ACs not practical to unit test are covered here. |
-| 4.2 OSAC Client Bootstrap | 11 | 16 | 5 dedicated (TC-I-015, TC-I-017, TC-I-032, TC-I-033, TC-I-034) + covered via Health tests (TC-I-010..014) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). TC-I-032/033/034 verify DD-229's TLS enforcement: certificate validation rejection, no plaintext fallback, and hostname verification per RFC 6125. |
-| 4.3 Health Service | 9 | 10 | 8 (TC-I-010..017) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement. |
+| 4.2 OSAC Client Bootstrap | 11 | 16 | 5 dedicated (TC-I-015, TC-I-017, TC-I-032, TC-I-033, TC-I-034) + covered via Health tests (TC-I-010..014, TC-I-018) | Real `bufconn` dial path and real discovery-document fetch exercised only here; RFC 8414/OIDC fallback ordering itself is unit-test scope (TC-U-023..025). TC-I-032/033/034 verify DD-229's TLS enforcement: certificate validation rejection, no plaintext fallback, and hostname verification per RFC 6125. |
+| 4.3 Health Service | 9 | 10 | 9 (TC-I-010..018) | End-to-end status derivation against real (fake) dependencies, including both-paths agreement and distinct authentication/connectivity failure details. |
 | 4.4 SP Registration (`environment-agent`, DD-203) | 11 | 10 | 8 (TC-I-020..027) + 2 Tier B (TC-I-028, TC-I-029) | Fake-based wiring against `environment-agent`'s documented SP API contract, plus Tier B verification against a real local build (section 3b) — gated separately, excluded from `make test`. |
 | Full-stack | - | - | 1 (TC-I-030) | Cross-cutting cold-start smoke test. |

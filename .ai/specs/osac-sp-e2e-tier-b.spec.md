@@ -229,7 +229,7 @@ kind cluster
   unreachable OSAC gRPC endpoint
 - **Then** its health endpoint reports `status: unhealthy` with a detail
   equal to exactly `"OSAC fulfillment service unreachable"`, never combined
-  with or confused for the deferred AC-TB-020 token-invalid detail
+  with or confused for the AC-TB-020 token-invalid detail
 
 ##### AC-TB-030 (Phase 2): A real `ClusterOrder` reaches a real terminal state
 

@@ -534,7 +534,7 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 		// Assert it's genuinely blocked on power sync *before* the
 		// fake-BMO patch below — proves PowerSynced actually gates Ready,
 		// not a vestigial/never-blocking condition that would let a
-		// broken reconciler report Ready anyway (mirrors AC-TB-020's "real
+		// broken reconciler report Ready anyway (mirrors the real
 		// failure/blocking paths must be genuinely detectable" spirit).
 		var status bareMetalInstanceStatus
 		Eventually(func() string {

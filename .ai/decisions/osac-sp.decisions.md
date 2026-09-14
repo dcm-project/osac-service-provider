@@ -3404,7 +3404,8 @@ unchecked, or checked with a matcher looser than the value's actual
 determinism warrants — rather than stopping at the two specs the review
 comment named:
 
-- **TC-TB-050** (auth-failure detectability): was `NotTo(BeEmpty())` +
+- **TC-TB-050** (historical auth-failure detectability; coverage moved to
+  TC-I-018 by DD-236): was `NotTo(BeEmpty())` +
   `ContainSubstring("OIDC token invalid")`. Tightened to exact
   `Equal("OIDC token invalid")` — `internal/health/health.go`'s
   `unhealthyDetail` (this repo's own code, already covered by
