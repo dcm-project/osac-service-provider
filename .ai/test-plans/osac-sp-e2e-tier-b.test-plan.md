@@ -70,7 +70,7 @@ undocumented gap and blocks merge on review.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| — | Invalid-credential coverage is deferred | REQ-TB-060, AC-TB-020 | The former opt-in TC-TB-050 was removed in PR #59. The deterministic health unit tests still cover the exact auth-failure detail; a follow-up Tier B workflow variant must isolate a deliberately invalid client credential before this real-infrastructure criterion is marked covered. |
+| — | Auth-failure coverage is integration-tier sufficient | REQ-TB-060, AC-TB-020 | TC-I-018 runs the real SP process and HTTP server with a token endpoint rejection and reachable loopback gRPC endpoint, then asserts the exact auth-only detail. A real-Keycloak kind variant would test Keycloak's credential enforcement rather than additional SP behavior. |
 | — | Connectivity-only failure is integration-tier sufficient | REQ-TB-065, AC-TB-025 | TC-I-012 runs the real SP process and HTTP server with successful token acquisition and an unreachable loopback gRPC endpoint, then asserts the exact connectivity-only detail. A third kind deployment would duplicate that deterministic coverage without adding business value. |
 
 ---
@@ -147,12 +147,12 @@ made.
 | Realm/claim correctness | REQ-TB-020 | — | 1 (TC-TB-020) | Verified directly against Keycloak, independent of `osac-sp`, before the harder end-to-end assertion. |
 | Real auth success (osac-sp) | REQ-TB-030, REQ-TB-040 | AC-TB-010 | 1 (TC-TB-030) | The primary positive-path deliverable — closes DD-132's gap. |
 | Pinned-tag CI hygiene | REQ-TB-050 | — | 1 (TC-TB-040) | Static/lint-shaped, not a runtime Ginkgo spec. |
-| Real auth failure detection | REQ-TB-060 | AC-TB-020 | deferred | Deterministic unit coverage exists, but real invalid-credential behavior needs a follow-up isolated workflow variant; no TC claims e2e coverage. |
+| Real auth failure detection | REQ-TB-060 | AC-TB-020 | integration-tier-sufficient | TC-I-018 covers token rejection through the real SP process and HTTP server; no real-Keycloak kind variant is needed. |
 | "OSAC unreachable" health branch | REQ-TB-065 | AC-TB-025 | integration-tier-sufficient | TC-I-012 covers the valid-token/unreachable branch over the real SP process and HTTP server; no Tier B runtime variant is needed. |
 | `osac-aap-mock` unit coverage | REQ-TB-080 | — | 15 (TC-U-560..574) | Counts toward the repo's 100%-unit-coverage gate, unlike the `TC-TB-*` rows below. TC-U-575/576 retired into TC-U-570/571 (DD-232). |
 | Phase 2 infra/terminal-state (`ClusterOrder` + `BareMetalInstance`, direct CR create) | REQ-TB-070, REQ-TB-080, REQ-TB-100, REQ-TB-110 | AC-TB-030, AC-TB-040 | 5 (TC-TB-060/080/090/110/120) | The Phase 2 deliverable — real reconciliation through a real AAP-layer fake (`ClusterOrder`) and real BMFO against a static host fixture (`BareMetalInstance`, DD-226/227), both via a direct CR create rather than an `osac-sp`-driven one (DD-218, #47). Supersedes the retired `TC-TB-100` deploy-only placeholder (DD-216 is now fully resolved, not just partially). |
 | `BareMetalInstance` fail-safe/release paths | REQ-TB-120 | AC-TB-050 | 4 (TC-TB-130/140/150/160) | Negative-path complement to TC-TB-110/120's happy path — no host, ineligible host, contended host, and delete-time release — all verified against BMFO's real upstream source before being written (DD-229), not assumed from the happy-path behavior. |
-| **Total** | 11 | 6 | **28** | Phase 1 has 4 planned runtime/static checks, one integration-tier-sufficient failure branch, and one deferred auth criterion; Phase 2 has 5 REQ (provisioning). The pending Hub-dispatch TC-TB-200 remains outside this plan's implemented count. |
+| **Total** | 11 | 6 | **28** | Phase 1 has 4 planned runtime/static checks and two integration-tier-sufficient failure branches; Phase 2 has 5 REQ (provisioning). The pending Hub-dispatch TC-TB-200 remains outside this plan's implemented count. |
 
 ---
 

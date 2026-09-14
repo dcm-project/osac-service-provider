@@ -3648,18 +3648,16 @@ AC-E2E-021
 ---
 ## DD-236: Health connectivity distinction belongs at the integration tier
 
-**Decision:** remove TC-TB-131 and cover REQ-TB-065/AC-TB-025 through TC-I-012.
-Retain the separate REQ-TB-060/AC-TB-020 invalid-credential disposition as
-deferred.
+**Decision:** remove TC-TB-131 and TC-TB-050; cover REQ-TB-065/AC-TB-025
+through TC-I-012 and REQ-TB-060/AC-TB-020 through TC-I-018.
 
 **Rationale:** the business value is distinguishing a valid token from an OSAC
-network failure for operational diagnosis. TC-I-012 now proves that behavior
-through the real SP process, real HTTP health route, successful token fetch, and
-unreachable loopback gRPC endpoint. A third kind deployment would only repeat
-that deterministic application behavior at higher cost and with more CI
-failure modes. TC-TB-050 remains removed because the current Tier B workflow
-has no isolated invalid-credential variant; the unit tests cover the exact
-health-detail mapping until that separate e2e variant exists.
+network failure for operational diagnosis. TC-I-012 and TC-I-018 now prove
+those distinctions through the real SP process, real HTTP health route,
+successful token acquisition or explicit token rejection, and reachable or
+unreachable loopback gRPC endpoints. Dedicated kind variants would test
+external component behavior at higher cost without adding SP-side business
+coverage.
 
 **Related requirements:** REQ-TB-060, REQ-TB-065, AC-TB-020, AC-TB-025,
 REQ-HLT-070

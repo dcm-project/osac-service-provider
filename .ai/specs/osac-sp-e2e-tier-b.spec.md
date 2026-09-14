@@ -181,7 +181,7 @@ kind cluster
 | REQ-TB-030 | `osac-sp`'s `SP_OSAC_OIDC_ISSUER_URL`/`SP_OSAC_OIDC_CLIENT_ID`/`_SECRET`/`SP_OSAC_FULFILLMENT_ADDRESS` MUST point at the real `ffs-keycloak`/`ffs-fulfillment-service` services, with credentials matching a real vendored client | MUST | |
 | REQ-TB-040 | The e2e suite MUST assert `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC — not just against the Phase A mock | MUST | Same assertions as `AC-E2E-030`, re-run against the real backend |
 | REQ-TB-050 | The workflow MUST pin exact `vX.Y.Z` image/chart tags for every OSAC component (never `main`/`latest`) | MUST | Upstream's own `check-floating-tags.yaml` CI guard confirms `main`/`latest` are untrusted as "current" |
-| REQ-TB-060 | A deliberately wrong/missing client credential MUST result in `osac-sp` reporting `unhealthy` with an auth-failure detail — proving Tier B can actually detect what Phase A's permissive mock structurally cannot | MUST | **Deferred in PR #59:** the former opt-in TC-TB-050 was removed; a follow-up workflow variant must provide isolated invalid-credential coverage before this requirement is marked e2e-covered |
+| REQ-TB-060 | The integration test suite MUST prove that an OIDC token endpoint rejection results in `osac-sp` reporting `unhealthy` with an auth-failure detail while OSAC remains reachable | MUST | Integration-tier-sufficient via TC-I-018; no separate real-Keycloak kind variant is required |
 | REQ-TB-065 | The integration test suite MUST prove that valid OIDC credentials plus an unreachable OSAC gRPC endpoint result in `osac-sp` reporting `unhealthy` with a connectivity-only detail, distinct from an auth-failure detail | MUST | Integration-tier-sufficient via TC-I-012; no separate kind deployment is required |
 
 ### Phase 2 (REQ-TB-090's M2+ gate satisfied; implementation landing, ongoing — see #47)
@@ -209,19 +209,15 @@ kind cluster
 - **Then** both succeed against the real backend, and `osac-sp`'s own health
   endpoints report `status: healthy` reflecting that real success
 
-##### AC-TB-020: A real auth failure is genuinely detectable (deferred)
+##### AC-TB-020: A real auth failure is genuinely detectable (integration-tier sufficient)
 
 - **Validates:** REQ-TB-060
-- **Disposition:** deferred in PR #59; no Tier B test currently claims this
-  coverage. The deterministic unit tests cover the health-detail mapping, but
-  real Keycloak invalid-credential behavior still needs an isolated workflow
-  variant before this criterion can be marked e2e-covered.
-- **Given** the Phase 1 stack, but `osac-sp` configured with a client secret
-  that doesn't match any vendored Keycloak client
+- **Disposition:** integration-tier-sufficient via TC-I-018; the full-stack
+  integration harness uses a real SP process and HTTP server, a token endpoint
+  that rejects credentials, and a reachable loopback gRPC endpoint.
 - **When** `osac-sp` attempts its token fetch
 - **Then** it fails, and `osac-sp`'s health endpoint reports `status:
-  unhealthy` with an auth-failure detail — proving this tier can catch what
-  Phase A structurally cannot
+  unhealthy` with exactly `"OIDC token invalid"` and no connectivity detail
 
 ##### AC-TB-025: OSAC unreachable is genuinely detectable, distinct from an auth failure (integration-tier sufficient)
 
