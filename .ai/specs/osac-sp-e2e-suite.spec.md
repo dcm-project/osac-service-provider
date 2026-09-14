@@ -129,14 +129,12 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
   business-level `healthy` status is confirmed separately by the suite
   itself (AC-E2E-030), not by this job-level wait
 
-##### AC-E2E-020: `osac-sp` registers both service types with real `control-plane`
+##### AC-E2E-020: `osac-sp` registers both service types with real `environment-agent`
 
 - **Validates:** REQ-E2E-050
 - **Given** the healthy stack from AC-E2E-010
-- **When** the e2e suite queries `control-plane`'s real REST API for
-  registered providers
-- **Then** it finds exactly one `cluster`-type and one `vm`-type provider
-  entry, both pointing at `osac-service-provider`'s real `SP_ENDPOINT`
+- **When** the e2e suite queries `environment-agent`'s real `/api/v1alpha1/providers` endpoint (Phase 2, DD-203)
+- **Then** it finds exactly one entry with `name="osac-sp-cluster"` and one with `name="osac-sp-vm"`, both with `endpoint=http://osac-service-provider:8080` (in-cluster service DNS)
 
 ##### AC-E2E-021: `osac-sp`'s cluster registration advertises its real supported Kubernetes versions
 

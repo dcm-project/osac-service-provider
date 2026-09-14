@@ -217,6 +217,12 @@ jobs:
       - name: Fill osac-operator's hub-access-hosted-clusters RBAC gap (DD-223)
         run: kubectl apply -f test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml
 
+      # Pending OSAC-4826 fix (fulfillment-service osac create hub CLI support for --name flag)
+      # - name: Register Hub (TC-TB-200, pending OSAC-4826)
+      #   run: |
+      #     osac create hub --address <fulfillment-service-address> \
+      #       --name default-hub --config <config-file>
+
       - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-216)
         run: |
           helm install bmf-operator oci://ghcr.io/osac-project/charts/bare-metal-fulfillment-operator \

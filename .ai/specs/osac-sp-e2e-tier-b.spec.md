@@ -105,17 +105,22 @@ dispatch (rather than this phase's direct CR create) is deferred to
 
 ```
 kind cluster
-├── dcm-postgres, dcm-nats, dcm-control-plane   (unchanged from Phase A)
-├── osac-service-provider                       (unchanged from Phase A, this repo's own manifest)
-├── cert-manager        (NEW — upstream release manifest; hard prerequisite of fulfillment-service's own chart, all variants — see DD-151)
-├── ffs-postgres        (NEW — plain manifest, this repo's own; 2 DBs: keycloak, service)
-├── ffs-keycloak        (NEW — plain manifest; official Keycloak image + vendored realm.json)
-└── ffs-fulfillment-service (NEW — real published chart, `oci://ghcr.io/osac-project/charts/fulfillment-service`, pinned `--version`, `variant: kind`; replaces osac-mock-provider — see DD-151)
+├── cert-manager              (upstream release manifest; hard prerequisite of fulfillment-service's own chart — see DD-151)
+├── ffs-postgres              (plain manifest; 2 DBs: keycloak, service)
+├── ffs-keycloak              (official Keycloak image + vendored realm.json)
+├── ffs-fulfillment-service   (real published chart, `oci://ghcr.io/osac-project/charts/fulfillment-service`, pinned `--version`)
+├── osac-service-provider     (this repo's own manifest; wired to environment-agent + ffs stack)
+└── (Phase 2 additions below)
+
+Host (port-forwarded into cluster via socat/kubectl):
+├── environment-agent         (real binary; registration target for osac-sp; started before kind cluster)
+└── NATS                      (required dependency; DCM_NATS_URL wiring)
 ```
 
-- `osac-mock-provider` (Phase A) is **removed** from the stack in Tier B
-  runs; `osac-sp`'s `SP_OSAC_*` env vars point at `ffs-fulfillment-service`
-  and `ffs-keycloak` instead.
+**Phase 1 to Phase 2 migration (DD-203, PR #59):**
+- `dcm-control-plane` removed from workflow (replaced by environment-agent as registration target)
+- `osac-mock-provider` removed (replaced by real fulfillment-service)
+- `osac-sp` registration now targets `environment-agent` at http://127.0.0.1:8090/api/v1alpha1
 - No `osac-operator`/BMFO/AAP anywhere yet — matches upstream's own `it`
   package's scope exactly (their controller reconciles `ClusterOrder`/
   `BareMetalInstance` CRs for real, but nothing downstream watches them).

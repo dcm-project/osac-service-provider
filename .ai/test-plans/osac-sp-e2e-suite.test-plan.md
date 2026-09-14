@@ -52,20 +52,19 @@ disposition is recorded.
 
 ---
 
-## 2. Registration contract (`osac-sp` ↔ real `control-plane`)
+## 2. Registration contract (`osac-sp` ↔ real registration target)
 
-**As of DD-212 (#28):** `registration_test.go`'s `Describe` block is
-`Label("tier-b-only")` — these specs run only against Tier B's real
-backend (`e2e-tierb.yaml`), no longer against `osac-mock-provider`
-(`e2e.yaml`). None of them ever exercised the OSAC backend at all, so
-mock-vs-real made no difference; running them in both jobs was pure
-duplication once Tier B existed to run them for real.
+**Phase 1 (control-plane):** These specs originally ran against `control-plane`'s provider API.
+
+**Phase 2 (environment-agent, DD-203):** As of PR #59, registration target migrated to `environment-agent` (updated in `e2e-tierb.yaml`). Tests now query `environment-agent`'s real `/providers` endpoint instead of the deleted control-plane API (control-plane#51, 2026-08-19).
+
+**Tier B only:** `Label("tier-b-only")` — specs run only in `e2e-tierb.yaml` against environment-agent. Phase A's `e2e.yaml` uses `--label-filter='!tier-b-only'` (DD-211).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-E2E-020 | `osac-sp` registers a `cluster`-type provider with real `control-plane`, advertising `kubernetes_supported_versions` | REQ-E2E-050, REQ-E2E-051, AC-E2E-020, AC-E2E-021 | `GET` `control-plane`'s real provider-listing endpoint; assert exactly one entry has `serviceType == "cluster"` (or the real API's equivalent enum/string — confirmed against `control-plane`'s actual REST schema at implementation time) and `endpoint` equal to `osac-service-provider`'s real in-cluster `SP_ENDPOINT`; assert its `metadata.kubernetes_supported_versions` contains `"1.31"` — a key from `osac-sp`'s real, uninjected `DefaultMatrix` (closes DD-230's REQ-VERSION-050 disposition gap). |
-| TC-E2E-030 | `osac-sp` registers a `vm`-type provider with real `control-plane` | REQ-E2E-050, AC-E2E-020 | Same as TC-E2E-020, asserting the independent `vm`-type entry — proves the two registration loops are genuinely independent against a real backend, not just in `internal/registration`'s own fakes. |
-| TC-E2E-040 | Both registrations persist across a re-registration cycle (no duplicates) | REQ-E2E-050, AC-E2E-020 | Wait past `internal/registration.Registrar`'s periodic re-registration interval; re-`GET` the provider listing; assert still exactly one `cluster` and one `vm` entry each (idempotent re-POST, DD-established behavior, now proven against a real, independently-built `control-plane` rather than the repo's own `fakeControlPlaneServer`). |
+| TC-E2E-020 | `osac-sp` registers a `cluster`-type provider with real `environment-agent`, advertising `kubernetes_supported_versions` | REQ-E2E-050, REQ-E2E-051, AC-E2E-020, AC-E2E-021 | `GET` `environment-agent`'s real `/api/v1alpha1/providers` endpoint (Phase 2); assert exactly one entry has `name == "osac-sp-cluster"` and `endpoint` equal to `http://osac-service-provider:8080/api/v1alpha1/clusters` (in-cluster service DNS); assert its `metadata.kubernetes_supported_versions` contains `"1.31"` from `osac-sp`'s real, uninjected `DefaultMatrix` (closes DD-230's REQ-VERSION-050 disposition gap). |
+| TC-E2E-030 | `osac-sp` registers a `vm`-type provider with real `environment-agent` | REQ-E2E-050, AC-E2E-020 | Same as TC-E2E-020, asserting the independent `vm`-type entry with `name == "osac-sp-vm"` and `endpoint == http://osac-service-provider:8080/api/v1alpha1/vms` — proves the two registration loops are genuinely independent against a real backend. |
+| TC-E2E-040 | Both registrations persist across a re-registration cycle (no duplicates) | REQ-E2E-050, AC-E2E-020 | Wait past `internal/registration.Registrar`'s periodic re-registration interval; re-`GET` the provider listing; assert still exactly one `cluster` and one `vm` entry each (idempotent re-POST against real `environment-agent`, DD-established behavior). |
 
 ---
 

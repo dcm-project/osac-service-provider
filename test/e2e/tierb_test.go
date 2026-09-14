@@ -136,7 +136,7 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		Expect(cluster).NotTo(BeNil(), "cluster service type must be registered")
 
 		Expect(cluster.Name).To(Equal("osac-sp-cluster"))
-		Expect(cluster.Endpoint).To(Equal(os.Getenv("OSAC_SP_URL") + "/api/v1alpha1/clusters"))
+		Expect(cluster.Endpoint).To(Equal("http://osac-service-provider:8080/api/v1alpha1/clusters"))
 		Expect(cluster.Status).NotTo(BeNil())
 		Expect(*cluster.Status).To(Equal(eav1alpha1.Ready), "cluster provider must be healthy")
 
@@ -172,7 +172,7 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		Expect(vm).NotTo(BeNil(), "vm service type must be registered")
 
 		Expect(vm.Name).To(Equal("osac-sp-vm"))
-		Expect(vm.Endpoint).To(Equal(os.Getenv("OSAC_SP_URL") + "/api/v1alpha1/vms"))
+		Expect(vm.Endpoint).To(Equal("http://osac-service-provider:8080/api/v1alpha1/vms"))
 		Expect(vm.Status).NotTo(BeNil())
 		Expect(*vm.Status).To(Equal(eav1alpha1.Ready), "vm provider must be healthy")
 	})
@@ -972,8 +972,6 @@ func decodeJWTPayload(token string) map[string]any {
 	return claims
 }
 
-// getHealthAt is health_test.go's getHealth, generalized to an arbitrary
-// base URL (osacSPURL for the regular instance vs. the opt-in bad-auth
 // getProvidersList queries environment-agent's /providers endpoint and returns
 // the list of registered providers as typed structs.
 func getProvidersList(eaURL string) []eav1alpha1.Provider {
@@ -1005,7 +1003,7 @@ func findProvider(providers []eav1alpha1.Provider, serviceType string) *eav1alph
 	return nil
 }
 
-// instance's own Service).
+// getHealthAt queries the health endpoint at baseURL+path and returns the health response.
 func getHealthAt(baseURL, path string) health {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
