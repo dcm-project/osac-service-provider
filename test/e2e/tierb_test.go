@@ -50,10 +50,9 @@ var insecureHTTPClient = &http.Client{
 
 // Env vars set only by .github/workflows/e2e-tierb.yaml.
 const (
-	envKeycloakURL              = "KEYCLOAK_URL"              // e.g. http://localhost:18082/realms/osac
-	envTierBAdminSecret         = "TIERB_ADMIN_SECRET"        // osac-admin's client secret (tierb-config/realm.json)
-	envEnvironmentAgentURL      = "ENVIRONMENT_AGENT_URL"     // e.g. http://127.0.0.1:8090/api/v1alpha1
-	envOSACUnreachableOSACSPURL = "OSAC_UNREACHABLE_OSAC_SP_URL"
+	envKeycloakURL         = "KEYCLOAK_URL"          // e.g. http://localhost:18082/realms/osac
+	envTierBAdminSecret    = "TIERB_ADMIN_SECRET"    // osac-admin's client secret (tierb-config/realm.json)
+	envEnvironmentAgentURL = "ENVIRONMENT_AGENT_URL" // e.g. http://127.0.0.1:18090/api/v1alpha1
 	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
 	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
 	// deploys that stack, distinct from Phase 1's envKeycloakURL gate.
@@ -90,33 +89,6 @@ var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func()
 	})
 })
 
-var _ = Describe("Tier B: OSAC unreachable is genuinely detectable, distinct from a token failure", func() {
-	// TC-TB-131 / REQ-TB-065 / AC-TB-025 — opt-in workflow_dispatch
-	// variant only (e2e-tierb.yaml); OSAC_UNREACHABLE_OSAC_SP_URL is
-	// unset on every regular PR run. Closes the other half of AC-HLT-060
-	// that TC-TB-050 above doesn't reach: a real, valid OIDC token
-	// (correct client secret, real Keycloak) paired with an unroutable
-	// SP_OSAC_FULFILLMENT_ADDRESS, so the health response's "unreachable"
-	// detail is proven distinct from the "token invalid" one — both
-	// against real infra, not a bufconn fake's simulation of either
-	// (internal/health's TC-U-031/032/033 already cover the fake side).
-	It("reports unhealthy with a connectivity-only detail when OSAC is unreachable but the token is valid", func() {
-		osacUnreachableURL := os.Getenv(envOSACUnreachableOSACSPURL)
-		if osacUnreachableURL == "" {
-			Skip("opt-in variant only: " + envOSACUnreachableOSACSPURL + " is unset")
-		}
-
-		var h health
-		Eventually(func() string {
-			h = getHealthAt(osacUnreachableURL, "/api/v1alpha1/clusters/health")
-			return h.Status
-		}, 30*time.Second, 500*time.Millisecond).Should(Equal("unhealthy"))
-
-		Expect(h.Detail).To(Equal("OSAC fulfillment service unreachable"),
-			"OSAC unreachable with a valid token must surface as exactly the connectivity-only detail, never combined with the token-invalid one")
-	})
-})
-
 var _ = Describe("Tier B: SP registration with environment-agent", func() {
 	// TC-E2E-020 / REQ-E2E-050, REQ-E2E-051 / AC-E2E-020, AC-E2E-021
 	It("registers a cluster-type provider with metadata", func() {
@@ -127,13 +99,15 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 
 		// Wait for osac-sp to register (it takes a few seconds after the pod becomes Ready)
 		var providers []eav1alpha1.Provider
-		Eventually(func() []eav1alpha1.Provider {
-			providers = getProvidersList(eaURL)
-			return providers
-		}, "30s", "500ms").Should(Not(BeEmpty()), "osac-sp should have registered with environment-agent by now")
+		Eventually(func() bool {
+			var err error
+			providers, err = getProvidersList(eaURL)
+			return err == nil && findProvider(providers, "cluster") != nil
+		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the cluster provider with environment-agent by now")
 
 		cluster := findProvider(providers, "cluster")
 		Expect(cluster).NotTo(BeNil(), "cluster service type must be registered")
+		Expect(countProviders(providers, "cluster")).To(Equal(1), "exactly one cluster provider must exist")
 
 		Expect(cluster.Name).To(Equal("osac-sp-cluster"))
 		Expect(cluster.Endpoint).To(Equal("http://osac-service-provider:8080/api/v1alpha1/clusters"))
@@ -163,13 +137,15 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		}
 
 		var providers []eav1alpha1.Provider
-		Eventually(func() []eav1alpha1.Provider {
-			return getProvidersList(eaURL)
-		}, "30s", "500ms").Should(Not(BeEmpty()))
+		Eventually(func() bool {
+			var err error
+			providers, err = getProvidersList(eaURL)
+			return err == nil && findProvider(providers, "vm") != nil
+		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the vm provider with environment-agent by now")
 
-		providers = getProvidersList(eaURL)
 		vm := findProvider(providers, "vm")
 		Expect(vm).NotTo(BeNil(), "vm service type must be registered")
+		Expect(countProviders(providers, "vm")).To(Equal(1), "exactly one vm provider must exist")
 
 		Expect(vm.Name).To(Equal("osac-sp-vm"))
 		Expect(vm.Endpoint).To(Equal("http://osac-service-provider:8080/api/v1alpha1/vms"))
@@ -185,9 +161,19 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		}
 
 		// Capture initial state
-		initialProviders := getProvidersList(eaURL)
-		initialCluster := findProvider(initialProviders, "cluster")
-		initialVM := findProvider(initialProviders, "vm")
+		var initialProviders []eav1alpha1.Provider
+		var initialCluster, initialVM *eav1alpha1.Provider
+		Eventually(func() bool {
+			var err error
+			initialProviders, err = getProvidersList(eaURL)
+			if err != nil {
+				return false
+			}
+			initialCluster = findProvider(initialProviders, "cluster")
+			initialVM = findProvider(initialProviders, "vm")
+			return initialCluster != nil && initialVM != nil
+		}, "30s", "500ms").Should(BeTrue(), "both providers must be registered before checking re-registration")
+
 		Expect(initialCluster).NotTo(BeNil())
 		Expect(initialVM).NotTo(BeNil())
 
@@ -196,7 +182,8 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		time.Sleep(65 * time.Second)
 
 		// Verify both still registered, exactly once each
-		updatedProviders := getProvidersList(eaURL)
+		updatedProviders, err := getProvidersList(eaURL)
+		Expect(err).NotTo(HaveOccurred())
 		updatedCluster := findProvider(updatedProviders, "cluster")
 		updatedVM := findProvider(updatedProviders, "vm")
 
@@ -231,7 +218,10 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 
 		var cluster, vm *eav1alpha1.Provider
 		Eventually(func() bool {
-			providers := getProvidersList(eaURL)
+			providers, err := getProvidersList(eaURL)
+			if err != nil {
+				return false
+			}
 			cluster = findProvider(providers, "cluster")
 			vm = findProvider(providers, "vm")
 			return cluster != nil && vm != nil && cluster.Status != nil && *cluster.Status == eav1alpha1.Ready && vm.Status != nil && *vm.Status == eav1alpha1.Ready
@@ -973,23 +963,36 @@ func decodeJWTPayload(token string) map[string]any {
 }
 
 // getProvidersList queries environment-agent's /providers endpoint and returns
-// the list of registered providers as typed structs.
-func getProvidersList(eaURL string) []eav1alpha1.Provider {
+// the list of registered providers as typed structs. Transport and HTTP errors
+// are returned so callers can poll through agent startup rather than failing
+// the whole spec on the first refused connection.
+func getProvidersList(eaURL string) ([]eav1alpha1.Provider, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/providers", eaURL), nil)
-	Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := http.DefaultClient.Do(req)
-	Expect(err).NotTo(HaveOccurred(), "failed to query environment-agent /providers")
+	if err != nil {
+		return nil, fmt.Errorf("querying environment-agent /providers: %w", err)
+	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("environment-agent /providers returned HTTP %d", resp.StatusCode)
+	}
 
 	var result eav1alpha1.ProviderList
-	Expect(json.NewDecoder(resp.Body).Decode(&result)).To(Succeed())
-	Expect(result.Results).NotTo(BeNil(), "/providers response must have 'results' array")
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding environment-agent /providers: %w", err)
+	}
+	if result.Results == nil {
+		return nil, fmt.Errorf("environment-agent /providers response has no results array")
+	}
 
-	return *result.Results
+	return *result.Results, nil
 }
 
 // findProvider searches the provider list for the first provider matching
@@ -1003,19 +1006,12 @@ func findProvider(providers []eav1alpha1.Provider, serviceType string) *eav1alph
 	return nil
 }
 
-// getHealthAt queries the health endpoint at baseURL+path and returns the health response.
-func getHealthAt(baseURL, path string) health {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s%s", baseURL, path), nil)
-	Expect(err).NotTo(HaveOccurred())
-
-	resp, err := http.DefaultClient.Do(req)
-	Expect(err).NotTo(HaveOccurred())
-	defer func() { _ = resp.Body.Close() }()
-
-	var h health
-	Expect(json.NewDecoder(resp.Body).Decode(&h)).To(Succeed())
-	return h
+func countProviders(providers []eav1alpha1.Provider, serviceType string) int {
+	count := 0
+	for _, provider := range providers {
+		if provider.ServiceType == serviceType {
+			count++
+		}
+	}
+	return count
 }

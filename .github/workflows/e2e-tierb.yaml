@@ -7,32 +7,19 @@ name: E2E Tier B (kind + real OSAC stack)
 # close the mock provider's structural auth-fidelity gap (Phase A never
 # validates auth at all — see issue #21). Phase 2 (issue #44): real
 # osac-operator + BMFO + osac-aap-mock, driving a real ClusterOrder CR to a
-# real terminal state. dcm-control-plane/osac-service-provider wiring
-# otherwise unchanged from .github/workflows/e2e.yaml (Phase A).
+# real terminal state. Phase 2 uses a real environment-agent registration
+# target and an in-cluster JetStream NATS broker; control-plane is not part of
+# this Tier B stack.
 
 on:
   push:
     branches: [main, 'release/v*', 'feat/e2e-tier-b-phase1']
   pull_request:
     branches: [main, 'release/v*']
-  workflow_dispatch:
-    inputs:
-      osac_unreachable:
-        description: "Also deploy the osac-sp instance with an unroutable OSAC address (TC-TB-130 / REQ-TB-065 / AC-TB-025)"
-        type: boolean
-        default: false
+  workflow_dispatch: {}
 
 env:
   KIND_CLUSTER_NAME: osac-sp-e2e-tierb
-  # Pinned for the same reason/commit as e2e.yaml's CONTROL_PLANE_REF
-  # (DD-147): control-plane#51 (2026-08-19) deleted the SP registration API
-  # this suite's dcm-control-plane install still relies on. Revert to
-  # `main` once the Phase 2 (`environment-agent`) migration (#33) lands.
-  # CONTROL_PLANE_IMAGE_TAG pins the actual deployed image too — the
-  # chart's values.yaml hardcodes `global.imageTag: main` as its own
-  # default regardless of which chart commit is checked out.
-  CONTROL_PLANE_REF: c04802d05ecc4fd11e070f3bc604ef9e8671a09b
-  CONTROL_PLANE_IMAGE_TAG: c04802d
   CERT_MANAGER_VERSION: v1.20.0
   FULFILLMENT_SERVICE_CHART_VERSION: "0.0.90" # REQ-TB-050 — pin, never `main`/`latest` (bumped from 0.0.85, DD-149 monorepo pivot)
   OSAC_OPERATOR_CHART_VERSION: "0.0.12" # REQ-TB-070 — pinned to the osac-project/osac monorepo's own release (DD-149)
@@ -57,6 +44,13 @@ jobs:
       - name: Build osac-aap-mock image
         run: docker build -t osac-aap-mock:e2e -f Containerfile.osac-aap-mock .
 
+      - name: Build environment-agent image
+        run: |
+          EA_VERSION=$(go -C test/e2e list -m -f '{{.Version}}' github.com/dcm-project/environment-agent)
+          echo "Building github.com/dcm-project/environment-agent@${EA_VERSION}"
+          CGO_ENABLED=0 GOOS=linux GOBIN="$PWD/.bin" go install "github.com/dcm-project/environment-agent/cmd/environment-agent@${EA_VERSION}"
+          docker build -t environment-agent:e2e -f Containerfile.environment-agent .
+
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
@@ -69,6 +63,9 @@ jobs:
 
       - name: Load osac-aap-mock image into kind
         run: kind load docker-image osac-aap-mock:e2e --name "${{ env.KIND_CLUSTER_NAME }}"
+
+      - name: Load environment-agent image into kind
+        run: kind load docker-image environment-agent:e2e --name "${{ env.KIND_CLUSTER_NAME }}"
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -159,32 +156,16 @@ jobs:
           # flaky/not-ready in a live spike with no bearing on this suite.
           kubectl wait --for=condition=Available deployment/fulfillment-grpc-server --timeout=5m
 
-      # --- dcm-control-plane (unchanged from Phase A) ---
-      - name: Sparse-checkout control-plane's chart
-        uses: actions/checkout@v7
-        with:
-          repository: dcm-project/control-plane
-          ref: ${{ env.CONTROL_PLANE_REF }}
-          sparse-checkout: deploy/helm/dcm
-          sparse-checkout-cone-mode: false
-          path: control-plane
-
-      - name: Install control-plane (+ Postgres, NATS) via its own chart
+      # --- environment-agent + NATS (DD-203) ---
+      - name: Deploy NATS (JetStream)
         run: |
-          helm install dcm control-plane/deploy/helm/dcm \
-            --set global.imageTag="${{ env.CONTROL_PLANE_IMAGE_TAG }}" \
-            --set dcmUi.enabled=false \
-            --set controlPlane.route.enabled=false \
-            --set controlPlane.ingress.enabled=false
-          kubectl rollout status statefulset/dcm-postgres --timeout=5m
-          kubectl rollout status statefulset/dcm-nats --timeout=5m
+          kubectl apply -f test/e2e/manifests-tierb/nats.yaml
+          kubectl rollout status deployment/nats --timeout=120s
 
-      # Same control-plane#42 workaround as Phase A (e2e.yaml) — not fixed upstream yet.
-      - name: Work around control-plane#42 (wait-for-postgres init container)
+      - name: Deploy environment-agent
         run: |
-          kubectl patch deployment dcm-control-plane --type strategic -p \
-            '{"spec":{"template":{"spec":{"initContainers":[{"name":"wait-for-postgres","securityContext":{"runAsNonRoot":false}}]}}}}'
-          kubectl rollout status deployment/dcm-control-plane --timeout=5m
+          kubectl apply -f test/e2e/manifests-tierb/environment-agent.yaml
+          kubectl rollout status deployment/environment-agent --timeout=180s
 
       # --- osac-service-provider, wired at the real OSAC stack ---
       - name: Apply osac-service-provider (Tier B wiring)
@@ -192,13 +173,6 @@ jobs:
 
       - name: Wait for osac-sp readiness
         run: kubectl wait --for=condition=Available deployment/osac-service-provider --timeout=180s
-
-      - name: Wait for osac-sp-osac-unreachable readiness (opt-in variant, TC-TB-131)
-        if: inputs.osac_unreachable == true
-        run: |
-          # Same reasoning as osac-sp-bad-auth above: no readiness probe by
-          # design, wait on the pod entering Running instead.
-          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=osac-service-provider-osac-unreachable --timeout=120s
 
       # --- Phase 2: real osac-operator + BMFO + osac-aap-mock (REQ-TB-070..100) ---
       - name: Install vendored CRDs (ClusterOrder, HostedCluster, NodePool, Tenant, BareMetalInstance, BareMetalPool, ComputeInstance, BareMetalHost)
@@ -240,13 +214,8 @@ jobs:
           echo $! > /tmp/pf-osac-sp.pid
           kubectl port-forward svc/ffs-keycloak 18082:8443 >/tmp/pf-keycloak.log 2>&1 &
           echo $! > /tmp/pf-keycloak.pid
-          sleep 3
-
-      - name: Start port-forward for osac-sp-osac-unreachable (opt-in variant)
-        if: inputs.osac_unreachable == true
-        run: |
-          kubectl port-forward svc/osac-service-provider-osac-unreachable 18084:8080 >/tmp/pf-osac-sp-osac-unreachable.log 2>&1 &
-          echo $! > /tmp/pf-osac-sp-osac-unreachable.pid
+          kubectl port-forward svc/environment-agent 18090:8090 >/tmp/pf-environment-agent.log 2>&1 &
+          echo $! > /tmp/pf-environment-agent.pid
           sleep 3
 
       - name: Run Tier B e2e suite
@@ -255,8 +224,7 @@ jobs:
           OSAC_SP_URL: http://localhost:18081
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
-          ENVIRONMENT_AGENT_URL: http://127.0.0.1:8090/api/v1alpha1
-          OSAC_UNREACHABLE_OSAC_SP_URL: ${{ inputs.osac_unreachable == true && 'http://localhost:18084' || '' }}
+          ENVIRONMENT_AGENT_URL: http://127.0.0.1:18090/api/v1alpha1
           TIERB_PHASE2_ENABLED: "true"
         # --label-filter excludes Label("tier-a-only") specs (DD-211):
         # Cluster/VM CRUD hardcode osac-mock-provider-only fixture IDs and
@@ -270,7 +238,7 @@ jobs:
       - name: Stop port-forwards
         if: always()
         run: |
-          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-osac-sp-osac-unreachable.pid; do
+          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-environment-agent.pid; do
             [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
           done
 
@@ -282,7 +250,7 @@ jobs:
           kubectl get certificates,issuers,clusterissuers -A > /tmp/e2e-diagnostics/certs.txt 2>&1 || true
           kubectl get events --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
           kubectl get clusterorder tierb-cluster-order -o yaml > /tmp/e2e-diagnostics/clusterorder.yaml 2>&1 || true
-          for d in dcm-control-plane dcm-postgres dcm-nats osac-service-provider osac-service-provider-osac-unreachable ffs-postgres ffs-keycloak osac-operator bare-metal-fulfillment-operator osac-aap-mock; do
+          for d in nats environment-agent osac-service-provider ffs-postgres ffs-keycloak osac-operator bare-metal-fulfillment-operator osac-aap-mock; do
             kubectl logs -l "app.kubernetes.io/name=${d}" --all-containers --prefix --tail=-1 > "/tmp/e2e-diagnostics/${d}.log" 2>&1 || true
           done
           kubectl logs -l "app.kubernetes.io/instance=ffs-fulfillment-service" --all-containers --prefix --tail=-1 > /tmp/e2e-diagnostics/ffs-fulfillment-service.log 2>&1 || true

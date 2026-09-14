@@ -174,8 +174,9 @@ e2e-apply:
 	kubectl apply -f test/e2e/manifests/
 
 # e2e-test runs the e2e suite (its own Go module, REQ-E2E-080) against an
-# already-deployed cluster; set CONTROL_PLANE_URL/OSAC_SP_URL to whatever
-# you've port-forwarded/exposed them at.
+# already-deployed cluster; set ENVIRONMENT_AGENT_URL/OSAC_SP_URL to whatever
+# you've port-forwarded/exposed them at when running the registration/health
+# specs against the Tier B topology.
 e2e-test:
 	cd test/e2e && go run github.com/onsi/ginkgo/v2/ginkgo -r -v
 
