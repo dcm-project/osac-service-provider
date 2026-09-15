@@ -1,4 +1,9 @@
-# Specification: kind-based e2e CI — real `control-plane` + real `osac-sp` + `osac-mock-provider`
+# Historical Specification: Phase A kind-based E2E — real `control-plane` + `osac-mock-provider`
+
+> **Status: Retired by DD-237.** This document records the former Phase A
+> topology and requirements. `.github/workflows/e2e-tierb.yaml` is now the
+> sole active E2E workflow; the former CRUD cases are covered by the M3/M4
+> integration plans where they add business value.
 
 ## 1. Overview
 
@@ -52,9 +57,9 @@ tracks it as an explicit follow-up rather than silently deferring it.
 
 ---
 
-## 2. Architecture
+## 2. Historical Architecture
 
-The stack below describes the Phase A `e2e.yaml` workflow, which keeps the
+The stack below describes the retired Phase A `e2e.yaml` workflow, which kept the
 real control-plane contract and the Phase A mock-provider backend. Tier B is a
 separate workflow variant: it replaces control-plane registration with the
 real environment-agent and replaces the mock OSAC backend with the real
@@ -113,17 +118,17 @@ Tier B also deploys `fulfillment-service` and `ffs-keycloak`; its
 
 ---
 
-## 3. Requirements
+## 3. Historical Requirements
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-E2E-010 | The GitHub Actions job MUST create a `kind` cluster, build+load `osac-service-provider` and `osac-mock-provider` images (no push), and pull `quay.io/dcm-project/control-plane:main` (no build) | MUST | |
 | REQ-E2E-020 | The job MUST install `control-plane`'s `deploy/helm/dcm/` chart (sparse-checkout at a pinned ref) with `dcmUi.enabled=false`, `controlPlane.route.enabled=false`, `controlPlane.ingress.enabled=false` | MUST | `kind` has no `Route` CRD; UI is irrelevant to assertions |
 | REQ-E2E-030 | The job MUST apply this repo's own plain-manifest `Deployment`+`Service` pair for `osac-service-provider` and for `osac-mock-provider`, wired per §2's table | MUST | Not part of the upstream chart (yet) |
-| REQ-E2E-040 | The job MUST wait, with a bounded timeout, for every component's Kubernetes readiness (`kubectl wait --for=condition=Available`) before starting the e2e suite, and MUST fail the job (not hang) if the timeout is exceeded. Where the suite separately polls `osac-sp`'s own `GET /api/v1alpha1/clusters/health` and `/vms/health` for `status: healthy` (see AC-E2E-030), that polling is deliberately not gated by this job-level wait, to avoid a hidden test-ordering assumption (DD-142) | MUST | Reuses each component's existing health endpoint — no new one invented. As of DD-212 (#28), the health-polling `Describe` block is `Label("tier-b-only")`, so `e2e.yaml` (Phase A) no longer does this at all — only `e2e-tierb.yaml`'s run of the suite does; this job-level readiness wait itself still applies to both |
+| REQ-E2E-040 | The job MUST wait, with a bounded timeout, for every component's Kubernetes readiness (`kubectl wait --for=condition=Available`) before starting the e2e suite, and MUST fail the job (not hang) if the timeout is exceeded. Where the suite separately polls `osac-sp`'s own `GET /api/v1alpha1/clusters/health` and `/vms/health` for `status: healthy` (see AC-E2E-030), that polling is deliberately not gated by this job-level wait, to avoid a hidden test-ordering assumption (DD-142) | MUST | Historical Phase A requirement. The active Tier B workflow retains bounded readiness and the separate health polling; the retired Phase A workflow no longer runs. |
 | REQ-E2E-050 | The e2e suite MUST assert that `osac-sp`, running for real against real registration target, successfully self-registers **both** the `cluster` and `vm` service types (2 independent registrations, per `internal/registration.Registrar`'s existing design) | MUST | Tier B (DD-203, issue #44) exercises the real `environment-agent` API in `e2e-tierb.yaml` via TC-E2E-020/030/040 in `tierb_test.go`. Neither the OSAC backend nor its mock is relevant to this assertion |
 | REQ-E2E-051 | The `cluster` registration's metadata MUST carry a non-empty `kubernetes_supported_versions` list containing the real, uninjected `internal/versionmatrix.DefaultMatrix`'s `"1.31"` key, mirroring `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-050 | MUST | Queried through environment-agent's `/providers` endpoint in TC-E2E-020. Closes DD-230's disposition gap for REQ-VERSION-050 |
-| REQ-E2E-060 | The e2e suite MUST assert that `osac-sp`'s own two health endpoints report `status: healthy` against a real backend (real gRPC dial + real OIDC token fetch, not bufconn) | MUST | Exercises `internal/osac.Bootstrap` end-to-end for the first time outside its own unit/integration tests; the `Health` schema (`api/v1alpha1/openapi.yaml`) has no `connected` field — `status`/`detail` are the only signal. As of DD-212 (#28), this only runs in `e2e-tierb.yaml` against Tier B's real `fulfillment-service`, not `e2e.yaml`/`osac-mock-provider` — the mock case added no signal beyond `internal/osac`'s own bufconn tests |
+| REQ-E2E-060 | The e2e suite MUST assert that `osac-sp`'s own two health endpoints report `status: healthy` against a real backend (real gRPC dial + real OIDC token fetch, not bufconn) | MUST | The active Tier B workflow covers this against real `fulfillment-service`; the retired mock-backed health run added no signal beyond `internal/osac`'s own bufconn tests. |
 | REQ-E2E-070 | The job MUST tear down the `kind` cluster on both success and failure, and MUST upload each component's logs as a build artifact on failure | MUST | Matches `fulfillment-service`'s own IT harness convention (verified in the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19)) |
 | REQ-E2E-080 | The e2e suite MUST run as a separate nested Go module (own `go.mod`) so its dependencies (an `environment-agent` REST client, `k8s.io/client-go` if used for readiness polling) never enter the main module's `go.mod`/`go.sum` | MUST | Same isolation rationale as the Tier B spike, [#19](https://github.com/dcm-project/osac-service-provider/pull/19) |
 | REQ-E2E-090 | The e2e suite MUST exercise a full Cluster CRUD lifecycle (`Create` → `Get` → `List` → `Delete`) directly against real `osac-sp`'s REST API, dispatching into the real `osac-mock-provider` gRPC backend (not the bufconn fakes Milestone 3's own unit/integration tests use), asserting `Create`'s response reaches the mock's terminal ready status (`ACTIVE`) and the subsequent `Get`'s response additionally carries a non-empty `kubeconfig` — `Create` itself never populates `kubeconfig` (`osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-050; only `Get` does, conditionally on `ACTIVE`, REQ-GET-020) — without any polling for convergence, since the real mock resolves `Create` synchronously to `CLUSTER_STATE_READY` (`osac-sp-e2e-mock-provider.spec.md` REQ-MOCK-030) | MUST | Milestone 3 (Cluster CRUD) |

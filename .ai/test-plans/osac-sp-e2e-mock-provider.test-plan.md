@@ -1,4 +1,7 @@
-# Test Plan: `osac-mock-provider` (Phase 1 of the kind-based e2e infra)
+# Test Plan: `osac-mock-provider` test fixture
+
+> The binary is retained for focused unit and process-level integration tests,
+> but is not deployed by the active E2E workflow (DD-237).
 
 Scope: unit and integration tests for
 [`osac-sp-e2e-mock-provider.spec.md`](../specs/osac-sp-e2e-mock-provider.spec.md).

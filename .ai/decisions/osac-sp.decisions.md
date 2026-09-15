@@ -3662,3 +3662,35 @@ coverage.
 
 **Related requirements:** REQ-TB-060, REQ-TB-065, AC-TB-020, AC-TB-025,
 REQ-HLT-070
+
+---
+## DD-237: Retire Phase A control-plane/mock-provider E2E; Tier B is canonical
+
+**Decision:** Retire the Phase A `e2e.yaml` workflow and its kind topology,
+which exercised `osac-sp` alongside `control-plane` and the repo-owned
+`osac-mock-provider`. Tier B's real fulfillment-service, Keycloak,
+environment-agent, NATS, and AAP/provider mock topology is the repository's
+canonical E2E path.
+
+The former Phase A Cluster/VM CRUD cases are not carried into Tier B as
+duplicate mock-backend E2E cases. Their business coverage remains in the M3
+and M4 unit/integration pyramid. The one missing real-HTTP assertion,
+unknown `template_id` mapping, is implemented as the already-planned
+`TC-I-205` integration case.
+
+**Rationale:** `osac-sp` no longer registers with or dispatches through
+`control-plane`; keeping that stack in CI tests an obsolete integration target.
+The mock-provider E2E cases exercise a repo-owned fake OSAC backend and add no
+real OSAC fidelity beyond the HTTP/router behavior already covered by the
+integration tier. Tier B exercises the production-shaped boundary instead,
+while `osac-aap-mock` remains only at the external AAP/provider boundary where
+real infrastructure is unavailable.
+
+**Consequence:** `.github/workflows/e2e-tierb.yaml` is the sole active E2E
+workflow. The former Phase A specification and test plan remain as historical
+records, with their CRUD cases explicitly mapped to M3/M4 integration
+coverage. `osac-mock-provider` may remain for its own focused binary/fixture
+tests, but it is no longer deployed by E2E CI.
+
+**Related requirements:** REQ-E2E-010..103, REQ-TB-010..120,
+REQ-CREATE-100, REQ-VMCREATE-070

@@ -1,9 +1,7 @@
-// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): run only when
-// .github/workflows/e2e-tierb.yaml's env vars are present. Phase A's
-// e2e.yaml never sets them, so these Describe blocks Skip() there instead
-// of failing — this file compiles into the same test/e2e binary Phase A
-// uses (test plan's "Tier B is a variant of that same suite" framework
-// note), it just self-selects at runtime.
+// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): run when
+// .github/workflows/e2e-tierb.yaml's env vars are present. The environment
+// checks keep standalone runs useful while the active workflow supplies all
+// required endpoints.
 //
 // TC-TB-030 (osac-sp health against the real backend) deliberately has no
 // dedicated spec here: health_test.go's existing
@@ -11,9 +9,7 @@
 // asserts exactly that shape (healthy status, empty Detail) against
 // whatever OSAC_SP_URL points at — Tier B's workflow points it at the
 // real ffs-keycloak/ffs-fulfillment-service stack, closing DD-132's
-// auth-fidelity gap for free, with no new assertion code needed. As of
-// DD-212 (#28), that Describe block is Label("tier-b-only") and runs only
-// here, not in Phase A's e2e.yaml.
+// auth-fidelity gap without new assertion code.
 package e2e_test
 
 import (

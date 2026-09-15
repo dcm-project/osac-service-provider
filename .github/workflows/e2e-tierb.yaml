@@ -1,9 +1,9 @@
 name: E2E Tier B (kind + real OSAC stack)
 
-# Tier B of osac-service-provider#21's e2e effort
+# The sole active E2E workflow for osac-service-provider
 # (.ai/specs/osac-sp-e2e-tier-b.spec.md). Phase 1: real Postgres, real
 # Keycloak (vendored realm, DD-150), and real fulfillment-service (pinned,
-# published chart, DD-151), replacing Phase A's osac-mock-provider, to
+# published chart, DD-151), replacing the retired Phase A osac-mock-provider, to
 # close the mock provider's structural auth-fidelity gap (Phase A never
 # validates auth at all — see issue #21). Phase 2 (issue #44): real
 # osac-operator + BMFO + osac-aap-mock, driving a real ClusterOrder CR to a
@@ -226,14 +226,7 @@ jobs:
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
           ENVIRONMENT_AGENT_URL: http://127.0.0.1:18090/api/v1alpha1
           TIERB_PHASE2_ENABLED: "true"
-        # --label-filter excludes Label("tier-a-only") specs (DD-211):
-        # Cluster/VM CRUD hardcode osac-mock-provider-only fixture IDs and
-        # rely on its non-validating Create, neither of which holds
-        # against this real backend — genuinely exercising CRUD here is
-        # Phase 2 scope (osac-aap-mock, DD-152). e2e.yaml (Phase A) excludes
-        # the symmetric Label("tier-b-only") specs instead (#43) — each
-        # workflow only runs what's relevant to its own backend.
-        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --label-filter='!tier-a-only' --timeout=10m
+        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=10m
 
       - name: Stop port-forwards
         if: always()

@@ -1,5 +1,9 @@
 # Specification: Tier B e2e — real OSAC stack, phased through full provisioning fidelity
 
+> **Status: Canonical active E2E specification (DD-237).** The former Phase A
+> control-plane/mock-provider workflow is retired; this Tier B topology is the
+> only E2E workflow maintained by this repository.
+
 ## 1. Overview
 
 Follow-up to [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17)

@@ -1,14 +1,11 @@
-// Package e2e_test implements the common kind-based e2e suite for
-// osac-service-provider#17 / FLPATH-4759. The Phase A workflow runs real
-// control-plane + osac-sp + osac-mock-provider; the Tier B workflow runs the
-// same suite against real fulfillment-service infrastructure and
-// environment-agent.
+// Package e2e_test implements the kind-based E2E suite for the canonical Tier B
+// workflow: real fulfillment-service infrastructure, environment-agent, and
+// the AAP boundary mock.
 //
 // This is a separate Go module (REQ-E2E-080) so the environment-agent REST
 // client never enters the main module's go.mod/go.sum. See
-// .ai/specs/osac-sp-e2e-suite.spec.md and
-// .ai/test-plans/osac-sp-e2e-suite.test-plan.md for the requirements and
-// TC-E2E-* cases this package implements.
+// .ai/specs/osac-sp-e2e-tier-b.spec.md and
+// .ai/test-plans/osac-sp-e2e-tier-b.test-plan.md for the requirements.
 package e2e_test
 
 import (

@@ -1,8 +1,12 @@
-# Test Plan: kind-based e2e CI (Phase 2 of the e2e infra)
+# Historical Test Plan: Phase A kind-based E2E
 
-Scope: the e2e assertions for
+> **Status: Retired by DD-237.** This plan is retained for traceability only.
+> The active E2E plan is `osac-sp-e2e-tier-b.test-plan.md`; former CRUD cases
+> are mapped to the M3/M4 integration plans.
+
+Historical scope: the e2e assertions for
 [`osac-sp-e2e-suite.spec.md`](../specs/osac-sp-e2e-suite.spec.md), run by
-`.github/workflows/e2e.yaml` and `.github/workflows/e2e-tierb.yaml` against
+the retired `.github/workflows/e2e.yaml` and the former shared suite against
 live `kind` clusters. New ID space —
 `TC-E2E-*` — since these run against a real cluster in CI, not `go test`
 locally; they are not part of the `TC-U-*`/`TC-I-*` pyramid tiers and are not
@@ -25,11 +29,8 @@ finalized in the workflow, not fixed by this test plan).
 values, exact `status` strings), not existence-only/200-only checks — same
 discipline as the rest of the repo's test plans.
 
-**What's real here, what's not:** `environment-agent`, the OSAC backend, and
-`osac-sp` are real built/pulled artifacts (§2 of the Tier B spec) — nothing
-under test is a registration or OSAC fake.
-The Phase A workflow may still use `osac-mock-provider` for its deliberately
-scoped backend tests; Tier B uses real fulfillment-service infrastructure and
+**Historical backend split:** the retired Phase A workflow used
+`osac-mock-provider`; Tier B uses real fulfillment-service infrastructure and
 does not layer the mock into its assertions.
 
 **E2E disposition invariant (DD-230):** every `REQ-*`/`AC-*` this test plan
@@ -48,9 +49,9 @@ disposition is recorded.
 
 ## 1. Infra readiness
 
-This section describes Phase A's `e2e.yaml` control-plane stack. Tier B uses
-the separate fulfillment-service, NATS, and environment-agent stack described
-in `osac-sp-e2e-tier-b.test-plan.md`.
+This historical section describes Phase A's retired `e2e.yaml` control-plane
+stack. Tier B uses the separate fulfillment-service, NATS, and environment-agent
+stack described in `osac-sp-e2e-tier-b.test-plan.md`.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -64,7 +65,9 @@ in `osac-sp-e2e-tier-b.test-plan.md`.
 
 **Phase 2 (environment-agent, DD-203):** As of PR #59, registration target migrated to `environment-agent` (updated in `e2e-tierb.yaml`). Tests now query `environment-agent`'s real `/providers` endpoint instead of the deleted control-plane API (control-plane#51, 2026-08-19).
 
-**Tier B only:** `Label("tier-b-only")` — specs run only in `e2e-tierb.yaml` against environment-agent. Phase A's `e2e.yaml` uses `--label-filter='!tier-b-only'` (DD-211).
+**Historical split:** `Label("tier-b-only")` was used while both workflows
+existed. The Phase A workflow and its label filtering are retired; the active
+Tier B workflow runs the complete suite.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -99,7 +102,12 @@ signal.
 
 ---
 
-## 5. Cluster/VM CRUD (real dispatch into the real mock backend)
+## 5. Retired Cluster/VM CRUD E2E (real dispatch into the real mock backend)
+
+These cases are retained as historical traceability only. The mock-backed E2E
+deployment and assertions were retired by DD-237. Their useful behavior is
+covered by the M3/M4 integration plans: Cluster `TC-I-200/201/210/220/221/222`,
+`TC-I-230/231`, and `TC-I-205`; VM `TC-I-300/301/310/320/330/331`.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
@@ -121,8 +129,8 @@ signal.
 | Registration contract | REQ-E2E-050, 051 | AC-E2E-020, 021 | 3 (TC-E2E-020..040) | REQ-E2E-051/AC-E2E-021 (kubernetes_supported_versions) ride TC-E2E-020's existing assertion, not a new TC. |
 | Health-check propagation | REQ-E2E-060 | AC-E2E-030 | 2 (TC-E2E-050/060) | Environment-agent registration status is covered by TC-E2E-020/030/040; the former control-plane health-monitor TC-E2E-070 was retired with the registration-target migration. |
 | CI failure-mode hygiene | REQ-E2E-040, 070 | AC-E2E-040 | 1 (TC-E2E-080) | Manual/opt-in variant, not run on every PR (would otherwise double the job's steady-state runtime for a check that doesn't need re-proving every merge). |
-| Cluster CRUD (Milestone 3) | REQ-E2E-090, 091, 092, 103 | AC-E2E-050, 051, 052 | 4 (TC-E2E-090, 091, 092, 103) | |
-| VM CRUD (Milestone 4) | REQ-E2E-100, 101, 102 | AC-E2E-060, 061 | 3 (TC-E2E-100, 101, 102) | |
+| Cluster CRUD (Milestone 3) | REQ-E2E-090, 091, 092, 103 | AC-E2E-050, 051, 052 | Historical only | Replaced by M3 integration coverage listed in §5, including `TC-I-205` for unknown `template_id`. |
+| VM CRUD (Milestone 4) | REQ-E2E-100, 101, 102 | AC-E2E-060, 061 | Historical only | Replaced by M4 integration coverage listed in §5. |
 | **Total** | 16 | 10 | **14** | NATS status-event round-trips (Milestone 5) remain a deliberately-untested-here follow-up (spec §6) — implemented, but with no `osac-sp`-side REST surface for this suite to assert delivery against. REQ/AC counts sum each row's literal count (not deduplicated across rows). |
 
 ---
@@ -139,7 +147,7 @@ somewhere — this table is that record for the ones with no `TC-E2E-*`/
 
 | Milestone REQ group | Disposition | Rationale |
 |---|---|---|
-| `REQ-CREATE-100` (unknown `template_id` → `400`) | **e2e-covered** | `TC-E2E-103` (§5). |
+| `REQ-CREATE-100` (unknown `template_id` → `400`) | integration-tier-sufficient | `TC-I-205` exercises the real HTTP/router path and asserts no `Clusters/Create` call is made. |
 | `REQ-VERSION-050` (registration metadata carries `kubernetes_supported_versions`) | **e2e-covered** | `TC-E2E-020`'s updated assertion (§2). |
 | `REQ-STATUS-020` (10-rule status precedence table) | integration-tier-sufficient | Pure translation logic; `TC-I-240` already proves the same mapper over real HTTP against the real router — a live cluster adds no new signal, only CI time. |
 | `REQ-ERR-010/020/030`, `REQ-VMERR-010/020/030` (gRPC-code→HTTP tables) | integration-tier-sufficient | `TC-I-250`/`TC-I-360` already exercise the full tables over real HTTP. |

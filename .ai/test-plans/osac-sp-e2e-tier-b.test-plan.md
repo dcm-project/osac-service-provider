@@ -1,4 +1,4 @@
-# Test Plan: Tier B e2e — real OSAC stack (Phase 1)
+# Test Plan: Tier B E2E — canonical real OSAC stack (Phase 1)
 
 Scope: the e2e assertions for
 [`osac-sp-e2e-tier-b.spec.md`](../specs/osac-sp-e2e-tier-b.spec.md) Phase 1,
@@ -7,11 +7,11 @@ run by a Tier B variant of the `kind`-based e2e workflow. New ID space —
 in CI, not `go test` locally; they are not part of the `TC-U-*`/`TC-I-*`
 pyramid tiers and are not counted toward the repo's 100%-unit-coverage gate.
 Phase 2's `TC-TB-*` range is reserved, not allocated here — REQ-TB-090 gates
-its implementation on `osac-sp` M2+ landing first.
+its implementation on `osac-sp` M2+ landing first. This is now the sole active
+E2E plan; the former Phase A plan is historical (DD-237).
 
-**Framework:** same `test/e2e` nested Go module (own `go.mod`, REQ-E2E-080)
-as `osac-sp-e2e-suite.test-plan.md` — Tier B is a variant of that same suite
-(a different backend stood up, same Ginkgo binary), not a separate module.
+**Framework:** `test/e2e` nested Go module (own `go.mod`, REQ-E2E-080), using
+the shared suite helpers and the Tier B topology.
 
 **Assertion discipline:** assert actual response fields and body details
 (exact health sub-field values, exact RFC 9457 `type`), not
@@ -54,7 +54,7 @@ undocumented gap and blocks merge on review.
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-TB-030 | `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC | REQ-TB-030, REQ-TB-040, AC-TB-010 | No new spec: `health_test.go`'s existing "osac-sp health, against the real backend" `Describe` block (TC-E2E-050/060 — `status == "healthy"`, empty `Detail`) already runs against whatever `OSAC_SP_URL` points at; `.github/workflows/e2e-tierb.yaml` points it at `ffs-keycloak`/`ffs-fulfillment-service`, closing the auth-fidelity gap DD-132 documented as structurally untestable in Phase A, with no new assertion code needed (see `tierb_test.go`'s file-level doc comment). As of DD-212 (#28), this `Describe` block is `Label("tier-b-only")` and no longer runs in Phase A's `e2e.yaml` at all. |
+| TC-TB-030 | `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC | REQ-TB-030, REQ-TB-040, AC-TB-010 | No new spec: `health_test.go`'s existing "osac-sp health, against the real backend" `Describe` block (TC-E2E-050/060 — `status == "healthy"`, empty `Detail`) runs against Tier B's `OSAC_SP_URL`; `.github/workflows/e2e-tierb.yaml` points it at `ffs-keycloak`/`ffs-fulfillment-service`, closing the auth-fidelity gap DD-132 documented as structurally untestable in the retired Phase A path. |
 
 ---
 

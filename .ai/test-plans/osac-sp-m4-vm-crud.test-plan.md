@@ -14,6 +14,10 @@ chosen because Milestone 4 branched from `main` before Milestone 3 merged
 (see the M4 spec's Reference Documents note) — the two milestones' TC IDs
 must not collide once both land on `main`.
 
+The retired Phase A cases `TC-E2E-100..102` are represented by the VM
+integration cases `TC-I-300/301/330/331`; no mock-backend E2E deployment is
+required.
+
 **Framework:** Ginkgo v2 + Gomega. Unit tests: `internal/vm/*_unit_test.go`,
 `internal/handlers/vm/*_unit_test.go`, `internal/grpcerror/*_unit_test.go` —
 pure business logic against `bufconn`-backed fake `ComputeInstancesServer`/
