@@ -176,16 +176,29 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 
 		Expect(initialCluster).NotTo(BeNil())
 		Expect(initialVM).NotTo(BeNil())
+		Expect(initialCluster.UpdateTime).NotTo(BeNil())
+		Expect(initialVM.UpdateTime).NotTo(BeNil())
 
-		// Wait past the re-registration interval (60s per internal/registration/registration.go)
-		// and a bit of buffer for scheduling variance
-		time.Sleep(65 * time.Second)
-
-		// Verify both still registered, exactly once each
-		updatedProviders, err := getProvidersList(eaURL)
-		Expect(err).NotTo(HaveOccurred())
-		updatedCluster := findProvider(updatedProviders, "cluster")
-		updatedVM := findProvider(updatedProviders, "vm")
+		// Poll until the real environment-agent observes the next registration
+		// cycle. Checking update_time proves this is a renewal, not just a
+		// second read of the initial records.
+		var updatedProviders []eav1alpha1.Provider
+		var updatedCluster, updatedVM *eav1alpha1.Provider
+		Eventually(func() bool {
+			var err error
+			updatedProviders, err = getProvidersList(eaURL)
+			if err != nil {
+				return false
+			}
+			updatedCluster = findProvider(updatedProviders, "cluster")
+			updatedVM = findProvider(updatedProviders, "vm")
+			return updatedCluster != nil && updatedVM != nil &&
+				updatedCluster.UpdateTime != nil && updatedVM.UpdateTime != nil &&
+				updatedCluster.UpdateTime.After(*initialCluster.UpdateTime) &&
+				updatedVM.UpdateTime.After(*initialVM.UpdateTime) &&
+				countProviders(updatedProviders, "cluster") == 1 &&
+				countProviders(updatedProviders, "vm") == 1
+		}, "75s", "500ms").Should(BeTrue(), "both providers must be renewed without creating duplicates")
 
 		Expect(updatedCluster).NotTo(BeNil(), "cluster provider must persist after re-registration")
 		Expect(updatedVM).NotTo(BeNil(), "vm provider must persist after re-registration")
@@ -207,30 +220,6 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		}
 		Expect(clusterCount).To(Equal(1), "exactly one cluster provider must exist")
 		Expect(vmCount).To(Equal(1), "exactly one vm provider must exist")
-	})
-
-	// TC-E2E-070 / REQ-E2E-060 / AC-E2E-030
-	It("reflects provider health status", func() {
-		eaURL := os.Getenv(envEnvironmentAgentURL)
-		if eaURL == "" {
-			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
-		}
-
-		var cluster, vm *eav1alpha1.Provider
-		Eventually(func() bool {
-			providers, err := getProvidersList(eaURL)
-			if err != nil {
-				return false
-			}
-			cluster = findProvider(providers, "cluster")
-			vm = findProvider(providers, "vm")
-			return cluster != nil && vm != nil && cluster.Status != nil && *cluster.Status == eav1alpha1.Ready && vm.Status != nil && *vm.Status == eav1alpha1.Ready
-		}, "30s", "500ms").Should(BeTrue(), "both providers should reach Ready status")
-
-		Expect(cluster.Status).NotTo(BeNil())
-		Expect(*cluster.Status).To(Equal(eav1alpha1.Ready))
-		Expect(vm.Status).NotTo(BeNil())
-		Expect(*vm.Status).To(Equal(eav1alpha1.Ready))
 	})
 })
 

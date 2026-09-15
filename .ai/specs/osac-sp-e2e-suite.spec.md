@@ -54,6 +54,13 @@ tracks it as an explicit follow-up rather than silently deferring it.
 
 ## 2. Architecture
 
+The stack below describes the Phase A `e2e.yaml` workflow, which keeps the
+real control-plane contract and the Phase A mock-provider backend. Tier B is a
+separate workflow variant: it replaces control-plane registration with the
+real environment-agent and replaces the mock OSAC backend with the real
+fulfillment-service stack. Its deployment and wiring are specified in
+`osac-sp-e2e-tier-b.spec.md` and `e2e-tierb.yaml`.
+
 ```
 kind cluster (GH-hosted ubuntu-latest runner: 4 vCPU / 16 GB RAM)
 ├── dcm-postgres              (control-plane's own chart, StatefulSet+PVC)
@@ -90,6 +97,19 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 | `osac-service-provider` | `SP_OSAC_OIDC_ISSUER_URL` | `http://osac-mock-provider:9091` |
 | `osac-service-provider` | `SP_OSAC_OIDC_CLIENT_ID`/`_SECRET` | any non-empty value (mock never validates, [DD-207](../decisions/osac-sp.decisions.md)) |
 | `osac-mock-provider` | `MOCK_GRPC_ADDRESS` / `MOCK_OIDC_ADDRESS` | `:9090` / `:9091` |
+
+For the Tier B variant (`e2e-tierb.yaml`), the corresponding registration and
+messaging wiring is:
+
+| Component | Env var | Value |
+|---|---|---|
+| `osac-service-provider` | `DCM_REGISTRATION_URL` | `http://environment-agent:8090/api/v1alpha1` |
+| `osac-service-provider` | `DCM_NATS_URL` | `nats://nats:4222` |
+| `osac-service-provider` | `SP_ENDPOINT` | `http://osac-service-provider:8080` |
+
+Tier B also deploys `fulfillment-service` and `ffs-keycloak`; its
+`SP_OSAC_*` values are defined in
+`test/e2e/manifests-tierb/osac-service-provider.yaml`.
 
 ---
 
@@ -134,7 +154,7 @@ confirmed against `_helpers.tpl`'s `contains $chartName $releaseName` branch):
 - **Validates:** REQ-E2E-050
 - **Given** the healthy stack from AC-E2E-010
 - **When** the e2e suite queries `environment-agent`'s real `/api/v1alpha1/providers` endpoint (Phase 2, DD-203)
-- **Then** it finds exactly one entry with `name="osac-sp-cluster"` and one with `name="osac-sp-vm"`, both with `endpoint=http://osac-service-provider:8080` (in-cluster service DNS)
+- **Then** it finds exactly one entry with `name="osac-sp-cluster"` and one with `name="osac-sp-vm"`, with endpoints `http://osac-service-provider:8080/api/v1alpha1/clusters` and `http://osac-service-provider:8080/api/v1alpha1/vms` respectively (in-cluster service DNS)
 
 ##### AC-E2E-021: `osac-sp`'s cluster registration advertises its real supported Kubernetes versions
 

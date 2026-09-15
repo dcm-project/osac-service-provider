@@ -48,9 +48,13 @@ disposition is recorded.
 
 ## 1. Infra readiness
 
+This section describes Phase A's `e2e.yaml` control-plane stack. Tier B uses
+the separate fulfillment-service, NATS, and environment-agent stack described
+in `osac-sp-e2e-tier-b.test-plan.md`.
+
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-E2E-010 | All 5 pods reach `Ready` within the bounded wait | REQ-E2E-010, REQ-E2E-020, REQ-E2E-030, REQ-E2E-040, AC-E2E-010 | Before the Ginkgo suite's specs run, its `SynchronizedBeforeSuite` (or the workflow's own pre-step — decided at implementation time) polls `kubectl get pods` / each health endpoint until `dcm-postgres`, `dcm-nats`, `dcm-control-plane`, `osac-service-provider`, and `osac-mock-provider` are all `Ready`; assert this completes before the bounded timeout (NFR-E2E-010) and fail with the last-observed pod statuses on timeout (not a bare "context deadline exceeded"). |
+| TC-E2E-010 | Phase A stack reaches `Ready` within the bounded wait | REQ-E2E-010, REQ-E2E-020, REQ-E2E-030, REQ-E2E-040, AC-E2E-010 | Before the Ginkgo suite's specs run, the Phase A workflow polls `kubectl get pods` / each health endpoint until `dcm-postgres`, `dcm-nats`, `dcm-control-plane`, `osac-service-provider`, and `osac-mock-provider` are all `Ready`; assert this completes before the bounded timeout (NFR-E2E-010) and fail with the last-observed pod statuses on timeout (not a bare "context deadline exceeded"). |
 
 ---
 
@@ -66,7 +70,7 @@ disposition is recorded.
 |-------|-----------|-----------|-------------|
 | TC-E2E-020 | `osac-sp` registers a `cluster`-type provider with real `environment-agent`, advertising `kubernetes_supported_versions` | REQ-E2E-050, REQ-E2E-051, AC-E2E-020, AC-E2E-021 | `GET` `environment-agent`'s real `/api/v1alpha1/providers` endpoint (Phase 2); assert exactly one entry has `name == "osac-sp-cluster"` and `endpoint` equal to `http://osac-service-provider:8080/api/v1alpha1/clusters` (in-cluster service DNS); assert its `metadata.kubernetes_supported_versions` contains `"1.31"` from `osac-sp`'s real, uninjected `DefaultMatrix` (closes DD-230's REQ-VERSION-050 disposition gap). |
 | TC-E2E-030 | `osac-sp` registers a `vm`-type provider with real `environment-agent` | REQ-E2E-050, AC-E2E-020 | Same as TC-E2E-020, asserting the independent `vm`-type entry with `name == "osac-sp-vm"` and `endpoint == http://osac-service-provider:8080/api/v1alpha1/vms` — proves the two registration loops are genuinely independent against a real backend. |
-| TC-E2E-040 | Both registrations persist across a re-registration cycle (no duplicates) | REQ-E2E-050, AC-E2E-020 | Wait past `internal/registration.Registrar`'s periodic re-registration interval; re-`GET` the provider listing; assert still exactly one `cluster` and one `vm` entry each (idempotent re-POST against real `environment-agent`, DD-established behavior). |
+| TC-E2E-040 | Both registrations persist across a re-registration cycle (no duplicates) | REQ-E2E-050, AC-E2E-020 | Capture each provider's initial `update_time`; poll the provider listing until both timestamps advance past their initial values, proving a renewal occurred; assert still exactly one `cluster` and one `vm` entry each (idempotent re-POST against real `environment-agent`, DD-established behavior). |
 
 ---
 
