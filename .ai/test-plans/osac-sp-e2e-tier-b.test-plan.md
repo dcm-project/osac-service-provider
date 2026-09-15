@@ -1,4 +1,4 @@
-# Test Plan: Tier B e2e — real OSAC stack (Phase 1)
+# Test Plan: Tier B E2E — canonical real OSAC stack (Phase 1)
 
 Scope: the e2e assertions for
 [`osac-sp-e2e-tier-b.spec.md`](../specs/osac-sp-e2e-tier-b.spec.md) Phase 1,
@@ -7,11 +7,11 @@ run by a Tier B variant of the `kind`-based e2e workflow. New ID space —
 in CI, not `go test` locally; they are not part of the `TC-U-*`/`TC-I-*`
 pyramid tiers and are not counted toward the repo's 100%-unit-coverage gate.
 Phase 2's `TC-TB-*` range is reserved, not allocated here — REQ-TB-090 gates
-its implementation on `osac-sp` M2+ landing first.
+its implementation on `osac-sp` M2+ landing first. This is now the sole active
+E2E plan; the former Phase A plan is historical (DD-237).
 
-**Framework:** same `test/e2e` nested Go module (own `go.mod`, REQ-E2E-080)
-as `osac-sp-e2e-suite.test-plan.md` — Tier B is a variant of that same suite
-(a different backend stood up, same Ginkgo binary), not a separate module.
+**Framework:** `test/e2e` nested Go module (own `go.mod`, REQ-E2E-080), using
+the shared suite helpers and the Tier B topology.
 
 **Assertion discipline:** assert actual response fields and body details
 (exact health sub-field values, exact RFC 9457 `type`), not
@@ -23,6 +23,14 @@ independently-built or upstream-pinned artifact — real Postgres, real
 Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 `osac-mock-provider` is not present in a Tier B run at all (spec §2, Phase
 1) — it is fully replaced, not layered alongside.
+
+**E2E disposition invariant (DD-230):** same invariant as
+`osac-sp-e2e-suite.test-plan.md` — every `REQ-*`/`AC-*` relevant to this
+tier must carry an explicit disposition (**e2e-covered** via a `TC-TB-*`
+entry, **deferred**, or **integration-tier-sufficient**) recorded in the
+Coverage Matrix (§7) "Notes" column. A `REQ-*`/`AC-*` with no disposition
+recorded in either this file or `osac-sp-e2e-suite.test-plan.md` is an
+undocumented gap and blocks merge on review.
 
 ---
 
@@ -46,7 +54,7 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-TB-030 | `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC | REQ-TB-030, REQ-TB-040, AC-TB-010 | No new spec: `health_test.go`'s existing "osac-sp health, against the real backend" `Describe` block (TC-E2E-050/060 — `status == "healthy"`, empty `Detail`) already runs against whatever `OSAC_SP_URL` points at; `.github/workflows/e2e-tierb.yaml` points it at `ffs-keycloak`/`ffs-fulfillment-service`, closing the auth-fidelity gap DD-132 documented as structurally untestable in Phase A, with no new assertion code needed (see `tierb_test.go`'s file-level doc comment). As of DD-212 (#28), this `Describe` block is `Label("tier-b-only")` and no longer runs in Phase A's `e2e.yaml` at all. |
+| TC-TB-030 | `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC | REQ-TB-030, REQ-TB-040, AC-TB-010 | No new spec: `health_test.go`'s existing "osac-sp health, against the real backend" `Describe` block (TC-E2E-050/060 — `status == "healthy"`, empty `Detail`) runs against Tier B's `OSAC_SP_URL`; `.github/workflows/e2e-tierb.yaml` points it at `ffs-keycloak`/`ffs-fulfillment-service`, closing the auth-fidelity gap DD-132 documented as structurally untestable in the retired Phase A path. |
 
 ---
 
@@ -58,11 +66,12 @@ Keycloak (official image), real `fulfillment-service` (pinned image/chart).
 
 ---
 
-## 5. A real auth failure is genuinely detectable
+## 5. Failure-mode coverage disposition
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-TB-050 | A deliberately wrong client secret makes `osac-sp` report `unhealthy` with an auth-failure detail | REQ-TB-060, AC-TB-020 | Exercised as an opt-in `workflow_dispatch` variant, not on every PR run — same precedent as TC-E2E-080: a second `osac-sp` pod/config variant is deployed with `SP_OSAC_OIDC_CLIENT_SECRET` set to a value that matches no vendored Keycloak client; assert its health endpoint converges to `status: "unhealthy"` with a body detail identifying the failure as an auth/token error (not a generic/opaque `"connection failed"` string) — this is the core deliverable this tier exists for: proving Tier B can catch what Phase A's permissive mock (DD-132) structurally cannot. |
+| — | Auth-failure coverage is integration-tier sufficient | REQ-TB-060, AC-TB-020 | TC-I-018 runs the real SP process and HTTP server with a token endpoint rejection and reachable loopback gRPC endpoint, then asserts the exact auth-only detail. A real-Keycloak kind variant would test Keycloak's credential enforcement rather than additional SP behavior. |
+| — | Connectivity-only failure is integration-tier sufficient | REQ-TB-065, AC-TB-025 | TC-I-012 runs the real SP process and HTTP server with successful token acquisition and an unreachable loopback gRPC endpoint, then asserts the exact connectivity-only detail. A third kind deployment would duplicate that deterministic coverage without adding business value. |
 
 ---
 
@@ -139,8 +148,21 @@ made.
 | Realm/claim correctness | REQ-TB-020 | — | 1 (TC-TB-020) | Verified directly against Keycloak, independent of `osac-sp`, before the harder end-to-end assertion. |
 | Real auth success (osac-sp) | REQ-TB-030, REQ-TB-040 | AC-TB-010 | 1 (TC-TB-030) | The primary positive-path deliverable — closes DD-132's gap. |
 | Pinned-tag CI hygiene | REQ-TB-050 | — | 1 (TC-TB-040) | Static/lint-shaped, not a runtime Ginkgo spec. |
-| Real auth failure detection | REQ-TB-060 | AC-TB-020 | 1 (TC-TB-050) | Opt-in `workflow_dispatch` variant, matching TC-E2E-080's precedent (avoids doubling steady-state PR runtime). |
+| Real auth failure detection | REQ-TB-060 | AC-TB-020 | integration-tier-sufficient | TC-I-018 covers token rejection through the real SP process and HTTP server; no real-Keycloak kind variant is needed. |
+| "OSAC unreachable" health branch | REQ-TB-065 | AC-TB-025 | integration-tier-sufficient | TC-I-012 covers the valid-token/unreachable branch over the real SP process and HTTP server; no Tier B runtime variant is needed. |
 | `osac-aap-mock` unit coverage | REQ-TB-080 | — | 15 (TC-U-560..574) | Counts toward the repo's 100%-unit-coverage gate, unlike the `TC-TB-*` rows below. TC-U-575/576 retired into TC-U-570/571 (DD-232). |
 | Phase 2 infra/terminal-state (`ClusterOrder` + `BareMetalInstance`, direct CR create) | REQ-TB-070, REQ-TB-080, REQ-TB-100, REQ-TB-110 | AC-TB-030, AC-TB-040 | 5 (TC-TB-060/080/090/110/120) | The Phase 2 deliverable — real reconciliation through a real AAP-layer fake (`ClusterOrder`) and real BMFO against a static host fixture (`BareMetalInstance`, DD-226/227), both via a direct CR create rather than an `osac-sp`-driven one (DD-218, #47). Supersedes the retired `TC-TB-100` deploy-only placeholder (DD-216 is now fully resolved, not just partially). |
 | `BareMetalInstance` fail-safe/release paths | REQ-TB-120 | AC-TB-050 | 4 (TC-TB-130/140/150/160) | Negative-path complement to TC-TB-110/120's happy path — no host, ineligible host, contended host, and delete-time release — all verified against BMFO's real upstream source before being written (DD-229), not assumed from the happy-path behavior. |
-| **Total** | 10 | 5 | **31** | |
+| **Total** | 11 | 6 | **28** | Phase 1 has 4 planned runtime/static checks and two integration-tier-sufficient failure branches; Phase 2 has 5 REQ (provisioning). The pending Hub-dispatch TC-TB-200 remains outside this plan's implemented count. |
+
+---
+
+## 8. E2E disposition for milestone-spec `REQ-*`/`AC-*` outside this tier's own scope (DD-234)
+
+| Milestone REQ group | Disposition | Rationale |
+|---|---|---|
+| `REQ-OSAC-040` (custom `TLSCertFile` CA vs. system root pool, as distinct branches) | integration-tier-sufficient | `TC-U-012`/`TC-U-013` already force both branches deterministically; Tier B's real Keycloak/`fulfillment-service` only ever exercises whichever branch this tier's own manifest configures (currently the custom-CA path, DD-151/cert-manager) — exercising the other branch e2e would just mean deploying a second variant to prove config plumbing already covered by config-loading unit tests. |
+
+All other Milestone 5/6 dispositions are recorded once, in
+`osac-sp-e2e-suite.test-plan.md` §7 (not duplicated here) — they apply
+identically regardless of which tier's backend is running underneath.

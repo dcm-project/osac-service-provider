@@ -1,7 +1,9 @@
 # The kind-based e2e CI pattern for DCM service providers
 
-**Status:** proven reference implementation, this repo. Copyable by any
-other `dcm-project` service provider (SP) repo today.
+**Status:** historical Phase A reference implementation. The control-plane /
+mock-provider workflow described below was retired in this repo by DD-237;
+`.github/workflows/e2e-tierb.yaml` is the active canonical E2E workflow. Keep
+this document for the lessons learned, but do not copy its Phase A topology.
 
 **Origin:** [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17)
 (FLPATH-4759), tracing back to
@@ -23,12 +25,12 @@ independently re-verified outside CI (see §7).
 
 ---
 
-## 1. The core idea
+## 1. The historical core idea
 
-**Own your mock-provider binary in your own repo. Own your own e2e GitHub
-Actions workflow in your own repo. Pull `control-plane` as a published
-upstream artifact (image + chart directory) rather than building it from
-source.**
+**Historical pattern:** own your mock-provider binary in your own repo. Own
+your own e2e GitHub Actions workflow in your own repo. Pull `control-plane` as
+a published upstream artifact (image + chart directory) rather than building
+it from source.
 
 ```
 kind cluster (GH-hosted ubuntu-latest runner: 4 vCPU / 16 GB RAM)
@@ -49,7 +51,7 @@ running as real pods in a real (if ephemeral) cluster. This validates the
 real-backend integration testing (that's `control-plane`'s own future
 cross-SP matrix, or your own Tier B — see §6).
 
-## 2. What to copy, file by file
+## 2. Historical files and lessons
 
 Everything below is this repo's own plain Kubernetes manifests / Go code —
 no shared library, no `dcm-project/utilities` dependency required (issue
@@ -63,7 +65,7 @@ repos can pull directly).
 | `test/mockprovider/*.go` | The actual fake service implementations + resource stores | Entirely SP-specific: fakes whatever your backend's API looks like |
 | `test/e2e/` (own `go.mod`) | The e2e assertions themselves (Ginkgo v2), plus `kind-config.yaml` | Assertions are SP-specific; the nested-module isolation trick (own `go.mod` so `k8s.io/client-go`/a control-plane REST client never enters your main module) is universal |
 | `test/e2e/manifests/` | Plain `Deployment`+`Service` YAML for your SP + your mock provider | Env-var wiring only |
-| `.github/workflows/e2e.yaml` | The GitHub Actions job itself | Copy near-verbatim; adjust image names and env vars |
+| `.github/workflows/e2e.yaml` | Retired Phase A GitHub Actions job | Historical reference only; use the Tier B workflow for this repo |
 
 ## 3. Building your own mock-provider binary
 
@@ -124,9 +126,12 @@ Design points worth copying regardless of your specific backend shape:
 - **No mocking framework** — hand-written fakes throughout, consistent with
   this project's broader testing convention.
 
-## 4. The GitHub Actions job
+## 4. The retired Phase A GitHub Actions job
 
-The full annotated version is `.github/workflows/e2e.yaml` in this repo.
+The full annotated version was `.github/workflows/e2e.yaml`; it is retained in
+git history, not as an active workflow. The active job is
+`.github/workflows/e2e-tierb.yaml` and uses the real fulfillment-service,
+Keycloak, environment-agent, NATS, and AAP-boundary mock topology.
 The shape, condensed:
 
 1. `docker build` your SP's image and your mock-provider's image (no
@@ -213,26 +218,22 @@ easy-to-miss log line:
 {"level":"ERROR","msg":"fatal error","error":"initializing: loading configuration: env: environment variable \"DCM_NATS_URL\" should not be empty"}
 ```
 
-This bit us twice in this repo specifically because we had **two** e2e
-manifests (`test/e2e/manifests/osac-service-provider.yaml` for Phase A,
-`test/e2e/manifests-tierb/osac-service-provider.yaml` for Tier B) and only
-remembered to update one of them when M5 landed — the fix had to be
-reapplied to the second manifest independently, weeks later, the next time
-someone touched that file. **If you have more than one e2e manifest for
-the same binary, grep all of them whenever your own `internal/config`
-gains a new required field.**
+This bit us in this repo specifically because the historical Phase A and Tier
+B manifests diverged when M5 landed — the fix had to be reapplied to the
+second manifest independently. The Phase A manifest is now retired; the
+remaining Tier B manifest is canonical. **If you have more than one E2E
+manifest for the same binary, grep all of them whenever your own
+`internal/config` gains a new required field.**
 
-## 6. Two-tier model: mocked backend now, real backend later (optional)
+## 6. Historical two-tier model: mocked backend first, real backend later
 
-Phase A (§1–§5) is the mandatory baseline: fast, deterministic, no external
+Phase A (§1–§5) was the former baseline: fast, deterministic, no external
 service dependency beyond `control-plane` itself. Once your SP's own
 Milestone/CRUD work has landed and you want to close the
 "mock accurately models the real API" gap, a second **Tier B** workflow
-variant can swap only the mocked backend for the real one — everything
-else (kind, `control-plane`, your SP's own manifest wiring) stays
-identical. This repo's Tier B
+variant could swap only the mocked backend for the real one. This repo's Tier B
 (`.github/workflows/e2e-tierb.yaml`, `.ai/specs/osac-sp-e2e-tier-b.spec.md`)
-replaces `osac-mock-provider` with:
+replaced `osac-mock-provider` with:
 
 - A real, vendored Keycloak realm (own repo's `test/e2e/tierb-config/realm.json`).
 - The real, published upstream backend chart, installed via `helm
@@ -281,13 +282,13 @@ neither alone would have been sufficient.
       ship (DD-224).
 - [ ] Write `test/e2e/` as its own nested Go module (own `go.mod`) so its
       test-only dependencies never enter your main module.
-- [ ] Write plain `Deployment`+`Service` manifests for your SP + your mock
-      provider (`test/e2e/manifests/`).
-- [ ] Copy `.github/workflows/e2e.yaml`'s structure; adjust image names,
-      manifest paths, and your suite's env vars.
-- [ ] **Pin `CONTROL_PLANE_REF` to a short-SHA, and `CONTROL_PLANE_IMAGE_TAG`
-      to the matching quay.io tag** — never `main` (§5a). Verify the pinned
-      commit's own `build-push` check succeeded before relying on it.
+- [ ] Write plain `Deployment`+`Service` manifests for your SP and its real
+      backend/boundary test doubles as appropriate for your architecture.
+- [ ] Use `.github/workflows/e2e-tierb.yaml` as the current workflow reference;
+      do not copy the retired control-plane Phase A workflow.
+- [ ] Pin every external OSAC image/chart dependency to an immutable release
+      version; never rely on `main`/`latest`. Verify the pinned artifact exists
+      before relying on it.
 - [ ] Confirm `quay.io/dcm-project/<your-sp>` already exists as a
       repository before your first `build-push-quay.yaml` run — org secrets
       (`QUAY_TOKEN`/`QUAY_USERNAME`) authenticate fine even against a

@@ -1,9 +1,9 @@
 # Test-only TLS fixture
 
 `tls-cert.pem` / `tls-key.pem` are a static, self-signed EC (P-256)
-certificate/key pair generated once for this repo's own tests and e2e Phase
-1 infra (`test/mockprovider`, `test/cmd/osac-mock-provider`,
-`test/e2e/manifests/`). They exist so those fakes can terminate real TLS
+certificate/key pair generated once for this repo's own tests and the
+standalone mock-provider process integration tests (`test/mockprovider`,
+`test/cmd/osac-mock-provider`). They exist so those fakes can terminate real TLS
 instead of plaintext, now that `osac-sp`'s fulfillment-service dial is
 unconditionally TLS (DD-229) with no insecure fallback.
 
@@ -13,8 +13,8 @@ unconditionally TLS (DD-229) with no insecure fallback.
   secrets). Nothing behind this certificate is real; it is never used
   outside this repo's own tests/CI.
 - **SANs:** `localhost`, `127.0.0.1` (Go integration tests dialing over
-  loopback), `osac-mock-provider` (the Service DNS name `osac-sp` resolves
-  in the e2e Phase 1 `kind` cluster).
+  loopback), and `osac-mock-provider` (retained for process-level tests that
+  exercise the service by hostname).
 - **Validity:** 10 years from generation (2026-09-01). No rotation
   mechanism is needed for a static test fixture; regenerate by hand (e.g.
   `openssl req -new -x509 -key tls-key.pem -days 3650 ...` with the same

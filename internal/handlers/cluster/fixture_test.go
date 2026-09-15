@@ -138,9 +138,14 @@ func (s *fakeClustersServer) GetCallCount() int {
 // care about node-set resolution — a single fixed key is enough here.
 type fakeClusterTemplatesServer struct {
 	publicv1.UnimplementedClusterTemplatesServer
+
+	getFunc func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error)
 }
 
-func (s *fakeClusterTemplatesServer) Get(context.Context, *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+func (s *fakeClusterTemplatesServer) Get(_ context.Context, req *publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+	if s.getFunc != nil {
+		return s.getFunc(req)
+	}
 	return &publicv1.ClusterTemplatesGetResponse{Object: &publicv1.ClusterTemplate{
 		NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {}},
 	}}, nil
@@ -247,12 +252,13 @@ type realHandler struct {
 // the real chi router and strict adapter to the real clusterhandlers.Handler,
 // backed by a bufconn fake OSAC server — for TC-I-2xx.
 type integrationFixture struct {
-	addr   string
-	fake   *fakeClustersServer
-	conn   *grpc.ClientConn
-	grpc   *grpc.Server
-	cancel context.CancelFunc
-	done   <-chan error
+	addr      string
+	fake      *fakeClustersServer
+	templates *fakeClusterTemplatesServer
+	conn      *grpc.ClientConn
+	grpc      *grpc.Server
+	cancel    context.CancelFunc
+	done      <-chan error
 }
 
 func newIntegrationFixture() *integrationFixture {
@@ -265,8 +271,9 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
+	templates := &fakeClusterTemplatesServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
-	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
+	publicv1.RegisterClusterTemplatesServer(grpcSrv, templates)
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -303,7 +310,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 		return dialErr
 	}, "500ms", "5ms").Should(Succeed())
 
-	return &integrationFixture{addr: addr, fake: fake, conn: conn, grpc: grpcSrv, cancel: cancel, done: done}
+	return &integrationFixture{addr: addr, fake: fake, templates: templates, conn: conn, grpc: grpcSrv, cancel: cancel, done: done}
 }
 
 func (f *integrationFixture) URL(path string) string {

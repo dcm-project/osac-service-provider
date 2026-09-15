@@ -1,0 +1,80 @@
+# environment-agent, Tier B registration target (DD-203). It runs inside the
+# kind cluster so it can resolve and health-check osac-service-provider's
+# in-cluster Service endpoint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: environment-agent
+  labels:
+    app.kubernetes.io/name: environment-agent
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: environment-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: environment-agent
+    spec:
+      containers:
+        - name: environment-agent
+          image: environment-agent:e2e
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+          env:
+            - name: AGENT_NAME
+              value: "tierb-environment-agent"
+            - name: AGENT_ENVIRONMENT
+              value: "tierb"
+            - name: AGENT_COST
+              value: "low"
+            # This suite exercises the agent's SP API, not the agent's own
+            # upstream DCM registration. Keep that unrelated dependency
+            # unreachable while allowing the agent to start normally.
+            - name: DCM_REGISTRATION_URL
+              value: "http://127.0.0.1:19999/api/v1alpha1"
+            - name: AGENT_MESSAGING_URL
+              value: "nats://nats:4222"
+            - name: AGENT_SERVER_ADDRESS
+              value: ":8090"
+            - name: AGENT_SP_PERSISTENCE_PATH
+              value: "/var/lib/environment-agent/registrations.json"
+          readinessProbe:
+            httpGet:
+              path: /api/v1alpha1/health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /api/v1alpha1/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: registrations
+              mountPath: /var/lib/environment-agent
+      volumes:
+        - name: registrations
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: environment-agent
+  labels:
+    app.kubernetes.io/name: environment-agent
+    app.kubernetes.io/part-of: osac-sp-e2e-tierb
+spec:
+  selector:
+    app.kubernetes.io/name: environment-agent
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+      protocol: TCP

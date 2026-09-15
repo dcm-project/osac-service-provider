@@ -1,5 +1,9 @@
 # Specification: Tier B e2e — real OSAC stack, phased through full provisioning fidelity
 
+> **Status: Canonical active E2E specification (DD-237).** The former Phase A
+> control-plane/mock-provider workflow is retired; this Tier B topology is the
+> only E2E workflow maintained by this repository.
+
 ## 1. Overview
 
 Follow-up to [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17)
@@ -74,9 +78,9 @@ repos last published before the freeze — those are permanently frozen at
 
 - [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17) —
   original e2e scope boundary this spec extends
-- [`osac-sp-e2e-suite.spec.md`](./osac-sp-e2e-suite.spec.md) — Phase A,
-  already merged; Tier B replaces only `osac-mock-provider`'s role, keeping
-  `control-plane`+`osac-sp` deployment as-is
+- [`osac-sp-e2e-suite.spec.md`](./osac-sp-e2e-suite.spec.md) — shared e2e
+  requirements and Phase A baseline; Tier B replaces `osac-mock-provider` and
+  the legacy registration target with real OSAC and environment-agent
 - [PR #19](https://github.com/dcm-project/osac-service-provider/pull/19) —
   the spike that established `it.NewTool()` is importable (informational;
   not depended on by this spec's chosen approach, see DD-149)
@@ -105,17 +109,25 @@ dispatch (rather than this phase's direct CR create) is deferred to
 
 ```
 kind cluster
-├── dcm-postgres, dcm-nats, dcm-control-plane   (unchanged from Phase A)
-├── osac-service-provider                       (unchanged from Phase A, this repo's own manifest)
-├── cert-manager        (NEW — upstream release manifest; hard prerequisite of fulfillment-service's own chart, all variants — see DD-151)
-├── ffs-postgres        (NEW — plain manifest, this repo's own; 2 DBs: keycloak, service)
-├── ffs-keycloak        (NEW — plain manifest; official Keycloak image + vendored realm.json)
-└── ffs-fulfillment-service (NEW — real published chart, `oci://ghcr.io/osac-project/charts/fulfillment-service`, pinned `--version`, `variant: kind`; replaces osac-mock-provider — see DD-151)
+├── cert-manager              (upstream release manifest; hard prerequisite of fulfillment-service's own chart — see DD-151)
+├── ffs-postgres              (plain manifest; 2 DBs: keycloak, service)
+├── ffs-keycloak              (official Keycloak image + vendored realm.json)
+├── ffs-fulfillment-service   (real published chart, `oci://ghcr.io/osac-project/charts/fulfillment-service`, pinned `--version`)
+├── environment-agent         (real binary, built from the pinned e2e module dependency)
+├── nats                      (JetStream broker required by environment-agent and osac-sp)
+├── osac-service-provider     (this repo's own manifest; wired to environment-agent + ffs stack)
+└── (Phase 2 additions below)
 ```
 
-- `osac-mock-provider` (Phase A) is **removed** from the stack in Tier B
-  runs; `osac-sp`'s `SP_OSAC_*` env vars point at `ffs-fulfillment-service`
-  and `ffs-keycloak` instead.
+**Phase 1 to Phase 2 migration (DD-203, PR #59):**
+- `dcm-control-plane` removed from workflow (replaced by environment-agent as registration target)
+- `osac-mock-provider` removed (replaced by real fulfillment-service)
+- `environment-agent` and NATS run inside the kind cluster as real Deployments;
+  the agent can therefore resolve and health-check `osac-service-provider`'s
+  in-cluster Service endpoint
+- `osac-sp` registration now targets `environment-agent` at
+  `http://environment-agent:8090/api/v1alpha1`; the agent API is
+  port-forwarded to the host only for test assertions
 - No `osac-operator`/BMFO/AAP anywhere yet — matches upstream's own `it`
   package's scope exactly (their controller reconciles `ClusterOrder`/
   `BareMetalInstance` CRs for real, but nothing downstream watches them).
@@ -168,12 +180,13 @@ kind cluster
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-TB-010 | The Tier B workflow MUST deploy real Postgres, real Keycloak (official image + vendored realm import), and real `fulfillment-service` (pinned image + chart) in place of `osac-mock-provider`, leaving `control-plane`+`osac-sp` deployment unchanged from Phase A | MUST | |
+| REQ-TB-010 | The Tier B workflow MUST deploy real Postgres, real Keycloak (official image + vendored realm import), and real `fulfillment-service` (pinned image + chart) in place of `osac-mock-provider`. Phase 2 (DD-203): registration target migrated from `control-plane` to a real `environment-agent` Deployment in the kind cluster, with NATS available as its messaging dependency; `osac-sp` deployment wiring updated to match | MUST | Phase 2 per issue #44 |
 | REQ-TB-020 | The vendored Keycloak realm config MUST define `client_credentials`-capable clients (`osac-admin`, `osac-controller`) with the same custom `clientScopes` (`osac-api`, `username`, `groups`) real OSAC's own production install doc defines. Issued tokens for these clients MUST carry a `username` claim and an `osac-api` audience claim; the `groups` scope/mapper MUST be present in the realm config, but is not itself a guaranteed claim on every issued token — a service account with no group memberships MUST NOT be expected to carry a `groups` claim (Keycloak's `oidc-group-membership-mapper` omits the claim entirely, not an empty array, in that case) | MUST | Source: `fulfillment-service/docs/INSTALL.md`'s `KeycloakRealmImport` example — corrected from an earlier, unverified assumption (`organization`/`realm_access.roles`); further corrected (empty-`groups` semantics) after a live spike, see DD-150 |
 | REQ-TB-030 | `osac-sp`'s `SP_OSAC_OIDC_ISSUER_URL`/`SP_OSAC_OIDC_CLIENT_ID`/`_SECRET`/`SP_OSAC_FULFILLMENT_ADDRESS` MUST point at the real `ffs-keycloak`/`ffs-fulfillment-service` services, with credentials matching a real vendored client | MUST | |
 | REQ-TB-040 | The e2e suite MUST assert `osac-sp`'s health endpoints report real, successful OIDC token acquisition and gRPC `Capabilities` connectivity against real OSAC — not just against the Phase A mock | MUST | Same assertions as `AC-E2E-030`, re-run against the real backend |
 | REQ-TB-050 | The workflow MUST pin exact `vX.Y.Z` image/chart tags for every OSAC component (never `main`/`latest`) | MUST | Upstream's own `check-floating-tags.yaml` CI guard confirms `main`/`latest` are untrusted as "current" |
-| REQ-TB-060 | A deliberately wrong/missing client credential MUST result in `osac-sp` reporting `unhealthy` with an auth-failure detail — proving Tier B can actually detect what Phase A's permissive mock structurally cannot | MUST | The core deliverable this tier exists for |
+| REQ-TB-060 | The integration test suite MUST prove that an OIDC token endpoint rejection results in `osac-sp` reporting `unhealthy` with an auth-failure detail while OSAC remains reachable | MUST | Integration-tier-sufficient via TC-I-018; no separate real-Keycloak kind variant is required |
+| REQ-TB-065 | The integration test suite MUST prove that valid OIDC credentials plus an unreachable OSAC gRPC endpoint result in `osac-sp` reporting `unhealthy` with a connectivity-only detail, distinct from an auth-failure detail | MUST | Integration-tier-sufficient via TC-I-012; no separate kind deployment is required |
 
 ### Phase 2 (REQ-TB-090's M2+ gate satisfied; implementation landing, ongoing — see #47)
 
@@ -200,15 +213,27 @@ kind cluster
 - **Then** both succeed against the real backend, and `osac-sp`'s own health
   endpoints report `status: healthy` reflecting that real success
 
-##### AC-TB-020: A real auth failure is genuinely detectable
+##### AC-TB-020: A real auth failure is genuinely detectable (integration-tier sufficient)
 
 - **Validates:** REQ-TB-060
-- **Given** the Phase 1 stack, but `osac-sp` configured with a client secret
-  that doesn't match any vendored Keycloak client
+- **Disposition:** integration-tier-sufficient via TC-I-018; the full-stack
+  integration harness uses a real SP process and HTTP server, a token endpoint
+  that rejects credentials, and a reachable loopback gRPC endpoint.
 - **When** `osac-sp` attempts its token fetch
 - **Then** it fails, and `osac-sp`'s health endpoint reports `status:
-  unhealthy` with an auth-failure detail — proving this tier can catch what
-  Phase A structurally cannot
+  unhealthy` with exactly `"OIDC token invalid"` and no connectivity detail
+
+##### AC-TB-025: OSAC unreachable is genuinely detectable, distinct from an auth failure (integration-tier sufficient)
+
+- **Validates:** REQ-TB-065
+- **Disposition:** integration-tier-sufficient via TC-I-012; the full-stack
+  integration harness uses a real SP process and HTTP server, a successful
+  fake OIDC token fetch, and an unreachable loopback gRPC endpoint.
+- **When** `osac-sp` fetches its OIDC token (succeeds) and probes the
+  unreachable OSAC gRPC endpoint
+- **Then** its health endpoint reports `status: unhealthy` with a detail
+  equal to exactly `"OSAC fulfillment service unreachable"`, never combined
+  with or confused for the AC-TB-020 token-invalid detail
 
 ##### AC-TB-030 (Phase 2): A real `ClusterOrder` reaches a real terminal state
 
