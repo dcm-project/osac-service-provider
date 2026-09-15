@@ -118,6 +118,27 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 
 		Expect(f.fake.CreateCallCount()).To(Equal(1))
 	})
+
+	// TC-I-205 (REQ-CREATE-100, REQ-ERR-010, AC-CREATE-080): an OSAC
+	// ClusterTemplates/Get NotFound for an unknown template is mapped to the
+	// public invalid-argument problem at the real HTTP boundary.
+	It("rejects an unknown template_id with 400 InvalidArgument, not 404, over real HTTP (TC-I-205)", func() {
+		f.templates.getFunc = func(*publicv1.ClusterTemplatesGetRequest) (*publicv1.ClusterTemplatesGetResponse, error) {
+			return nil, grpcstatus.Error(codes.NotFound, "no such cluster template")
+		}
+		body := strings.Replace(validCreateJSON, "default-hcp", "nonexistent-template", 1)
+
+		resp := postCreate(f, body)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
+		var problem v1alpha1.Error
+		Expect(json.NewDecoder(resp.Body).Decode(&problem)).To(Succeed())
+		Expect(problem.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
+		Expect(problem.Title).To(Equal("Bad Request"))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
 })
 
 var _ = Describe("Cluster Create version-matrix validation (integration, real HTTP + router + bufconn OSAC fake)", func() {

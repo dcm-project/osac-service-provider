@@ -1,9 +1,12 @@
-# Specification: `osac-mock-provider` — Phase 1 of the kind-based e2e infra
+# Specification: `osac-mock-provider` test fixture
+
+> **Status: Retained test fixture, not an E2E deployment (DD-237).** Its own
+> unit and process-level integration tests remain useful; the retired Phase A
+> workflow no longer deploys this binary.
 
 ## 1. Overview
 
-Phase 1 of [osac-service-provider#17](https://github.com/dcm-project/osac-service-provider/issues/17)
-(FLPATH-4759): a standalone binary, `test/cmd/osac-mock-provider` (moved
+This is a standalone test binary, `test/cmd/osac-mock-provider` (moved
 from repo-root `cmd/osac-mock-provider` per DD-224: test-only binaries stay
 out of `cmd/`, which is reserved for shipped product code), that fakes the
 **OSAC backend side** of the gRPC contract `osac-sp` dials — a real
@@ -12,9 +15,9 @@ out of `cmd/`, which is reserved for shipped product code), that fakes the
 `VirtualNetworks` services, plus a real HTTP OIDC discovery-and-token stub
 satisfying `internal/osac.Bootstrap`'s client-credentials flow.
 
-This is what makes the rest of FLPATH-4759 (a `kind` cluster running real
-`control-plane` + real `osac-sp` + this mock, in a GitHub Actions job)
-possible without needing OSAC's real `fulfillment-service` or Keycloak.
+Historically this binary supported the Phase A kind workflow. It now remains
+only as a focused wire-level fixture for its own unit and process-level
+integration tests; Tier B uses real fulfillment-service and Keycloak instead.
 
 **This spec covers the mock-provider binary only.** Explicitly out of scope
 (deferred to a follow-up, Phase 2 of issue #17):

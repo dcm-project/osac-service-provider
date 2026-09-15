@@ -142,9 +142,12 @@ func startRunningServer(cfg *config.Config, logger *slog.Logger, handler oapigen
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	Expect(err).NotTo(HaveOccurred())
 
-	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel stored and called via rs.cancel() in test defer blocks; gosec can't trace across function boundaries
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- srv.Run(ctx, ln) }()
+	go func() {
+		defer cancel()
+		done <- srv.Run(ctx, ln)
+	}()
 
 	addr := ln.Addr().String()
 	Eventually(func() error {

@@ -427,6 +427,7 @@ func startSP(startGRPC bool) *spHarness {
 type spStartOptions struct {
 	startGRPC      bool
 	keycloakDown   bool
+	tokenStatus    int
 	agentResponder func(agentv1alpha1.Provider) (int, any, string)
 }
 
@@ -457,6 +458,9 @@ func startSPWithOptions(opts spStartOptions) *spHarness {
 	issuerURL := h.keycloak.IssuerURL()
 	if opts.keycloakDown {
 		h.keycloak.Close()
+	}
+	if opts.tokenStatus != 0 {
+		h.keycloak.SetTokenStatus(opts.tokenStatus)
 	}
 
 	grpcAddr := reserveLoopbackAddr()
@@ -559,14 +563,41 @@ var _ = Describe("Health end-to-end (integration)", func() {
 		Expect(status).To(Equal(http.StatusOK))
 	})
 
-	// TC-I-012: OSAC gRPC unreachable -> unhealthy, HTTP 200.
-	It("reports unhealthy (HTTP 200) when the OSAC gRPC server is unreachable (TC-I-012)", func() {
-		h := startSP(false) // gRPC server deliberately not started
+	// TC-I-018: token endpoint rejects the credentials -> unhealthy with an
+	// auth-only detail while the OSAC gRPC service remains reachable.
+	It("reports an authentication-only failure when the token endpoint rejects credentials (TC-I-018)", func() {
+		h := startSPWithOptions(spStartOptions{startGRPC: true, tokenStatus: http.StatusUnauthorized})
 		defer h.stop()
+
+		Eventually(func() any {
+			_, body := h.getHealth("/api/v1alpha1/clusters/health")
+			return body["detail"]
+		}, "2s", "20ms").Should(Equal("OIDC token invalid"))
 
 		status, body := h.getHealth("/api/v1alpha1/clusters/health")
 		Expect(status).To(Equal(http.StatusOK))
 		Expect(body["status"]).To(Equal("unhealthy"))
+		Expect(body["detail"]).To(Equal("OIDC token invalid"))
+	})
+
+	// TC-I-012: OSAC gRPC unreachable while the token is valid -> unhealthy with
+	// a connectivity-only detail, HTTP 200.
+	It("reports unhealthy (HTTP 200) when the OSAC gRPC server is unreachable (TC-I-012)", func() {
+		h := startSP(false) // gRPC server deliberately not started
+		defer h.stop()
+
+		// Token acquisition runs asynchronously. Poll the detail so this case
+		// cannot accidentally pass while both token and connectivity are still
+		// unhealthy during cold start.
+		Eventually(func() any {
+			_, body := h.getHealth("/api/v1alpha1/clusters/health")
+			return body["detail"]
+		}, "2s", "20ms").Should(Equal("OSAC fulfillment service unreachable"))
+
+		status, body := h.getHealth("/api/v1alpha1/clusters/health")
+		Expect(status).To(Equal(http.StatusOK))
+		Expect(body["status"]).To(Equal("unhealthy"))
+		Expect(body["detail"]).To(Equal("OSAC fulfillment service unreachable"))
 	})
 
 	// TC-I-013: recovers once OSAC becomes reachable, proving the probe is

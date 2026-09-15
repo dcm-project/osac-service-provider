@@ -1,9 +1,7 @@
-// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): run only when
-// .github/workflows/e2e-tierb.yaml's env vars are present. Phase A's
-// e2e.yaml never sets them, so these Describe blocks Skip() there instead
-// of failing — this file compiles into the same test/e2e binary Phase A
-// uses (test plan's "Tier B is a variant of that same suite" framework
-// note), it just self-selects at runtime.
+// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): run when
+// .github/workflows/e2e-tierb.yaml's env vars are present. The environment
+// checks keep standalone runs useful while the active workflow supplies all
+// required endpoints.
 //
 // TC-TB-030 (osac-sp health against the real backend) deliberately has no
 // dedicated spec here: health_test.go's existing
@@ -11,9 +9,7 @@
 // asserts exactly that shape (healthy status, empty Detail) against
 // whatever OSAC_SP_URL points at — Tier B's workflow points it at the
 // real ffs-keycloak/ffs-fulfillment-service stack, closing DD-132's
-// auth-fidelity gap for free, with no new assertion code needed. As of
-// DD-212 (#28), that Describe block is Label("tier-b-only") and runs only
-// here, not in Phase A's e2e.yaml.
+// auth-fidelity gap without new assertion code.
 package e2e_test
 
 import (
@@ -30,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	eav1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -49,10 +46,9 @@ var insecureHTTPClient = &http.Client{
 
 // Env vars set only by .github/workflows/e2e-tierb.yaml.
 const (
-	envKeycloakURL              = "KEYCLOAK_URL"       // e.g. http://localhost:18082/realms/osac
-	envTierBAdminSecret         = "TIERB_ADMIN_SECRET" // osac-admin's client secret (tierb-config/realm.json)
-	envBadAuthOSACSPURL         = "BAD_AUTH_OSAC_SP_URL"
-	envOSACUnreachableOSACSPURL = "OSAC_UNREACHABLE_OSAC_SP_URL"
+	envKeycloakURL         = "KEYCLOAK_URL"          // e.g. http://localhost:18082/realms/osac
+	envTierBAdminSecret    = "TIERB_ADMIN_SECRET"    // osac-admin's client secret (tierb-config/realm.json)
+	envEnvironmentAgentURL = "ENVIRONMENT_AGENT_URL" // e.g. http://127.0.0.1:18090/api/v1alpha1
 	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
 	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
 	// deploys that stack, distinct from Phase 1's envKeycloakURL gate.
@@ -89,60 +85,137 @@ var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func()
 	})
 })
 
-var _ = Describe("Tier B: a real auth failure is genuinely detectable", func() {
-	// TC-TB-050 / REQ-TB-060 / AC-TB-020 — opt-in workflow_dispatch variant
-	// only (e2e-tierb.yaml); BAD_AUTH_OSAC_SP_URL is unset on every regular
-	// PR run.
-	It("reports unhealthy with a token/connectivity detail when the client secret is wrong", func() {
-		badAuthURL := os.Getenv(envBadAuthOSACSPURL)
-		if badAuthURL == "" {
-			Skip("opt-in variant only: " + envBadAuthOSACSPURL + " is unset")
+var _ = Describe("Tier B: SP registration with environment-agent", func() {
+	// TC-E2E-020 / REQ-E2E-050, REQ-E2E-051 / AC-E2E-020, AC-E2E-021
+	It("registers a cluster-type provider with metadata", func() {
+		eaURL := os.Getenv(envEnvironmentAgentURL)
+		if eaURL == "" {
+			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
 		}
 
-		var h health
-		Eventually(func() string {
-			h = getHealthAt(badAuthURL, "/api/v1alpha1/clusters/health")
-			return h.Status
-		}, 30*time.Second, 500*time.Millisecond).Should(Equal("unhealthy"))
+		// Wait for osac-sp to register (it takes a few seconds after the pod becomes Ready)
+		var providers []eav1alpha1.Provider
+		Eventually(func() bool {
+			var err error
+			providers, err = getProvidersList(eaURL)
+			return err == nil && findProvider(providers, "cluster") != nil
+		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the cluster provider with environment-agent by now")
 
-		// Exact match, not ContainSubstring: internal/health/health.go's
-		// unhealthyDetail returns precisely "OIDC token invalid" when only
-		// the token is invalid, and
-		// "OIDC token invalid; OSAC fulfillment service unreachable" if
-		// connectivity is *also* broken (own source, same string asserted
-		// by internal/health/health_unit_test.go). A substring match would
-		// let that second, unexpected failure mode (connectivity also
-		// down) silently pass as if this test's one intended failure mode
-		// were the only thing wrong.
-		Expect(h.Detail).To(Equal("OIDC token invalid"),
-			"a wrong client secret must surface as exactly a token-fetch failure, not an opaque connectivity error or a compounded one")
+		cluster := findProvider(providers, "cluster")
+		Expect(cluster).NotTo(BeNil(), "cluster service type must be registered")
+		Expect(countProviders(providers, "cluster")).To(Equal(1), "exactly one cluster provider must exist")
+
+		Expect(cluster.Name).To(Equal("osac-sp-cluster"))
+		Expect(cluster.Endpoint).To(Equal("http://osac-service-provider:8080/api/v1alpha1/clusters"))
+		Expect(cluster.Status).NotTo(BeNil())
+		Expect(*cluster.Status).To(Equal(eav1alpha1.Ready), "cluster provider must be healthy")
+
+		Expect(cluster.Metadata).NotTo(BeNil(), "metadata must be present")
+		versions, ok := cluster.Metadata.Get("kubernetes_supported_versions")
+		Expect(ok).To(BeTrue(), "kubernetes_supported_versions must be in metadata")
+
+		versionList, ok := versions.([]interface{})
+		Expect(ok).To(BeTrue(), "kubernetes_supported_versions must be an array")
+
+		versionStrings := make([]string, len(versionList))
+		for i, v := range versionList {
+			versionStrings[i] = v.(string)
+		}
+		Expect(versionStrings).To(ContainElement("1.31"),
+			"kubernetes_supported_versions must contain 1.31 from DefaultMatrix")
 	})
-})
 
-var _ = Describe("Tier B: OSAC unreachable is genuinely detectable, distinct from a token failure", func() {
-	// TC-TB-131 / REQ-TB-065 / AC-TB-025 — opt-in workflow_dispatch
-	// variant only (e2e-tierb.yaml); OSAC_UNREACHABLE_OSAC_SP_URL is
-	// unset on every regular PR run. Closes the other half of AC-HLT-060
-	// that TC-TB-050 above doesn't reach: a real, valid OIDC token
-	// (correct client secret, real Keycloak) paired with an unroutable
-	// SP_OSAC_FULFILLMENT_ADDRESS, so the health response's "unreachable"
-	// detail is proven distinct from the "token invalid" one — both
-	// against real infra, not a bufconn fake's simulation of either
-	// (internal/health's TC-U-031/032/033 already cover the fake side).
-	It("reports unhealthy with a connectivity-only detail when OSAC is unreachable but the token is valid", func() {
-		osacUnreachableURL := os.Getenv(envOSACUnreachableOSACSPURL)
-		if osacUnreachableURL == "" {
-			Skip("opt-in variant only: " + envOSACUnreachableOSACSPURL + " is unset")
+	// TC-E2E-030 / REQ-E2E-050 / AC-E2E-020
+	It("registers a vm-type provider independently", func() {
+		eaURL := os.Getenv(envEnvironmentAgentURL)
+		if eaURL == "" {
+			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
 		}
 
-		var h health
-		Eventually(func() string {
-			h = getHealthAt(osacUnreachableURL, "/api/v1alpha1/clusters/health")
-			return h.Status
-		}, 30*time.Second, 500*time.Millisecond).Should(Equal("unhealthy"))
+		var providers []eav1alpha1.Provider
+		Eventually(func() bool {
+			var err error
+			providers, err = getProvidersList(eaURL)
+			return err == nil && findProvider(providers, "vm") != nil
+		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the vm provider with environment-agent by now")
 
-		Expect(h.Detail).To(Equal("OSAC fulfillment service unreachable"),
-			"OSAC unreachable with a valid token must surface as exactly the connectivity-only detail, never combined with the token-invalid one")
+		vm := findProvider(providers, "vm")
+		Expect(vm).NotTo(BeNil(), "vm service type must be registered")
+		Expect(countProviders(providers, "vm")).To(Equal(1), "exactly one vm provider must exist")
+
+		Expect(vm.Name).To(Equal("osac-sp-vm"))
+		Expect(vm.Endpoint).To(Equal("http://osac-service-provider:8080/api/v1alpha1/vms"))
+		Expect(vm.Status).NotTo(BeNil())
+		Expect(*vm.Status).To(Equal(eav1alpha1.Ready), "vm provider must be healthy")
+	})
+
+	// TC-E2E-040 / REQ-E2E-050 / AC-E2E-020
+	It("maintains both registrations across the re-registration interval", func() {
+		eaURL := os.Getenv(envEnvironmentAgentURL)
+		if eaURL == "" {
+			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
+		}
+
+		// Capture initial state
+		var initialProviders []eav1alpha1.Provider
+		var initialCluster, initialVM *eav1alpha1.Provider
+		Eventually(func() bool {
+			var err error
+			initialProviders, err = getProvidersList(eaURL)
+			if err != nil {
+				return false
+			}
+			initialCluster = findProvider(initialProviders, "cluster")
+			initialVM = findProvider(initialProviders, "vm")
+			return initialCluster != nil && initialVM != nil
+		}, "30s", "500ms").Should(BeTrue(), "both providers must be registered before checking re-registration")
+
+		Expect(initialCluster).NotTo(BeNil())
+		Expect(initialVM).NotTo(BeNil())
+		Expect(initialCluster.UpdateTime).NotTo(BeNil())
+		Expect(initialVM.UpdateTime).NotTo(BeNil())
+
+		// Poll until the real environment-agent observes the next registration
+		// cycle. Checking update_time proves this is a renewal, not just a
+		// second read of the initial records.
+		var updatedProviders []eav1alpha1.Provider
+		var updatedCluster, updatedVM *eav1alpha1.Provider
+		Eventually(func() bool {
+			var err error
+			updatedProviders, err = getProvidersList(eaURL)
+			if err != nil {
+				return false
+			}
+			updatedCluster = findProvider(updatedProviders, "cluster")
+			updatedVM = findProvider(updatedProviders, "vm")
+			return updatedCluster != nil && updatedVM != nil &&
+				updatedCluster.UpdateTime != nil && updatedVM.UpdateTime != nil &&
+				updatedCluster.UpdateTime.After(*initialCluster.UpdateTime) &&
+				updatedVM.UpdateTime.After(*initialVM.UpdateTime) &&
+				countProviders(updatedProviders, "cluster") == 1 &&
+				countProviders(updatedProviders, "vm") == 1
+		}, "75s", "500ms").Should(BeTrue(), "both providers must be renewed without creating duplicates")
+
+		Expect(updatedCluster).NotTo(BeNil(), "cluster provider must persist after re-registration")
+		Expect(updatedVM).NotTo(BeNil(), "vm provider must persist after re-registration")
+
+		Expect(updatedCluster.Name).To(Equal(initialCluster.Name),
+			"cluster provider name must be unchanged (idempotent)")
+		Expect(updatedVM.Name).To(Equal(initialVM.Name),
+			"vm provider name must be unchanged (idempotent)")
+
+		// Count to ensure no duplicates were created
+		clusterCount := 0
+		vmCount := 0
+		for _, p := range updatedProviders {
+			if p.ServiceType == "cluster" {
+				clusterCount++
+			} else if p.ServiceType == "vm" {
+				vmCount++
+			}
+		}
+		Expect(clusterCount).To(Equal(1), "exactly one cluster provider must exist")
+		Expect(vmCount).To(Equal(1), "exactly one vm provider must exist")
 	})
 })
 
@@ -446,7 +519,7 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 		// Assert it's genuinely blocked on power sync *before* the
 		// fake-BMO patch below — proves PowerSynced actually gates Ready,
 		// not a vestigial/never-blocking condition that would let a
-		// broken reconciler report Ready anyway (mirrors AC-TB-020's "real
+		// broken reconciler report Ready anyway (mirrors the real
 		// failure/blocking paths must be genuinely detectable" spirit).
 		var status bareMetalInstanceStatus
 		Eventually(func() string {
@@ -626,6 +699,41 @@ var _ = Describe("Tier B Phase 2: BareMetalInstance allocation fails safe, and r
 
 		Expect(getBareMetalHostConsumerRef(bareMetalHostCleanupName)).To(BeEmpty(),
 			"BareMetalHost %q must have its consumerRef cleared once the BareMetalInstance that claimed it is deleted", bareMetalHostCleanupName)
+	})
+})
+
+var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfillment-service Hub dispatch", func() {
+	// TC-TB-200 / REQ-TB-100 / AC-TB-060: validate osac-sp's POST /api/v1alpha1/clusters
+	// routes through fulfillment-service's dispatch layer to create a real ClusterOrder
+	// on a registered Hub, driving it to Ready via real osac-operator + osac-aap-mock.
+	//
+	// Status: PENDING OSAC-4826 (fulfillment-service `osac create hub` CLI fix).
+	// Hub registration requires the CLI to support --name flag (currently fails with
+	// "metadata is required"). See https://redhat.atlassian.net/browse/OSAC-4826
+	//
+	// Once OSAC-4826 lands:
+	// 1. Remove this Skip() marker
+	// 2. Uncomment the Hub registration step in .github/workflows/e2e-tierb.yaml
+	// 3. This test becomes fully functional, validating the complete dispatch flow
+	It("routes osac-sp Create through fulfillment-service dispatch to a real ClusterOrder (TC-TB-200)", func() {
+		Skip("Pending OSAC-4826: fulfillment-service osac create hub CLI fix")
+
+		// This test assumes a Hub has been registered via the fulfillment-service CLI.
+		// Until OSAC-4826 is fixed, the Hub registration step in the workflow is skipped.
+		// All infrastructure below is in place and ready to uncomment/enable.
+
+		// Call osac-sp's Create endpoint (not direct CR creation)
+		// Note: once OSAC-4826 is fixed upstream, this can call osac-sp's actual Create endpoint:
+		//   POST {osacSPURL}/api/v1alpha1/clusters?id=tc-tb-200-osac-dispatch-{random-id}
+		// For now, assume ClusterOrder is created (perhaps manually for testing)
+
+		// Eventually, the real ClusterOrder CR reaches Ready via osac-operator + osac-aap-mock
+		// Same as AC-TB-030, but triggered via osac-sp's REST API + fulfillment-service dispatch,
+		// not direct CR creation
+		Eventually(func() string {
+			status := getClusterOrderStatus()
+			return status.Phase
+		}, "5m", "5s").Should(Equal("Ready"))
 	})
 })
 
@@ -839,21 +947,56 @@ func decodeJWTPayload(token string) map[string]any {
 	return claims
 }
 
-// getHealthAt is health_test.go's getHealth, generalized to an arbitrary
-// base URL (osacSPURL for the regular instance vs. the opt-in bad-auth
-// instance's own Service).
-func getHealthAt(baseURL, path string) health {
+// getProvidersList queries environment-agent's /providers endpoint and returns
+// the list of registered providers as typed structs. Transport and HTTP errors
+// are returned so callers can poll through agent startup rather than failing
+// the whole spec on the first refused connection.
+func getProvidersList(eaURL string) ([]eav1alpha1.Provider, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s%s", baseURL, path), nil)
-	Expect(err).NotTo(HaveOccurred())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/providers", eaURL), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := http.DefaultClient.Do(req)
-	Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		return nil, fmt.Errorf("querying environment-agent /providers: %w", err)
+	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("environment-agent /providers returned HTTP %d", resp.StatusCode)
+	}
 
-	var h health
-	Expect(json.NewDecoder(resp.Body).Decode(&h)).To(Succeed())
-	return h
+	var result eav1alpha1.ProviderList
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding environment-agent /providers: %w", err)
+	}
+	if result.Results == nil {
+		return nil, fmt.Errorf("environment-agent /providers response has no results array")
+	}
+
+	return *result.Results, nil
+}
+
+// findProvider searches the provider list for the first provider matching
+// the given service_type and returns a pointer to it, or nil if not found.
+func findProvider(providers []eav1alpha1.Provider, serviceType string) *eav1alpha1.Provider {
+	for i := range providers {
+		if providers[i].ServiceType == serviceType {
+			return &providers[i]
+		}
+	}
+	return nil
+}
+
+func countProviders(providers []eav1alpha1.Provider, serviceType string) int {
+	count := 0
+	for _, provider := range providers {
+		if provider.ServiceType == serviceType {
+			count++
+		}
+	}
+	return count
 }

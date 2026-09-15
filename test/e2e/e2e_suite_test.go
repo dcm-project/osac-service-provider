@@ -1,13 +1,11 @@
-// Package e2e_test implements the kind-based e2e suite for
-// osac-service-provider#17 / FLPATH-4759 Phase 2 — real control-plane +
-// real osac-sp + osac-mock-provider, all running in a kind cluster brought
-// up by .github/workflows/e2e.yaml.
+// Package e2e_test implements the kind-based E2E suite for the canonical Tier B
+// workflow: real fulfillment-service infrastructure, environment-agent, and
+// the AAP boundary mock.
 //
-// This is a separate Go module (REQ-E2E-080) so a control-plane REST client
-// never enters the main module's go.mod/go.sum. See
-// .ai/specs/osac-sp-e2e-suite.spec.md and
-// .ai/test-plans/osac-sp-e2e-suite.test-plan.md for the requirements and
-// TC-E2E-* cases this package implements.
+// This is a separate Go module (REQ-E2E-080) so the environment-agent REST
+// client never enters the main module's go.mod/go.sum. See
+// .ai/specs/osac-sp-e2e-tier-b.spec.md and
+// .ai/test-plans/osac-sp-e2e-tier-b.test-plan.md for the requirements.
 package e2e_test
 
 import (
@@ -22,38 +20,33 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// Env vars set by .github/workflows/e2e.yaml's "Run e2e suite" step,
-// pointing at the kubectl port-forwards it started.
+// Env vars set by the workflow's "Run e2e suite" step, pointing at the
+// kubectl port-forwards it started.
 const (
-	envControlPlaneURL = "CONTROL_PLANE_URL"
-	envOSACSPURL       = "OSAC_SP_URL"
+	envOSACSPURL = "OSAC_SP_URL"
 )
 
 var (
-	controlPlaneURL string
-	osacSPURL       string
+	osacSPURL string
 )
 
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "osac-sp e2e suite (kind + real control-plane)")
+	RunSpecs(t, "osac-sp e2e suite (kind)")
 }
 
 var _ = BeforeSuite(func() {
-	controlPlaneURL = os.Getenv(envControlPlaneURL)
 	osacSPURL = os.Getenv(envOSACSPURL)
-	Expect(controlPlaneURL).NotTo(BeEmpty(), "%s must be set (see .github/workflows/e2e.yaml)", envControlPlaneURL)
-	Expect(osacSPURL).NotTo(BeEmpty(), "%s must be set (see .github/workflows/e2e.yaml)", envOSACSPURL)
+	Expect(osacSPURL).NotTo(BeEmpty(), "%s must be set (see the e2e workflow)", envOSACSPURL)
 
-	// TC-E2E-010: the workflow's own "Wait for osac-sp + osac-mock-provider
-	// readiness" step (kubectl wait --for=condition=Available) already
+	// TC-E2E-010: the workflow's own osac-sp readiness step
+	// (kubectl wait --for=condition=Available) already
 	// gates this suite from running before pods are Ready. This is a
 	// defensive second check — with a clear, per-target failure message —
 	// for the case where this suite is invoked standalone (e.g. locally
 	// against an already-running cluster) without that step.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	waitUntilReachable(ctx, "control-plane", fmt.Sprintf("%s/api/v1alpha1/providers", controlPlaneURL))
 	waitUntilReachable(ctx, "osac-sp", fmt.Sprintf("%s/api/v1alpha1/clusters/health", osacSPURL))
 })
 

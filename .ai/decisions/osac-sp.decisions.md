@@ -3404,7 +3404,8 @@ unchecked, or checked with a matcher looser than the value's actual
 determinism warrants — rather than stopping at the two specs the review
 comment named:
 
-- **TC-TB-050** (auth-failure detectability): was `NotTo(BeEmpty())` +
+- **TC-TB-050** (historical auth-failure detectability; coverage moved to
+  TC-I-018 by DD-236): was `NotTo(BeEmpty())` +
   `ContainSubstring("OIDC token invalid")`. Tightened to exact
   `Equal("OIDC token invalid")` — `internal/health/health.go`'s
   `unhealthyDetail` (this repo's own code, already covered by
@@ -3620,3 +3621,76 @@ the absence of e2e coverage itself.
 `osac-sp.spec.md`, `osac-sp-m3-cluster-crud.spec.md`,
 `osac-sp-m4-vm-crud.spec.md`, `osac-sp-m5-status-reporting.spec.md`,
 `osac-sp-m6-version-matrix.spec.md`
+
+---
+## DD-235: Tier B runs environment-agent and JetStream NATS inside kind
+
+**Decision:** `e2e-tierb.yaml` builds the exact environment-agent version
+pinned by `test/e2e/go.mod`, loads it into kind, and deploys it with a plain
+`Deployment`/`Service`. The workflow also deploys a JetStream-enabled NATS
+`Deployment`/`Service`. `osac-service-provider` registers against
+`http://environment-agent:8090/api/v1alpha1`; the agent endpoint is
+port-forwarded to the runner only for test queries.
+
+**Rationale:** environment-agent's health monitor must resolve and call the
+registered provider endpoint. Running the agent on the runner cannot resolve
+kind Service DNS or reliably reach the provider's in-cluster endpoint. NATS is
+an agent startup dependency and must therefore be part of the same controlled
+kind topology rather than an undeclared external prerequisite.
+
+**Consequence:** Tier B owns the environment-agent runtime image and manifests
+used by CI. The agent's unrelated upstream DCM registration is configured with
+an unreachable local URL so it retries without making the Tier B assertions
+depend on a second DCM deployment.
+
+**Related requirements:** REQ-E2E-050, REQ-E2E-051, REQ-TB-010, AC-E2E-020,
+AC-E2E-021
+
+---
+## DD-236: Health connectivity distinction belongs at the integration tier
+
+**Decision:** remove TC-TB-131 and TC-TB-050; cover REQ-TB-065/AC-TB-025
+through TC-I-012 and REQ-TB-060/AC-TB-020 through TC-I-018.
+
+**Rationale:** the business value is distinguishing a valid token from an OSAC
+network failure for operational diagnosis. TC-I-012 and TC-I-018 now prove
+those distinctions through the real SP process, real HTTP health route,
+successful token acquisition or explicit token rejection, and reachable or
+unreachable loopback gRPC endpoints. Dedicated kind variants would test
+external component behavior at higher cost without adding SP-side business
+coverage.
+
+**Related requirements:** REQ-TB-060, REQ-TB-065, AC-TB-020, AC-TB-025,
+REQ-HLT-070
+
+---
+## DD-237: Retire Phase A control-plane/mock-provider E2E; Tier B is canonical
+
+**Decision:** Retire the Phase A `e2e.yaml` workflow and its kind topology,
+which exercised `osac-sp` alongside `control-plane` and the repo-owned
+`osac-mock-provider`. Tier B's real fulfillment-service, Keycloak,
+environment-agent, NATS, and AAP/provider mock topology is the repository's
+canonical E2E path.
+
+The former Phase A Cluster/VM CRUD cases are not carried into Tier B as
+duplicate mock-backend E2E cases. Their business coverage remains in the M3
+and M4 unit/integration pyramid. The one missing real-HTTP assertion,
+unknown `template_id` mapping, is implemented as the already-planned
+`TC-I-205` integration case.
+
+**Rationale:** `osac-sp` no longer registers with or dispatches through
+`control-plane`; keeping that stack in CI tests an obsolete integration target.
+The mock-provider E2E cases exercise a repo-owned fake OSAC backend and add no
+real OSAC fidelity beyond the HTTP/router behavior already covered by the
+integration tier. Tier B exercises the production-shaped boundary instead,
+while `osac-aap-mock` remains only at the external AAP/provider boundary where
+real infrastructure is unavailable.
+
+**Consequence:** `.github/workflows/e2e-tierb.yaml` is the sole active E2E
+workflow. The former Phase A specification and test plan remain as historical
+records, with their CRUD cases explicitly mapped to M3/M4 integration
+coverage. `osac-mock-provider` may remain for its own focused binary/fixture
+tests, but it is no longer deployed by E2E CI.
+
+**Related requirements:** REQ-E2E-010..103, REQ-TB-010..120,
+REQ-CREATE-100, REQ-VMCREATE-070

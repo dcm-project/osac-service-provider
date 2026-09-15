@@ -10,6 +10,10 @@ to verify the pyramid is actually complete for it. There is no e2e tier for
 this milestone — scope is CRUD-only; the deferred NATS/status-polling work
 (Milestone 5) is where an e2e-style tier applies.
 
+The retired Phase A cases `TC-E2E-090..092` and `TC-E2E-103` are represented
+by the integration cases below (`TC-I-200/201/205` and the existing Get/List/
+Delete cases). No mock-backend E2E deployment is required.
+
 **Framework:** Ginkgo v2 + Gomega. Unit tests: `internal/cluster/*_unit_test.go`,
 `internal/handlers/cluster/*_unit_test.go` — pure business logic against a
 `bufconn`-backed fake `publicv1.ClustersServer` (same technique as M2's

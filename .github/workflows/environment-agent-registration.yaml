@@ -11,10 +11,10 @@ name: Registration vs real environment-agent (DD-203)
 # create-or-update on name, and per-service-type 409 exclusivity being
 # retried rather than fatal.
 #
-# Deliberately lighter-weight than .github/workflows/e2e.yaml's kind-based
-# suite: no cluster, no OSAC/Keycloak, no container images — just the two Go
-# binaries and go test, since registration only needs environment-agent's
-# HTTP API up.
+# Deliberately lighter-weight than .github/workflows/e2e-tierb.yaml's
+# kind-based suite: no cluster, no OSAC/Keycloak, no container images — just
+# the two Go binaries and go test, since registration only needs
+# environment-agent's HTTP API up.
 
 on:
   pull_request:
