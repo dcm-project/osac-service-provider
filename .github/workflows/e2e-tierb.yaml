@@ -234,6 +234,15 @@ jobs:
              --kubeconfig /tmp/tierb-hub-kubeconfig \
              --namespace default
            osac create -f test/e2e/manifests-tierb/cluster-dispatch-fixture.yaml
+           # ClusterVersion.spec.image is private-only, so create it through
+           # the private CLI command rather than the public object loader.
+           osac create clusterversion \
+             --name tierb-1-29 \
+             --version 1.29.0 \
+             --image quay.io/openshift-release-dev/ocp-release:4.16.0-multi \
+             --enabled \
+             --default \
+             --state ACTIVE
 
       - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-216)
         run: |
