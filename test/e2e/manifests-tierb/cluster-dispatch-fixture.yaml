@@ -23,6 +23,7 @@ metadata:
   name: tierb-1-29
 spec:
   enabled: true
+  image: quay.io/openshift-release-dev/ocp-release:4.16.0-multi
   is_default: true
   state: CLUSTER_VERSION_STATE_ACTIVE
   version: 1.29.0
