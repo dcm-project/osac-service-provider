@@ -21,7 +21,8 @@ on:
 env:
   KIND_CLUSTER_NAME: osac-sp-e2e-tierb
   CERT_MANAGER_VERSION: v1.20.0
-  FULFILLMENT_SERVICE_CHART_VERSION: "0.0.90" # REQ-TB-050 — pin, never `main`/`latest` (bumped from 0.0.85, DD-149 monorepo pivot)
+  FULFILLMENT_SERVICE_CHART_VERSION: "0.0.107" # REQ-TB-050 — pin, never `main`/`latest` (aligned with the v0.0.107 CLI and OSAC-4826 fix)
+  FULFILLMENT_SERVICE_CLI_VERSION: "v0.0.107" # OSAC-4826 — `osac create hub --name` fix
   OSAC_OPERATOR_CHART_VERSION: "0.0.12" # REQ-TB-070 — pinned to the osac-project/osac monorepo's own release (DD-149)
   BMFO_CHART_VERSION: "0.0.12" # REQ-TB-070 — pinned to the osac-project/osac monorepo's own release (DD-149)
 
@@ -50,6 +51,20 @@ jobs:
           echo "Building github.com/dcm-project/environment-agent@${EA_VERSION}"
           CGO_ENABLED=0 GOOS=linux GOBIN="$PWD/.bin" go install "github.com/dcm-project/environment-agent/cmd/environment-agent@${EA_VERSION}"
           docker build -t environment-agent:e2e -f Containerfile.environment-agent .
+
+      - name: Install fulfillment-service CLI
+        run: |
+          # The release module contains monorepo-local replace directives, so
+          # `go install module@version` rejects it. Build the CLI from the
+          # exact release tag with the replacement modules present instead.
+          git clone --filter=blob:none --sparse --depth 1 \
+            --branch "fulfillment-service/${{ env.FULFILLMENT_SERVICE_CLI_VERSION }}" \
+            https://github.com/osac-project/osac.git "$RUNNER_TEMP/osac"
+          git -C "$RUNNER_TEMP/osac" sparse-checkout set \
+            fulfillment-service bare-metal-fulfillment-operator osac-operator/api proto
+          GOBIN="$RUNNER_TEMP/bin" GOTOOLCHAIN=auto GOWORK=off \
+            go -C "$RUNNER_TEMP/osac/fulfillment-service" install ./cmd/osac
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
@@ -191,11 +206,43 @@ jobs:
       - name: Fill osac-operator's hub-access-hosted-clusters RBAC gap (DD-223)
         run: kubectl apply -f test/e2e/manifests-tierb/hub-access-hosted-clusters-rbac.yaml
 
-      # Pending OSAC-4826 fix (fulfillment-service osac create hub CLI support for --name flag)
-      # - name: Register Hub (TC-TB-200, pending OSAC-4826)
-      #   run: |
-      #     osac create hub --address <fulfillment-service-address> \
-      #       --name default-hub --config <config-file>
+      - name: Register Hub (TC-TB-200)
+        run: |
+          kubectl port-forward svc/fulfillment-internal-api 18083:8001 >/tmp/pf-fulfillment-internal-api.log 2>&1 &
+          echo $! > /tmp/pf-fulfillment-internal-api.pid
+          sleep 3
+
+          # kind's kubeconfig points at the host-side API address. The Hub
+          # controller consumes this file from inside the cluster, so replace
+          # the loopback endpoint with the in-cluster Kubernetes Service DNS.
+          kubectl config view --raw --minify \
+             | sed -E 's#server: https://127\.0\.0\.1:[0-9]+#server: https://kubernetes.default.svc#' \
+            > /tmp/tierb-hub-kubeconfig
+
+          printf '%s' tierb-osac-admin-secret > /tmp/tierb-osac-client-secret
+          OSAC_TOKEN="$(curl --fail --silent --show-error --insecure \
+            --connect-to ffs-keycloak:8443:127.0.0.1:18443 \
+            --request POST https://ffs-keycloak:8443/realms/osac/protocol/openid-connect/token \
+            --data-urlencode client_id=osac-admin \
+            --data-urlencode client_secret@/tmp/tierb-osac-client-secret \
+            --data-urlencode grant_type=client_credentials \
+            | jq --exit-status --raw-output '.access_token')"
+          export OSAC_TOKEN
+          osac login --insecure --private https://127.0.0.1:18083
+           osac create hub \
+             --name default-hub \
+             --kubeconfig /tmp/tierb-hub-kubeconfig \
+             --namespace default
+           osac create -f test/e2e/manifests-tierb/cluster-dispatch-fixture.yaml
+           # ClusterVersion.spec.image is private-only, so create it through
+           # the private CLI command rather than the public object loader.
+           osac create clusterversion \
+             --name tierb-1-29 \
+             --version 1.29.0 \
+             --image quay.io/openshift-release-dev/ocp-release:4.16.0-multi \
+             --enabled \
+             --default \
+             --state ACTIVE
 
       - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-216)
         run: |
@@ -219,19 +266,18 @@ jobs:
           sleep 3
 
       - name: Run Tier B e2e suite
-        working-directory: test/e2e
         env:
           OSAC_SP_URL: http://localhost:18081
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
           ENVIRONMENT_AGENT_URL: http://127.0.0.1:18090/api/v1alpha1
           TIERB_PHASE2_ENABLED: "true"
-        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=10m
+        run: make e2e-test
 
       - name: Stop port-forwards
         if: always()
         run: |
-          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-environment-agent.pid; do
+          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-environment-agent.pid /tmp/pf-fulfillment-internal-api.pid; do
             [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
           done
 

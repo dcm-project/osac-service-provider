@@ -3,6 +3,7 @@ package cluster_test
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 
 	. "github.com/onsi/gomega"
@@ -173,6 +174,27 @@ func (s *fakeClusterTemplatesServer) GetCallCount() int {
 // bug.
 const defaultNodeSetKey = "compute"
 
+type fakeClusterVersionsServer struct {
+	publicv1.UnimplementedClusterVersionsServer
+
+	listFunc func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error)
+}
+
+func (s *fakeClusterVersionsServer) List(_ context.Context, req *publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+	if s.listFunc != nil {
+		return s.listFunc(req)
+	}
+	versions := []string{"1.29", "1.30", "1.31", "1.32", "1.33", "1.40", "9.01", "9.02"}
+	items := make([]*publicv1.ClusterVersion, 0, len(versions))
+	for _, version := range versions {
+		items = append(items, &publicv1.ClusterVersion{
+			Metadata: &publicv1.Metadata{Name: "tierb-" + strings.ReplaceAll(version, ".", "-")},
+			Spec:     &publicv1.ClusterVersionSpec{Version: version + ".0"},
+		})
+	}
+	return &publicv1.ClusterVersionsListResponse{Items: items}, nil
+}
+
 // fixture bundles a real, in-process gRPC server (bufconn-bound) hosting a
 // fakeClustersServer and a fakeClusterTemplatesServer, and a cluster.Service
 // dialed against it through real publicv1 clients — no hand-rolled
@@ -198,8 +220,10 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
 	templates := &fakeClusterTemplatesServer{}
+	versions := &fakeClusterVersionsServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, templates)
+	publicv1.RegisterClusterVersionsServer(grpcSrv, versions)
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -211,7 +235,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	Expect(err).NotTo(HaveOccurred())
 
 	return &fixture{
-		svc:       cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix),
+		svc:       cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix),
 		fake:      fake,
 		templates: templates,
 		conn:      conn,

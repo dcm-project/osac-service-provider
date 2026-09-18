@@ -162,7 +162,10 @@ e2e-cluster-down:
 # already-deployed cluster; set ENVIRONMENT_AGENT_URL/OSAC_SP_URL to whatever
 # you've port-forwarded/exposed them at when running the registration/health
 # specs against the Tier B topology.
+E2E_TIMEOUT ?= 10m
+E2E_ARGS ?=
+
 e2e-test:
-	cd test/e2e && go run github.com/onsi/ginkgo/v2/ginkgo -r -v
+	cd test/e2e && go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=$(E2E_TIMEOUT) $(E2E_ARGS)
 
 .PHONY: build build-mock-provider build-aap-mock run run-mock-provider run-aap-mock clean fmt vet test test-cover test-realbackend-environment-agent lint check tidy generate-types generate-spec generate-server generate-client generate-api check-generate-api generate-proto check-generate-proto generate check-aep check-pinned-tags check-container-engine image-build image-build-mock-provider image-build-aap-mock e2e-cluster-up e2e-cluster-down e2e-test

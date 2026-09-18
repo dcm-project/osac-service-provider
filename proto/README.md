@@ -11,15 +11,17 @@ of files stay vendored side by side — Milestone 2 does not replace or remove
 the Milestone 1 files, since `Capabilities` is still used by the health
 check.
 
-All files below are vendored (copied) verbatim, byte-for-byte, from
-`osac-project/fulfillment-service` at commit
-[`73ae26e`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1) —
-**pinned to that exact commit, not `main`**, since "verbatim" is a claim
-about one point in time and `main` will have moved by the time anyone reads
-this. This mirrors the same reproducibility concern DD-050 addresses for the
-`control-plane` Go module dependency (pinned by commit SHA in `go.mod`
-for the same reason: no tagged release to pin to instead). If you update
-these files, update the pinned commit reference here too.
+The original Milestone 1 files below were vendored (copied) verbatim,
+byte-for-byte, from `osac-project/fulfillment-service` at commit
+[`73ae26e`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1).
+The cluster CRUD files and their supporting types are synced to the public FFS
+API schema used by the pinned
+[`fulfillment-service/v0.0.107`](https://github.com/osac-project/osac/tree/fulfillment-service/v0.0.107/proto/public/osac/public/v1)
+release tag (monorepo commit
+[`bff38394`](https://github.com/osac-project/osac/tree/bff38394f1ad724c1b0b17fd655480c2c202ea11/proto/public/osac/public/v1)).
+The commit pin is deliberate: upstream API changes must be reviewed and
+regenerated explicitly rather than arriving through a floating `main`
+dependency.
 
 Milestone 1:
 
@@ -28,8 +30,15 @@ Milestone 1:
 
 Milestone 3 additionally vendors, at the same pinned commit:
 
+- `osac/public/v1/cluster_catalog_item_type.proto`
+- `osac/public/v1/cluster_common_type.proto`
 - `osac/public/v1/cluster_templates_service.proto`
 - `osac/public/v1/cluster_template_type.proto`
+- `osac/public/v1/cluster_version_type.proto`
+- `osac/public/v1/cluster_versions_service.proto`
+- `osac/public/v1/field_definition_type.proto`
+- `osac/public/v1/host_type_type.proto`
+- `osac/public/v1/security_rule_type.proto`
 
 Needed by Create's node-set-key resolution: `Cluster.spec.node_sets`' keys
 are per-template and not derivable from `template_id`, so the SP calls

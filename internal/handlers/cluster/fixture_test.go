@@ -151,6 +151,17 @@ func (s *fakeClusterTemplatesServer) Get(_ context.Context, req *publicv1.Cluste
 	}}, nil
 }
 
+type fakeClusterVersionsServer struct {
+	publicv1.UnimplementedClusterVersionsServer
+}
+
+func (s *fakeClusterVersionsServer) List(context.Context, *publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+	return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{
+		{Metadata: &publicv1.Metadata{Name: "tierb-1-29"}, Spec: &publicv1.ClusterVersionSpec{Version: "1.29.0"}},
+		{Metadata: &publicv1.Metadata{Name: "tierb-1-40"}, Spec: &publicv1.ClusterVersionSpec{Version: "1.40.0"}},
+	}}, nil
+}
+
 // discardLogger silences handler logging (e.g. httperror.WriteResponse's
 // JSON-encode-failure branch) during tests.
 var discardLogger = slog.New(slog.DiscardHandler)
@@ -179,6 +190,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	fake := &fakeClustersServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
+	publicv1.RegisterClusterVersionsServer(grpcSrv, &fakeClusterVersionsServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -189,7 +201,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
 	return &fixture{
 		handler: clusterhandlers.NewHandler(svc, discardLogger),
 		fake:    fake,
@@ -274,6 +286,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	templates := &fakeClusterTemplatesServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, templates)
+	publicv1.RegisterClusterVersionsServer(grpcSrv, &fakeClusterVersionsServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",
@@ -284,7 +297,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
 	h := &realHandler{Handler: clusterhandlers.NewHandler(svc, discardLogger)}
 	strict := oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(discardLogger),
