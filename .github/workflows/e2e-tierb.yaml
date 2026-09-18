@@ -21,7 +21,7 @@ on:
 env:
   KIND_CLUSTER_NAME: osac-sp-e2e-tierb
   CERT_MANAGER_VERSION: v1.20.0
-  FULFILLMENT_SERVICE_CHART_VERSION: "0.0.90" # REQ-TB-050 — pin, never `main`/`latest` (bumped from 0.0.85, DD-149 monorepo pivot)
+  FULFILLMENT_SERVICE_CHART_VERSION: "0.0.107" # REQ-TB-050 — pin, never `main`/`latest` (aligned with the v0.0.107 CLI and OSAC-4826 fix)
   FULFILLMENT_SERVICE_CLI_VERSION: "v0.0.107" # OSAC-4826 — `osac create hub --name` fix
   OSAC_OPERATOR_CHART_VERSION: "0.0.12" # REQ-TB-070 — pinned to the osac-project/osac monorepo's own release (DD-149)
   BMFO_CHART_VERSION: "0.0.12" # REQ-TB-070 — pinned to the osac-project/osac monorepo's own release (DD-149)
@@ -221,7 +221,8 @@ jobs:
 
           printf '%s' tierb-osac-admin-secret > /tmp/tierb-osac-client-secret
           OSAC_TOKEN="$(curl --fail --silent --show-error --insecure \
-            --request POST https://127.0.0.1:18443/realms/osac/protocol/openid-connect/token \
+            --connect-to ffs-keycloak:8443:127.0.0.1:18443 \
+            --request POST https://ffs-keycloak:8443/realms/osac/protocol/openid-connect/token \
             --data-urlencode client_id=osac-admin \
             --data-urlencode client_secret@/tmp/tierb-osac-client-secret \
             --data-urlencode grant_type=client_credentials \
