@@ -14,9 +14,8 @@ package registration_test
 // available there) — only
 // .github/workflows/environment-agent-registration.yaml (and
 // `make test-realbackend-environment-agent` for local runs) builds/starts
-// one and passes REAL_ENVIRONMENT_AGENT_URL. If that env var is unset, both
-// specs Skip rather than fail, so `go test -tags realbackend ./...` stays
-// safe to run without the real backend present.
+// one and passes REAL_ENVIRONMENT_AGENT_URL. If that env var is unset, the
+// tagged suite fails closed rather than silently reporting skipped coverage.
 //
 // TC-I-029's retry-count assertion needs to observe how many registration
 // requests actually reached environment-agent for a name that always gets
@@ -128,9 +127,7 @@ var _ = Describe("Registrar against a REAL local environment-agent build (Tier B
 
 	BeforeEach(func() {
 		realBackendURL = os.Getenv(realBackendURLEnvVar)
-		if realBackendURL == "" {
-			Skip("set " + realBackendURLEnvVar + " (e.g. http://127.0.0.1:8090/api/v1alpha1) to run this spec against a real environment-agent build")
-		}
+		Expect(realBackendURL).NotTo(BeEmpty(), "set %s (e.g. http://127.0.0.1:8090/api/v1alpha1) to run this spec against a real environment-agent build", realBackendURLEnvVar)
 	})
 
 	// TC-I-028 (REQ-REG-010, REQ-REG-040, REQ-REG-100): both registrations

@@ -1,7 +1,6 @@
-// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): run when
-// .github/workflows/e2e-tierb.yaml's env vars are present. The environment
-// checks keep standalone runs useful while the active workflow supplies all
-// required endpoints.
+// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): require all of
+// .github/workflows/e2e-tierb.yaml's environment variables. The suite-level
+// BeforeSuite fails closed when any required endpoint or credential is absent.
 //
 // TC-TB-030 (osac-sp health against the real backend) deliberately has no
 // dedicated spec here: health_test.go's existing
@@ -61,9 +60,6 @@ var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func()
 	// TC-TB-020 / REQ-TB-020
 	It("issues a client_credentials token for osac-admin carrying username and osac-api audience claims", func() {
 		keycloakURL := os.Getenv(envKeycloakURL)
-		if keycloakURL == "" {
-			Skip("not a Tier B run: " + envKeycloakURL + " is unset")
-		}
 		adminSecret := os.Getenv(envTierBAdminSecret)
 		Expect(adminSecret).NotTo(BeEmpty(), "%s must be set alongside %s", envTierBAdminSecret, envKeycloakURL)
 
@@ -91,9 +87,6 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 	// TC-E2E-020 / REQ-E2E-050, REQ-E2E-051 / AC-E2E-020, AC-E2E-021
 	It("registers a cluster-type provider with metadata", func() {
 		eaURL := os.Getenv(envEnvironmentAgentURL)
-		if eaURL == "" {
-			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
-		}
 
 		// Wait for osac-sp to register (it takes a few seconds after the pod becomes Ready)
 		var providers []eav1alpha1.Provider
@@ -130,9 +123,6 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 	// TC-E2E-030 / REQ-E2E-050 / AC-E2E-020
 	It("registers a vm-type provider independently", func() {
 		eaURL := os.Getenv(envEnvironmentAgentURL)
-		if eaURL == "" {
-			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
-		}
 
 		var providers []eav1alpha1.Provider
 		Eventually(func() bool {
@@ -154,9 +144,6 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 	// TC-E2E-040 / REQ-E2E-050 / AC-E2E-020
 	It("maintains both registrations across the re-registration interval", func() {
 		eaURL := os.Getenv(envEnvironmentAgentURL)
-		if eaURL == "" {
-			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
-		}
 
 		// Capture initial state
 		var initialProviders []eav1alpha1.Provider
@@ -274,12 +261,6 @@ var phase2CRDs = []string{
 }
 
 var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exercised", func() {
-	BeforeEach(func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-	})
-
 	// TC-TB-060 / REQ-TB-070 / AC-TB-030 (given clause). Deployment
 	// readiness is deliberately NOT re-checked here: the workflow's own
 	// `kubectl rollout status`/`kubectl wait --for=condition=Available`
@@ -304,10 +285,6 @@ var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal st
 	// (ClusterOrder-only, direct-CR-create scope this landing — DD-216,
 	// DD-218).
 	It("drives a directly-created ClusterOrder to Ready via real osac-operator + osac-aap-mock", func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-
 		// TC-TB-080: create the fixture directly against the cluster's
 		// own API server.
 		applyOut, err := exec.Command("kubectl", "apply", "-f", clusterOrderFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
@@ -470,12 +447,6 @@ type bareMetalInstanceStatus struct {
 }
 
 var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real terminal state", func() {
-	BeforeEach(func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-	})
-
 	// TC-TB-110 / REQ-TB-110 / AC-TB-040 (runStrategy unset variant). No
 	// real Metal3/Ironic/virtual-BMC infrastructure involved (DD-226/227) —
 	// a static BareMetalHost fixture, patched once to simulate completed
@@ -588,12 +559,6 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 })
 
 var _ = Describe("Tier B Phase 2: BareMetalInstance allocation fails safe, and releases its host on deletion", func() {
-	BeforeEach(func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-	})
-
 	// TC-TB-130 / REQ-TB-120 / AC-TB-050: a hostType with zero matching
 	// BareMetalHost fixtures must converge to a real terminal Failed phase
 	// with the exact Allocated=False/"Failed"/"No matching hosts
@@ -722,27 +687,14 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 	// TC-TB-200 / REQ-TB-100 / AC-TB-060: validate osac-sp's POST /api/v1alpha1/clusters
 	// routes through fulfillment-service's dispatch layer to create a real ClusterOrder
 	// on a registered Hub, driving it to Ready via real osac-operator + osac-aap-mock.
-	//
-	// Status: PENDING OSAC-4826 (fulfillment-service `osac create hub` CLI fix).
-	// Hub registration requires the CLI to support --name flag (currently fails with
-	// "metadata is required"). See https://redhat.atlassian.net/browse/OSAC-4826
-	//
-	// Once OSAC-4826 lands:
-	// 1. Remove this Skip() marker
-	// 2. Uncomment the Hub registration step in .github/workflows/e2e-tierb.yaml
-	// 3. This test becomes fully functional, validating the complete dispatch flow
 	It("routes osac-sp Create through fulfillment-service dispatch to a real ClusterOrder (TC-TB-200)", func() {
-		Skip("Pending OSAC-4826: fulfillment-service osac create hub CLI fix")
-
 		// This test assumes a Hub has been registered via the fulfillment-service CLI.
-		// Until OSAC-4826 is fixed, the Hub registration step in the workflow is skipped.
-		// All infrastructure below is in place and ready to uncomment/enable.
 
 		// Call osac-sp's Create endpoint (not direct CR creation)
 		clusterID := "tc-tb-200-osac-dispatch-" + randomID()
 		createPayload := map[string]interface{}{
-			"template_id": "default-hcp", // or the Hub-configured template
-			"cloud_provider": "generic",
+			"template_id":            "default-hcp", // or the Hub-configured template
+			"cloud_provider":         "generic",
 			"control_plane_replicas": 3,
 		}
 

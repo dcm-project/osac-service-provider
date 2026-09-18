@@ -37,7 +37,15 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	osacSPURL = os.Getenv(envOSACSPURL)
-	Expect(osacSPURL).NotTo(BeEmpty(), "%s must be set (see the e2e workflow)", envOSACSPURL)
+	for _, envName := range []string{
+		envOSACSPURL,
+		envKeycloakURL,
+		envTierBAdminSecret,
+		envEnvironmentAgentURL,
+		envPhase2Enabled,
+	} {
+		Expect(os.Getenv(envName)).NotTo(BeEmpty(), "%s must be set for the Tier B e2e suite (see the e2e workflow)", envName)
+	}
 
 	// TC-E2E-010: the workflow's own osac-sp readiness step
 	// (kubectl wait --for=condition=Available) already
