@@ -30,19 +30,22 @@ originally-planned target (which had matured enough in the interim to no
 longer be the blocker it was) — see `DD-203` in
 `.ai/decisions/osac-sp.decisions.md` and issue
 [#33](https://github.com/dcm-project/osac-service-provider/issues/33) for
-the full rationale. `environment-agent` also has no tagged releases yet,
-hence the same commit-SHA pin in `go.mod` `control-plane`'s dependency used
-to have.
+the full rationale. `environment-agent` also has no tagged releases yet, so
+its dependency in `test/e2e/go.mod` is pinned to a commit SHA.
 
 | Component | Interaction | Config |
 |---|---|---|
 | [environment-agent](https://github.com/dcm-project/environment-agent) | Registers two independent entries on startup — one `cluster` service type, one `vm` service type — using its generated Go client library (`pkg/client`). Periodically re-registers to refresh capability metadata and to retry past a `409` (per-service-type slot contention, DD-203). | `DCM_REGISTRATION_URL` |
 | [osac-project/fulfillment-service](https://github.com/osac-project/osac/tree/main/fulfillment-service) | gRPC API for cluster/VM CRUD. OAuth2/OIDC client-credentials auth against OSAC's Keycloak. Archived as a standalone repo ~2026-08-15; now a subdirectory of the `osac-project/osac` monorepo (source of truth for new work; archived repo's history remains reachable but frozen). | `SP_OSAC_FULFILLMENT_ADDRESS`, `SP_OSAC_OIDC_*` |
 
-**Milestone 1 scope** (this repo's current state): scaffold, HTTP server,
-health check, and registration only — no cluster/VM CRUD endpoints yet. See
-issue [#1](https://github.com/dcm-project/osac-service-provider/issues/1)
-for the full milestone breakdown.
+**Current state:** M1-M7 and the Phase 2 registration migration are merged to
+`main`. The service provides cluster and VM CRUD, status polling and NATS
+CloudEvents publishing, Kubernetes-version-to-release-image translation,
+mandatory TLS to fulfillment-service, and environment-agent registration. The
+active Tier B workflow is documented in
+`docs/e2e-ci-pattern-for-service-providers.md` and
+`.ai/specs/osac-sp-e2e-tier-b.spec.md`; Hub-dispatch coverage is tracked in
+[#58](https://github.com/dcm-project/osac-service-provider/pull/58).
 
 ## Commands
 
@@ -73,10 +76,18 @@ go run github.com/onsi/ginkgo/v2/ginkgo -r -v -focus "TC-U-050" internal/registr
 
 ## API Endpoints
 
-Milestone 1 defines only:
+The REST API exposes cluster and VM CRUD plus health endpoints:
 
 | Method | Path | Description |
 |---|---|---|
+| `POST` | `/api/v1alpha1/clusters?id=...` | Create or idempotently retrieve a cluster through OSAC. |
+| `GET` | `/api/v1alpha1/clusters` | List clusters owned by this service provider. |
+| `GET` | `/api/v1alpha1/clusters/{clusterId}` | Get a cluster, including kubeconfig when active. |
+| `DELETE` | `/api/v1alpha1/clusters/{clusterId}` | Delete a cluster; repeated deletion is safe. |
+| `POST` | `/api/v1alpha1/vms?id=...` | Create or idempotently retrieve a VM through OSAC. |
+| `GET` | `/api/v1alpha1/vms` | List VMs owned by this service provider. |
+| `GET` | `/api/v1alpha1/vms/{vmId}` | Get a VM and its current addresses/status. |
+| `DELETE` | `/api/v1alpha1/vms/{vmId}` | Delete a VM; repeated deletion is safe. |
 | `GET` | `/api/v1alpha1/clusters/health` | Health check for the `cluster` provider registration. Reflects real OSAC gRPC connectivity and OIDC token validity — `status` in the body (not the HTTP code) indicates health. |
 | `GET` | `/api/v1alpha1/vms/health` | Health check for the `vm` provider registration. Reports identical status to the endpoint above — this SP has one global health condition, not one per service type. |
 
@@ -101,16 +112,16 @@ Generated files (do not edit manually):
 - `api/v1alpha1/types.gen.go` — data models
 - `api/v1alpha1/spec.gen.go` — embedded OpenAPI spec
 - `internal/api/server/server.gen.go` — Chi router + strict server interface
-- `pkg/client/client.gen.go` — HTTP client (unused by this repo itself in M1; generated for consistency with sibling SPs and for future consumers)
+- `pkg/client/client.gen.go` — generated HTTP client for external consumers and integration tooling
 
 ### Proto-first gRPC client generation (DD-020)
 
 `proto/osac/public/v1/*.proto` are **vendored** (copied, not a live `buf`
 dependency — see `proto/README.md`) from `osac-project/fulfillment-service`,
-since that repo's BSR module isn't published yet. Only the `Capabilities`
-service is vendored/generated in Milestone 1 (used for the health check's
-connectivity probe); the full CRUD services (`Clusters`, `ComputeInstances`,
-...) are added in Milestone 2. Run `make generate-proto` after editing
+since that repo's BSR module isn't published yet. The generated client includes
+Capabilities, Clusters, ClusterTemplates, ComputeInstances, Subnets, and
+VirtualNetworks services for health, CRUD, template resolution, and default
+network provisioning. Run `make generate-proto` after editing
 `proto/`, `buf.yaml`, or `buf.gen.yaml`.
 
 Generated files (do not edit manually):
@@ -121,8 +132,10 @@ Generated files (do not edit manually):
 `cmd/osac-service-provider/main.go` wires everything together:
 1. `internal/config` loads and validates env vars (fails fast on missing required values).
 2. `internal/osac.Bootstrap` starts an async OIDC token fetch/refresh loop and creates a lazy gRPC `ClientConn` to OSAC's fulfillment service.
-3. `internal/apiserver.Server` starts the HTTP server (middleware: Recovery → Request Logging → Request Timeout) serving `internal/health.Handler`, which implements `StrictServerInterface` and queries the bootstrap's cached token/probe state.
-4. Once the HTTP server confirms it is accepting connections (self-probed via its own `WithOnReady` hook), `internal/registration.Registrar` starts two independent, indefinitely-retrying registration loops (cluster, vm) against `environment-agent`.
+3. `internal/statuspublisher.Publisher` and `internal/statuspoll.Poller` start the NATS status-event pipeline for cluster and VM state changes.
+4. Cluster and VM services/handlers are wired to the generated OSAC gRPC clients, including template resolution and default-network provisioning.
+5. `internal/apiserver.Server` starts the HTTP server (middleware: Recovery → Request Logging → Request Timeout) with CRUD and health handlers.
+6. Once the HTTP server confirms it is accepting connections (self-probed via its own `WithOnReady` hook), `internal/registration.Registrar` starts two independent, indefinitely-retrying registration loops (cluster, vm) against `environment-agent`.
 
 ### Internal packages
 
@@ -131,11 +144,18 @@ Generated files (do not edit manually):
 | `internal/apiserver/` | HTTP server setup, middleware chain (recovery, logging, timeout), readiness probing |
 | `internal/config/` | Environment variable parsing via `caarlos0/env`. Prefixes: `SP_SERVER_*`, `SP_OSAC_*`, `DCM_*`, `SP_*` (provider identity) |
 | `internal/osac/` | `Bootstrap` — OIDC client-credentials token source + gRPC `ClientConn` to the fulfillment service; exposes `TokenStatus()` and `Probe()` for the health check |
+| `internal/cluster/` | Cluster CRUD service, OSAC translation, template resolution, and status mapping |
+| `internal/vm/` | VM CRUD service, OSAC translation, default network provisioning, disk handling, and status mapping |
+| `internal/handlers/cluster/` | Strict HTTP handlers and error mapping for cluster CRUD |
+| `internal/handlers/vm/` | Strict HTTP handlers and error mapping for VM CRUD |
 | `internal/health/` | Health check handler implementing `StrictServerInterface` |
 | `internal/registration/` | `Registrar` — async self-registration with `environment-agent` (two independent service types: cluster, vm); exponential backoff on retryable failures, `409` retried on the re-registration cadence (per-service-type slot contention, DD-203) rather than treated as fatal, immediate stop on other non-retryable 4xx, periodic re-registration to refresh capability metadata on success |
+| `internal/statuspoll/` | Polls OSAC cluster/VM state and emits status-change messages on the configured interval |
+| `internal/statuspublisher/` | Publishes status changes as CloudEvents to NATS JetStream |
+| `internal/versionmatrix/` | Maps Kubernetes versions to OSAC/OpenShift release images and validates overrides |
 | `internal/httperror/` | RFC 9457 `application/problem+json` response writing |
 | `internal/util/` | Generic helpers (e.g., `Ptr[T]`) |
-| `internal/osacpb/` | **Generated** — OSAC `Capabilities` gRPC client (DD-020) |
+| `internal/osacpb/` | **Generated** — OSAC public protobuf messages and gRPC clients (DD-020) |
 | `internal/api/server/` | **Generated** — Chi router and `StrictServerInterface` |
 
 ### Key patterns
