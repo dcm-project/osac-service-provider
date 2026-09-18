@@ -174,6 +174,17 @@ func (s *minimalClusterTemplatesServer) Get(context.Context, *publicv1.ClusterTe
 	}}, nil
 }
 
+type minimalClusterVersionsServer struct {
+	publicv1.UnimplementedClusterVersionsServer
+}
+
+func (s *minimalClusterVersionsServer) List(context.Context, *publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+	return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{{
+		Metadata: &publicv1.Metadata{Name: "tierb-1-29"},
+		Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.0"},
+	}}}, nil
+}
+
 var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 	// TC-U-098: each of apiHandler's 4 forwarding methods reaches the real
 	// internal/cluster.Service (through clusterhandlers.Handler), proving
@@ -186,6 +197,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		fake := &minimalClustersServer{}
 		publicv1.RegisterClustersServer(grpcSrv, fake)
 		publicv1.RegisterClusterTemplatesServer(grpcSrv, &minimalClusterTemplatesServer{})
+		publicv1.RegisterClusterVersionsServer(grpcSrv, &minimalClusterVersionsServer{})
 		go func() { _ = grpcSrv.Serve(lis) }()
 		defer grpcSrv.Stop()
 
@@ -198,7 +210,12 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = conn.Close() }()
 
-		svc := cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), versionmatrix.DefaultMatrix)
+		svc := cluster.New(
+			publicv1.NewClustersClient(conn),
+			publicv1.NewClusterTemplatesClient(conn),
+			publicv1.NewClusterVersionsClient(conn),
+			versionmatrix.DefaultMatrix,
+		)
 		h := &apiHandler{cluster: clusterhandlers.NewHandler(svc, slog.New(slog.DiscardHandler))}
 		ctx := context.Background()
 

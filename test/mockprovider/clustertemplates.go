@@ -40,8 +40,11 @@ func (s *ClusterTemplatesServer) Get(_ context.Context, req *publicv1.ClusterTem
 	}
 	return &publicv1.ClusterTemplatesGetResponse{
 		Object: &publicv1.ClusterTemplate{
-			Id:       defaultHCPTemplateID,
-			NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {HostType: "compute", Size: 1}},
+			Id: defaultHCPTemplateID,
+			NodeSets: map[string]*publicv1.ClusterTemplateNodeSet{"compute": {
+				HostType: &publicv1.HostTypeReference{Id: "compute"},
+				Size:     1,
+			}},
 		},
 	}, nil
 }

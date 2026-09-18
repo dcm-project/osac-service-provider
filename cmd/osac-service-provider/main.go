@@ -159,7 +159,12 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	poller.Start(ctx)
 
 	healthHandler := health.NewHandler(osacBootstrap, time.Now(), version)
-	clusterSvc := cluster.New(publicv1.NewClustersClient(osacBootstrap.Conn()), publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()), matrix)
+	clusterSvc := cluster.New(
+		publicv1.NewClustersClient(osacBootstrap.Conn()),
+		publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()),
+		publicv1.NewClusterVersionsClient(osacBootstrap.Conn()),
+		matrix,
+	)
 	clusterHandler := clusterhandlers.NewHandler(clusterSvc, logger)
 	vmSvc := vm.New(
 		publicv1.NewComputeInstancesClient(osacBootstrap.Conn()),

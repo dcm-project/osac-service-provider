@@ -42,12 +42,12 @@ var _ = Describe("ClustersServer", func() {
 	// TC-U-116: Create rejects a duplicate id
 	It("rejects Create with a duplicate id, preserving the original (TC-U-116)", func() {
 		_, err := srv.Create(ctx, &publicv1.ClustersCreateRequest{
-			Object: &publicv1.Cluster{Id: "x", Spec: &publicv1.ClusterSpec{Template: "first"}},
+			Object: &publicv1.Cluster{Id: "x", Spec: &publicv1.ClusterSpec{Template: &publicv1.ClusterTemplateReference{Id: "first"}}},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = srv.Create(ctx, &publicv1.ClustersCreateRequest{
-			Object: &publicv1.Cluster{Id: "x", Spec: &publicv1.ClusterSpec{Template: "second"}},
+			Object: &publicv1.Cluster{Id: "x", Spec: &publicv1.ClusterSpec{Template: &publicv1.ClusterTemplateReference{Id: "second"}}},
 		})
 		st, ok := status.FromError(err)
 		Expect(ok).To(BeTrue())
@@ -56,7 +56,7 @@ var _ = Describe("ClustersServer", func() {
 		listResp, err := srv.List(ctx, &publicv1.ClustersListRequest{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(listResp.GetItems()).To(HaveLen(1))
-		Expect(listResp.GetItems()[0].GetSpec().GetTemplate()).To(Equal("first"))
+		Expect(listResp.GetItems()[0].GetSpec().GetTemplate().GetId()).To(Equal("first"))
 	})
 
 	// TC-U-118: Create sets CLUSTER_STATE_READY and round-trips via Get/List
