@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -366,7 +367,9 @@ func randomID() string {
 // dependency (REQ-E2E-080 keeps this module's own go.mod minimal), and the
 // CI runner already has kubectl configured against the kind cluster for
 // every other step in .github/workflows/e2e-tierb.yaml.
-// If name is empty, uses the default fixture clusterOrderName.
+// If name is empty, uses the default fixture clusterOrderName. For a
+// provider-created order, fulfillment-service assigns a generated Kubernetes
+// name and preserves the provider request ID in the clusterorder-uuid label.
 func getClusterOrderStatus(name ...string) clusterOrderStatus {
 	orderName := clusterOrderName
 	if len(name) > 0 && name[0] != "" {
@@ -374,7 +377,17 @@ func getClusterOrderStatus(name ...string) clusterOrderStatus {
 	}
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("kubectl", "get", "clusterorder", orderName, "-o", "jsonpath={.status}") //nolint:gosec // fixed args, not user input
+	args := []string{"get", "clusterorder"}
+	byRequestID := len(name) > 0 && name[0] != ""
+	jsonPath := "{.status}"
+	if byRequestID {
+		args = append(args, "--selector", "osac.openshift.io/clusterorder-uuid="+orderName)
+		jsonPath = "{.items[*].status.phase}"
+	} else {
+		args = append(args, orderName)
+	}
+	args = append(args, "-o", "jsonpath="+jsonPath)
+	cmd := exec.Command("kubectl", args...) //nolint:gosec // fixed command and repo-controlled label value
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -384,6 +397,9 @@ func getClusterOrderStatus(name ...string) clusterOrderStatus {
 	raw := strings.TrimSpace(stdout.String())
 	if raw == "" {
 		return clusterOrderStatus{}
+	}
+	if byRequestID {
+		return clusterOrderStatus{Phase: raw}
 	}
 
 	var status clusterOrderStatus
@@ -693,9 +709,18 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 		// Call osac-sp's Create endpoint (not direct CR creation)
 		clusterID := "tc-tb-200-osac-dispatch-" + randomID()
 		createPayload := map[string]interface{}{
-			"template_id":            "default-hcp", // or the Hub-configured template
-			"cloud_provider":         "generic",
-			"control_plane_replicas": 3,
+			"spec": map[string]interface{}{
+				"version": "1.29",
+				"nodes": map[string]interface{}{
+					"worker": map[string]interface{}{"count": 3},
+				},
+				"metadata": map[string]interface{}{"name": clusterID},
+				"provider_hints": map[string]interface{}{
+					"osac": map[string]interface{}{
+						"template_id": "default-hcp", // or the Hub-configured template
+					},
+				},
+			},
 		}
 
 		payload, err := json.Marshal(createPayload)
@@ -709,13 +734,17 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 			fmt.Sprintf("%s/api/v1alpha1/clusters?id=%s", osacSPURL, clusterID),
 			bytes.NewReader(payload))
 		Expect(err).NotTo(HaveOccurred())
+		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := http.DefaultClient.Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
+		responseBody, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
 
 		// 202 Accepted or 201 Created expected
-		Expect(resp.StatusCode).To(Or(Equal(http.StatusCreated), Equal(http.StatusAccepted)))
+		Expect(resp.StatusCode).To(Or(Equal(http.StatusCreated), Equal(http.StatusAccepted)),
+			"osac-sp Create response: %s", responseBody)
 
 		// Eventually, the real ClusterOrder CR reaches Ready via osac-operator + osac-aap-mock
 		// Same as AC-TB-030, but triggered via osac-sp's REST API + fulfillment-service dispatch,

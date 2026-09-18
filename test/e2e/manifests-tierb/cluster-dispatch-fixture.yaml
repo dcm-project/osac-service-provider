@@ -1,0 +1,28 @@
+---
+"@type": type.googleapis.com/osac.public.v1.HostType
+id: standard
+metadata:
+  name: standard
+title: Tier B standard host
+description: Tier B dispatch fixture host type
+---
+"@type": type.googleapis.com/osac.public.v1.ClusterTemplate
+id: default-hcp
+metadata:
+  name: default-hcp
+title: Tier B test cluster
+description: Tier B dispatch fixture
+node_sets:
+  compute:
+    host_type:
+      id: standard
+    size: 3
+---
+"@type": type.googleapis.com/osac.public.v1.ClusterVersion
+metadata:
+  name: tierb-1-29
+spec:
+  enabled: true
+  is_default: true
+  state: CLUSTER_VERSION_STATE_ACTIVE
+  version: 1.29.0

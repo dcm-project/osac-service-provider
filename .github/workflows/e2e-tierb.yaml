@@ -216,7 +216,7 @@ jobs:
           # controller consumes this file from inside the cluster, so replace
           # the loopback endpoint with the in-cluster Kubernetes Service DNS.
           kubectl config view --raw --minify \
-            | sed -E 's#server: https://127\\.0\\.0\\.1:[0-9]+#server: https://kubernetes.default.svc#' \
+             | sed -E 's#server: https://127\.0\.0\.1:[0-9]+#server: https://kubernetes.default.svc#' \
             > /tmp/tierb-hub-kubeconfig
 
           printf '%s' tierb-osac-admin-secret > /tmp/tierb-osac-client-secret
@@ -229,10 +229,11 @@ jobs:
             | jq --exit-status --raw-output '.access_token')"
           export OSAC_TOKEN
           osac login --insecure --private https://127.0.0.1:18083
-          osac create hub \
-            --name default-hub \
-            --kubeconfig /tmp/tierb-hub-kubeconfig \
-            --namespace default
+           osac create hub \
+             --name default-hub \
+             --kubeconfig /tmp/tierb-hub-kubeconfig \
+             --namespace default
+           osac create -f test/e2e/manifests-tierb/cluster-dispatch-fixture.yaml
 
       - name: Install bare-metal-fulfillment-operator (deploy-only, TC-TB-100 — DD-216)
         run: |
@@ -256,14 +257,13 @@ jobs:
           sleep 3
 
       - name: Run Tier B e2e suite
-        working-directory: test/e2e
         env:
           OSAC_SP_URL: http://localhost:18081
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
           ENVIRONMENT_AGENT_URL: http://127.0.0.1:18090/api/v1alpha1
           TIERB_PHASE2_ENABLED: "true"
-        run: go run github.com/onsi/ginkgo/v2/ginkgo -r -v --timeout=10m
+        run: make e2e-test
 
       - name: Stop port-forwards
         if: always()
