@@ -21,15 +21,11 @@ confirmed scoping:
 - VM CRUD — Milestone 4.
 - Default network/subnet provisioning — VM-only concern (`ComputeInstances`
   require `network_attachments`; `Clusters` do not — see §4.1), Milestone 4.
-- The full DCM-K8s-version-to-OSAC-`release_image` compatibility matrix —
-  Milestone 6 per issue #1 and `osac-sp.spec.md`'s SC-001. This milestone's
-  Create endpoint is the **first actual consumer** of that placeholder
-  concern (SC-001 originally noted "no cluster-create endpoint consumes it
-  yet" — this milestone resolves that premise; see §4.1's translation table
-  for the placeholder this milestone uses in its place). Milestone 6 stacked
-  its own branch directly on top of this milestone's branch (rather than on
-  `main`) specifically because it edits this file's `release_image`
-  translation directly — see `osac-sp-m6-version-matrix.spec.md`.
+- The full version-support policy and OSAC `ClusterVersion` catalog resolution
+  — Milestone 6 per issue #1 and `osac-sp.spec.md`'s SC-001. This milestone's
+  Create endpoint consumes the policy through the shared matrix; Milestone 6
+  defines the live catalog lookup and SemVer selection behavior in
+  `osac-sp-m6-version-matrix.spec.md`.
 - Templates whose `node_sets` map doesn't define exactly one key — rejected
   with `400` (REQ-CREATE-090); sizing a multi-node-set template needs a new
   provider hint the enhancement doc doesn't define yet (SC-M3-004, DD-110).
@@ -140,7 +136,7 @@ follows the [generic Cluster schema](https://github.com/dcm-project/enhancements
 | DCM Field | OSAC Field | Notes |
 |-----------|------------|-------|
 | `id` (query param) | `Cluster.id` | Sets OSAC's own identifier — see REQ-CREATE-040 (idempotency) |
-| `spec.version` | `spec.release_image` | Translated via the shared version-translation compatibility matrix (REQ-CREATE-025, `internal/versionmatrix` — Milestone 6) |
+| `spec.version` | `spec.version` (`ClusterVersionReference`) | Resolved by Milestone 6 against OSAC's `ClusterVersions/List` catalog; the newest matching SemVer z-stream is selected (REQ-CREATE-025) |
 | `spec.nodes.control_plane.*` | *(not sent)* | Hosted Control Planes manage the control plane internally — OSAC's `ClusterSpec` has no control-plane node-set concept |
 | `spec.nodes.worker.count` | `spec.node_sets[key].size` | `key` comes from `ClusterTemplates/Get(template_id).node_sets` (DD-110) — never derived from `template_id` itself; the template MUST define exactly one node-set key (REQ-CREATE-090) |
 | `spec.nodes.worker.cpu`/`memory`/`storage` | *(not sent)* | Informational only — `host_type` is fixed by the template (REQ-CREATE-070) |
@@ -150,8 +146,9 @@ follows the [generic Cluster schema](https://github.com/dcm-project/enhancements
 | `spec.provider_hints.osac.base_domain`/`pull_secret`/`ssh_key` | `spec.network.*`/`pull_secret`/`ssh_public_key` | Optional passthrough |
 
 **Provider Hints (`provider_hints.osac`):** `template_id` (string, required);
-`base_domain`, `pull_secret`, `ssh_key`, `release_image` (string, optional —
-`release_image` overrides the `version`-derived translation when present).
+`base_domain`, `pull_secret`, `ssh_key` (strings, optional). The legacy
+`release_image` field is rejected when non-empty because the current OSAC API
+uses a typed `ClusterVersionReference`.
 
 #### Requirements
 
@@ -159,7 +156,7 @@ follows the [generic Cluster schema](https://github.com/dcm-project/enhancements
 |----|-------------|----------|-------|
 | REQ-CREATE-010 | The SP MUST implement `POST /api/v1alpha1/clusters`, accepting a required `id` query parameter and a request body `{"spec": {...}}` — matching `control-plane`'s actual outbound dispatch shape, not a hypothetical/generic REST-resource shape. "Required" here is a runtime/behavioral requirement (REQ-CREATE-060) enforced by request validation, not the OpenAPI schema's `required` keyword — both `id` and the body's `spec` property are schema-optional for AEP-133 compliance | MUST | DD-080, DD-113 |
 | REQ-CREATE-020 | The SP MUST translate the request per the Field Mapping table above and call `osac.public.v1.Clusters/Create` with `Cluster.id` set to the `id` query parameter's exact value | MUST | |
-| REQ-CREATE-025 | `spec.version` MUST be translated to `release_image` via the shared version-translation compatibility matrix (`internal/versionmatrix`) when `provider_hints.osac.release_image` is not supplied | MUST | Superseded placeholder-table wording — see Milestone 6 (`osac-sp-m6-version-matrix.spec.md`, REQ-VERSION-060) for the matrix's actual design, JSON-override, and hard-rejection-of-unsupported-versions behavior |
+| REQ-CREATE-025 | `spec.version` MUST resolve to an OSAC `ClusterVersionReference` via `ClusterVersions/List`; the SP MUST select the newest valid SemVer candidate matching the requested Kubernetes minor and MUST reject the request when no candidate is available | MUST | Milestone 6 (`osac-sp-m6-version-matrix.spec.md`, REQ-VERSION-060) defines the shared support policy, catalog lookup, and selection behavior |
 | REQ-CREATE-030 | The SP MUST set three ownership labels on `Cluster.metadata.labels` for every Create call: `dcm.io/managed-by="dcm"`, `dcm.io/instance-id="<id>"`, `dcm.io/service-type="cluster"` — merged with, not replacing, any caller-supplied `spec.metadata.labels` | MUST | |
 | REQ-CREATE-040 | If `Clusters/Create` returns gRPC `AlreadyExists` for the given `id`, the SP MUST call `Clusters/Get(id)` and return **that** object's current state as a successful Create response — MUST NOT surface `AlreadyExists` to the caller as an error | MUST | DD-100 |
 | REQ-CREATE-050 | A successful Create response MUST be `201 Created` with a body whose top-level `id` and `status` fields are always populated (never omitted/null) — `control-plane` persists these two fields with no presence validation of its own | MUST | |
@@ -181,7 +178,7 @@ None — reuses Milestone 2's `Bootstrap.Conn()` (now also backing a
 - **Validates:** REQ-CREATE-010, REQ-CREATE-020, REQ-CREATE-025, REQ-CREATE-080
 - **Given** a request `POST /api/v1alpha1/clusters?id=X` with body `{"spec":{"version":"1.29","nodes":{"worker":{"count":3}},"metadata":{"name":"foo"},"provider_hints":{"osac":{"template_id":"default-hcp"}}}}`, and a fake `ClusterTemplatesServer` whose `Get("default-hcp")` returns a template with `node_sets={"compute":{}}` (a key deliberately distinct from the template ID, to prove the SP doesn't assume `key == template_id`)
 - **When** the handler processes it against fake `bufconn`-backed `ClusterTemplatesServer`/`ClustersServer`
-- **Then** the fake's recorded `Clusters/Create` call has `Cluster.id` exactly `"X"`, `spec.template` exactly `"default-hcp"`, `spec.node_sets["compute"].size` exactly `3` (the key discovered from `ClusterTemplates/Get`, not `"default-hcp"`), `spec.metadata.name` exactly `"foo"`, and `spec.release_image` equal to the placeholder table's mapped value for `"1.29"` (not empty, not the literal string `"1.29"`)
+- **Then** the fake's recorded `Clusters/Create` call has `Cluster.id` exactly `"X"`, `spec.template` exactly `"default-hcp"`, `spec.node_sets["compute"].size` exactly `3` (the key discovered from `ClusterTemplates/Get`, not `"default-hcp"`), `spec.metadata.name` exactly `"foo"`, and `spec.version.name` equal to the resolved OSAC catalog item for `"1.29"` (not empty and not the literal string `"1.29"`)
 
 ##### AC-CREATE-020: Ownership labels are set exactly, merged with caller labels
 
@@ -609,10 +606,9 @@ response schema echoes OSAC's `status.node_sets` map directly instead
 (`{<key>: {host_type, size}}`).
 
 `version` is echoed on Create's response only (from the request's own
-`spec.version`, no OSAC round-trip) and omitted on Get/List — the
-enhancement's [Version Translation](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md#version-translation)
-section documents only a one-directional DCM→OSAC mapping, with no reverse
-translation from `release_image` required in scope.
+`spec.version`, no OSAC round-trip) and omitted on Get/List. The OSAC
+`ClusterVersionReference` is an internal Create request detail; no reverse
+translation from a catalog object is required in the response schema.
 
 ### SC-M3-003: Status mapper's `Unavailable`/`NotFound` rules are async-only in this milestone — synchronous Create/Get/List always resolve those two gRPC outcomes as HTTP errors first
 
