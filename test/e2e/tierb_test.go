@@ -50,6 +50,7 @@ const (
 	envKeycloakURL         = "KEYCLOAK_URL"          // e.g. http://localhost:18082/realms/osac
 	envTierBAdminSecret    = "TIERB_ADMIN_SECRET"    // osac-admin's client secret (tierb-config/realm.json)
 	envEnvironmentAgentURL = "ENVIRONMENT_AGENT_URL" // e.g. http://127.0.0.1:18090/api/v1alpha1
+	tierBCreateVersion     = "1.29"                  // the sole ClusterVersion registered by the Tier B workflow
 	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
 	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
 	// deploys that stack, distinct from Phase 1's envKeycloakURL gate.
@@ -728,11 +729,12 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 
 		// Call osac-sp's Create endpoint (not direct CR creation)
 		clusterID := "tc-tb-200-osac-dispatch-" + randomID()
-		// 1.29 is a representative live-dispatch version; matrix-wide support
-		// and newest-z-stream selection are covered by TC-U-520..524/TC-I-502..503.
+		// Tier B registers only 1.29, so this exercises the sole live catalog
+		// entry; matrix-wide support and newest-z-stream selection are covered by
+		// TC-U-520..524/TC-I-502..503.
 		createPayload := createClusterPayload{
 			Spec: createClusterSpec{
-				Version:  "1.29",
+				Version:  tierBCreateVersion,
 				Nodes:    createClusterNodes{Worker: createClusterWorker{Count: 3}},
 				Metadata: createClusterMetadata{Name: clusterID},
 				ProviderHints: createClusterProviderHints{
