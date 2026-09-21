@@ -190,4 +190,34 @@ var _ = Describe("Cluster Create version-matrix validation (integration, real HT
 		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
 		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-40"))
 	})
+
+	// TC-I-503 (REQ-VERSION-060, AC-VERSION-110): Create selects the newest
+	// matching SemVer z-stream through the real HTTP/router boundary.
+	It("selects the newest matching z-stream over real HTTP (TC-I-503)", func() {
+		f := newIntegrationFixture()
+		defer f.Close()
+
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-2"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.2"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-30-99"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.30.99"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+			}}, nil
+		}
+
+		resp := postCreate(f, validCreateJSON)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29-10"))
+	})
 })

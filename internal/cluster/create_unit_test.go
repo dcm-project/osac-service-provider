@@ -228,6 +228,31 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
+	// TC-U-523 (REQ-VERSION-060, AC-VERSION-110): the resolver compares
+	// SemVer values instead of trusting OSAC catalog order.
+	It("selects the latest matching OSAC ClusterVersion z-stream regardless of list order (TC-U-523)", func() {
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-2"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.2"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-30-99"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.30.99"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+			}}, nil
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29-10"))
+	})
+
 	It("rejects the legacy release_image override because OSAC now uses ClusterVersions", func() {
 		spec := baseSpec()
 		spec.Version = "1.29"

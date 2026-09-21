@@ -204,6 +204,7 @@ type fixture struct {
 	svc       *cluster.Service
 	fake      *fakeClustersServer
 	templates *fakeClusterTemplatesServer
+	versions  *fakeClusterVersionsServer
 	conn      *grpc.ClientConn
 	server    *grpc.Server
 }
@@ -238,6 +239,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 		svc:       cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix),
 		fake:      fake,
 		templates: templates,
+		versions:  versions,
 		conn:      conn,
 		server:    grpcSrv,
 	}

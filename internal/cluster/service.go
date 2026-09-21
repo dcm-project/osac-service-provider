@@ -9,6 +9,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
@@ -132,6 +133,8 @@ func (s *Service) resolveVersion(ctx context.Context, version string) (*publicv1
 		return nil, err
 	}
 
+	var selected *publicv1.ClusterVersion
+	var selectedVersion *semver.Version
 	for _, candidate := range resp.GetItems() {
 		candidateVersion := candidate.GetSpec().GetVersion()
 		if candidateVersion != version && !strings.HasPrefix(candidateVersion, version+".") {
@@ -141,9 +144,22 @@ func (s *Service) resolveVersion(ctx context.Context, version string) (*publicv1
 		if name == "" {
 			continue
 		}
+
+		parsedVersion, err := semver.NewVersion(candidateVersion)
+		if err != nil {
+			continue
+		}
+		if selectedVersion == nil || parsedVersion.GreaterThan(selectedVersion) ||
+			(parsedVersion.Equal(selectedVersion) && name < selected.GetMetadata().GetName()) {
+			selected = candidate
+			selectedVersion = parsedVersion
+		}
+	}
+
+	if selected != nil {
 		return &publicv1.ClusterVersionReference{
-			Id:   candidate.GetId(),
-			Name: name,
+			Id:   selected.GetId(),
+			Name: selected.GetMetadata().GetName(),
 		}, nil
 	}
 
