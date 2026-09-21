@@ -23,7 +23,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -57,14 +56,41 @@ const (
 	envPhase2Enabled = "TIERB_PHASE2_ENABLED"
 )
 
+type createClusterPayload struct {
+	Spec createClusterSpec `json:"spec"`
+}
+
+type createClusterSpec struct {
+	Version       string                     `json:"version"`
+	Nodes         createClusterNodes         `json:"nodes"`
+	Metadata      createClusterMetadata      `json:"metadata"`
+	ProviderHints createClusterProviderHints `json:"provider_hints"`
+}
+
+type createClusterNodes struct {
+	Worker createClusterWorker `json:"worker"`
+}
+
+type createClusterWorker struct {
+	Count int `json:"count"`
+}
+
+type createClusterMetadata struct {
+	Name string `json:"name"`
+}
+
+type createClusterProviderHints struct {
+	OSAC createClusterOSACHints `json:"osac"`
+}
+
+type createClusterOSACHints struct {
+	TemplateID string `json:"template_id"`
+}
+
 var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func() {
 	// TC-TB-020 / REQ-TB-020
 	It("issues a client_credentials token for osac-admin carrying username and osac-api audience claims", func() {
-		keycloakURL := os.Getenv(envKeycloakURL)
-		adminSecret := os.Getenv(envTierBAdminSecret)
-		Expect(adminSecret).NotTo(BeEmpty(), "%s must be set alongside %s", envTierBAdminSecret, envKeycloakURL)
-
-		claims := fetchTokenClaims(keycloakURL, "osac-admin", adminSecret)
+		claims := fetchTokenClaims(keycloakURL, "osac-admin", tierBAdminSecret)
 
 		// Per DD-150: real OSAC checks `username`/`groups`, not
 		// `organization`/`realm_access.roles` as an earlier draft of this
@@ -87,13 +113,11 @@ var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func()
 var _ = Describe("Tier B: SP registration with environment-agent", func() {
 	// TC-E2E-020 / REQ-E2E-050, REQ-E2E-051 / AC-E2E-020, AC-E2E-021
 	It("registers a cluster-type provider with metadata", func() {
-		eaURL := os.Getenv(envEnvironmentAgentURL)
-
 		// Wait for osac-sp to register (it takes a few seconds after the pod becomes Ready)
 		var providers []eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			providers, err = getProvidersList(eaURL)
+			providers, err = getProvidersList(environmentAgentURL)
 			return err == nil && findProvider(providers, "cluster") != nil
 		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the cluster provider with environment-agent by now")
 
@@ -123,12 +147,10 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 
 	// TC-E2E-030 / REQ-E2E-050 / AC-E2E-020
 	It("registers a vm-type provider independently", func() {
-		eaURL := os.Getenv(envEnvironmentAgentURL)
-
 		var providers []eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			providers, err = getProvidersList(eaURL)
+			providers, err = getProvidersList(environmentAgentURL)
 			return err == nil && findProvider(providers, "vm") != nil
 		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the vm provider with environment-agent by now")
 
@@ -144,14 +166,12 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 
 	// TC-E2E-040 / REQ-E2E-050 / AC-E2E-020
 	It("maintains both registrations across the re-registration interval", func() {
-		eaURL := os.Getenv(envEnvironmentAgentURL)
-
 		// Capture initial state
 		var initialProviders []eav1alpha1.Provider
 		var initialCluster, initialVM *eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			initialProviders, err = getProvidersList(eaURL)
+			initialProviders, err = getProvidersList(environmentAgentURL)
 			if err != nil {
 				return false
 			}
@@ -172,7 +192,7 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		var updatedCluster, updatedVM *eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			updatedProviders, err = getProvidersList(eaURL)
+			updatedProviders, err = getProvidersList(environmentAgentURL)
 			if err != nil {
 				return false
 			}
@@ -708,17 +728,15 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 
 		// Call osac-sp's Create endpoint (not direct CR creation)
 		clusterID := "tc-tb-200-osac-dispatch-" + randomID()
-		createPayload := map[string]interface{}{
-			"spec": map[string]interface{}{
-				"version": "1.29",
-				"nodes": map[string]interface{}{
-					"worker": map[string]interface{}{"count": 3},
-				},
-				"metadata": map[string]interface{}{"name": clusterID},
-				"provider_hints": map[string]interface{}{
-					"osac": map[string]interface{}{
-						"template_id": "default-hcp", // or the Hub-configured template
-					},
+		// 1.29 is a representative live-dispatch version; matrix-wide support
+		// and newest-z-stream selection are covered by TC-U-520..524/TC-I-502..503.
+		createPayload := createClusterPayload{
+			Spec: createClusterSpec{
+				Version:  "1.29",
+				Nodes:    createClusterNodes{Worker: createClusterWorker{Count: 3}},
+				Metadata: createClusterMetadata{Name: clusterID},
+				ProviderHints: createClusterProviderHints{
+					OSAC: createClusterOSACHints{TemplateID: "default-hcp"}, // or the Hub-configured template
 				},
 			},
 		}
@@ -734,6 +752,8 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 			fmt.Sprintf("%s/api/v1alpha1/clusters?id=%s", osacSPURL, clusterID),
 			bytes.NewReader(payload))
 		Expect(err).NotTo(HaveOccurred())
+		// This request targets osac-sp. osac-sp obtains the OIDC token and adds
+		// bearer credentials to its internal fulfillment-service gRPC calls.
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := http.DefaultClient.Do(req)

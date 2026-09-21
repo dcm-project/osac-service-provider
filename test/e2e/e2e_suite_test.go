@@ -27,7 +27,11 @@ const (
 )
 
 var (
-	osacSPURL string
+	osacSPURL           string
+	keycloakURL         string
+	tierBAdminSecret    string
+	environmentAgentURL string
+	phase2Enabled       string
 )
 
 func TestE2E(t *testing.T) {
@@ -36,15 +40,19 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	osacSPURL = os.Getenv(envOSACSPURL)
-	for _, envName := range []string{
-		envOSACSPURL,
-		envKeycloakURL,
-		envTierBAdminSecret,
-		envEnvironmentAgentURL,
-		envPhase2Enabled,
-	} {
-		Expect(os.Getenv(envName)).NotTo(BeEmpty(), "%s must be set for the Tier B e2e suite (see the e2e workflow)", envName)
+	required := []struct {
+		name   string
+		target *string
+	}{
+		{name: envOSACSPURL, target: &osacSPURL},
+		{name: envKeycloakURL, target: &keycloakURL},
+		{name: envTierBAdminSecret, target: &tierBAdminSecret},
+		{name: envEnvironmentAgentURL, target: &environmentAgentURL},
+		{name: envPhase2Enabled, target: &phase2Enabled},
+	}
+	for _, env := range required {
+		*env.target = os.Getenv(env.name)
+		Expect(*env.target).NotTo(BeEmpty(), "%s must be set for the Tier B e2e suite (see the e2e workflow)", env.name)
 	}
 
 	// TC-E2E-010: the workflow's own osac-sp readiness step
