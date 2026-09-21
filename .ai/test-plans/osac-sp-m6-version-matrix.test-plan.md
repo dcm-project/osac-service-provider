@@ -97,6 +97,8 @@ Binding, not advisory — same 4 rules Milestone 3 established:
 | TC-U-521 | An explicit `release_image` override is rejected | REQ-VERSION-060, AC-VERSION-070 | Construct a `Service` with a test matrix; call `Create` with a non-empty `provider_hints.osac.release_image`; assert `InvalidArgument` and zero `Clusters/Create` calls. |
 | TC-U-522 | `SupportsVersion` reports matrix membership exactly | REQ-VERSION-070 | Construct a `Service` with a known 2-entry test `Matrix`; call `SupportsVersion` for one of its keys (assert `true`) and for a key absent from it (assert `false`). |
 | TC-U-523 | Create selects the newest matching SemVer z-stream regardless of catalog order | REQ-VERSION-060, AC-VERSION-110 | Return `1.29.2`, unrelated `1.30.99`, and `1.29.10` in that order; call Create for `1.29`; assert the dispatched reference names `tierb-1-29-10`. |
+| TC-U-524 | Resolver ignores malformed/unnamed candidates and deterministically tie-breaks equal versions | REQ-VERSION-060, AC-VERSION-110 | Return a matching candidate without a metadata name, a malformed matching SemVer, and two `1.29.10` candidates with names in reverse lexical order; assert the selected reference uses the lexically first valid name. |
+| TC-U-525 | ClusterVersions/List failures are propagated before Create dispatch | REQ-VERSION-060 | Make the catalog fake return `Unavailable`; assert the same code/message is returned and `Clusters/Create` is not called. |
 
 ---
 
@@ -165,5 +167,5 @@ documents for `mainRun`'s own happy path (proven only via
 | Spec Section | REQ Count | AC Count | TC-U (this file) | TC-I (this file) | Pyramid complete? |
 |---|---|---|---|---|---|
 | 4.1 Version Matrix Package | 4 | 4 | 5 (TC-U-500..504) | 0 dedicated + incidentally via TC-I-502 (AC-010/030) and TC-I-510 (AC-020) and TC-I-520 (AC-040) | Yes — no HTTP surface of its own, same treatment as M3's Status/Error Mapping topics |
-| 4.2 Matrix Consumption | 5 | 7 | 10 (TC-U-510, 520..523, 530..531, 540..541, 550) | 7 (TC-I-500..503, 510, 520..521) | Yes — every AC has both tiers |
-| **Total** | **9** | **11** | **15** | **7** | |
+| 4.2 Matrix Consumption | 5 | 7 | 12 (TC-U-510, 520..525, 530..531, 540..541, 550) | 7 (TC-I-500..503, 510, 520..521) | Yes — every AC has both tiers; TC-U-524/525 are supplementary resolver robustness cases |
+| **Total** | **9** | **11** | **17** | **7** | |

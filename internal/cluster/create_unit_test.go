@@ -253,6 +253,44 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29-10"))
 	})
 
+	It("ignores malformed and unnamed catalog candidates and tie-breaks equal versions by name (TC-U-524)", func() {
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{
+				{
+					Metadata: &publicv1.Metadata{},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.8"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-invalid"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.not-semver"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10-z"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10-a"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+			}}, nil
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29-10-a"))
+	})
+
+	It("propagates a ClusterVersions/List error before dispatching Create (TC-U-525)", func() {
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "catalog unavailable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.Unavailable))
+		Expect(grpcstatus.Convert(err).Message()).To(Equal("catalog unavailable"))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
 	It("rejects the legacy release_image override because OSAC now uses ClusterVersions", func() {
 		spec := baseSpec()
 		spec.Version = "1.29"
@@ -260,6 +298,7 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 
 		_, err := f.svc.Create(context.Background(), "X", spec)
 		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(grpcstatus.Convert(err).Message()).To(Equal("OSAC ClusterVersion selection does not support provider_hints.osac.release_image"))
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 

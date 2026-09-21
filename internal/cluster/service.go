@@ -59,7 +59,7 @@ func (s *Service) SupportsVersion(version string) bool {
 func (s *Service) Create(ctx context.Context, id string, spec v1alpha1.ClusterSpec) (v1alpha1.Cluster, error) {
 	if override := spec.ProviderHints.Osac.ReleaseImage; override != nil && *override != "" {
 		return v1alpha1.Cluster{}, grpcstatus.Error(codes.InvalidArgument,
-			"provider_hints.osac.release_image is not supported by the current OSAC API")
+			"OSAC ClusterVersion selection does not support provider_hints.osac.release_image")
 	}
 
 	nodeSetKey, err := s.resolveNodeSetKey(ctx, spec.ProviderHints.Osac.TemplateId)
@@ -128,6 +128,8 @@ func (s *Service) resolveNodeSetKey(ctx context.Context, templateID string) (str
 // reference, not the old release_image field, so matching by spec.version
 // keeps the provider independent of deployment-specific metadata names.
 func (s *Service) resolveVersion(ctx context.Context, version string) (*publicv1.ClusterVersionReference, error) {
+	// TODO: cache the catalog once Create traffic makes this round trip material;
+	// define an explicit refresh/invalidation policy because OSAC versions can change.
 	resp, err := s.versions.List(ctx, &publicv1.ClusterVersionsListRequest{})
 	if err != nil {
 		return nil, err
