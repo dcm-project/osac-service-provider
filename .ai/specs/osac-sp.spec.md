@@ -563,7 +563,7 @@ the health check (deferred — see Topic 4.3 out-of-scope note).
 | REQ-REG-010 | The SP MUST register with `environment-agent` on startup via two independent calls: one for `service_type=cluster` (name `osac-sp-cluster`), one for `service_type=vm` (name `osac-sp-vm`) | MUST | DD-203 |
 | REQ-REG-020 | Each registration payload MUST include `name`, `service_type`, `endpoint`, and `schema_version` | MUST | |
 | REQ-REG-030 | The cluster registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/clusters`; the vm registration `endpoint` MUST be `{provider.endpoint}/api/v1alpha1/vms` | MUST | |
-| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and a hardcoded `kubernetes_supported_versions` list, carried as additional keys inside the `metadata` object | MUST | DD-203 — `environment-agent`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these either; carried via its `additionalProperties` catch-all shape alongside its own known fields (`region_code`/`zone`/`status`/`resources`) |
+| REQ-REG-040 | The cluster registration payload MUST advertise `supported_platforms=["baremetal"]`, `supported_provisioning_types=["hypershift"]`, and `kubernetes_supported_versions=matrix.SupportedVersions()`, carried as additional keys inside the `metadata` object | MUST | DD-203 and M6 — `environment-agent`'s `Provider`/`ProviderMetadata` resource has no top-level fields for these; carried via its `additionalProperties` catch-all shape |
 | REQ-REG-050 | Both registrations MUST execute asynchronously and MUST NOT block server startup | MUST | |
 | REQ-REG-052 | The internal readiness self-probe that gates when registration starts (REQ-REG-050) MUST keep retrying if a single probing window elapses without a successful response, rather than permanently abandoning registration; it MUST give up only when the server's shutdown context is cancelled | MUST | DD-141 |
 | REQ-REG-060 | The two registrations MUST be independent: a failure (including non-retryable 4xx) on one MUST NOT stop or delay the other | MUST | |
@@ -778,20 +778,11 @@ lets reviewers keep it open in a second tab alongside the spec.
 
 **Related requirements:** REQ-REG-040
 
-The full version-translation compatibility matrix (mapping DCM K8s versions
-to OSAC `release_image` values) is Milestone 6 scope per issue #1. For this
-milestone, `kubernetes_supported_versions` MUST be a non-empty, hardcoded
-placeholder list (e.g., the versions already known to be supported by OSAC's
-available cluster templates at implementation time) — it does not need to be
-sourced from the full matrix yet, since no cluster-create endpoint consumes
-it in this milestone.
-
-**Superseded by Milestone 6** (`internal/versionmatrix` —
-see `osac-sp-m6-version-matrix.spec.md` REQ-VERSION-050): once that
-milestone lands, `kubernetes_supported_versions` is derived directly from
-the shared matrix's own keys (`matrix.SupportedVersions()`), not a
-separately hand-maintained list — this SC's placeholder-list allowance no
-longer applies from that point forward.
+`kubernetes_supported_versions` is derived directly from the shared
+`internal/versionmatrix` keys via `matrix.SupportedVersions()`. The same
+matrix is used by Create for support validation; Create then resolves the
+concrete OSAC `ClusterVersionReference` from the live catalog as specified by
+Milestone 6.
 
 ### SC-002: Unhealthy status is never an HTTP error
 

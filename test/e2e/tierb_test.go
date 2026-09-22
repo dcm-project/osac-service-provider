@@ -1,7 +1,6 @@
-// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): run when
-// .github/workflows/e2e-tierb.yaml's env vars are present. The environment
-// checks keep standalone runs useful while the active workflow supplies all
-// required endpoints.
+// Tier B specs (osac-sp-e2e-tier-b.spec.md, Phase 1): require all of
+// .github/workflows/e2e-tierb.yaml's environment variables. The suite-level
+// BeforeSuite fails closed when any required endpoint or credential is absent.
 //
 // TC-TB-030 (osac-sp health against the real backend) deliberately has no
 // dedicated spec here: health_test.go's existing
@@ -15,13 +14,15 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -49,23 +50,48 @@ const (
 	envKeycloakURL         = "KEYCLOAK_URL"          // e.g. http://localhost:18082/realms/osac
 	envTierBAdminSecret    = "TIERB_ADMIN_SECRET"    // osac-admin's client secret (tierb-config/realm.json)
 	envEnvironmentAgentURL = "ENVIRONMENT_AGENT_URL" // e.g. http://127.0.0.1:18090/api/v1alpha1
+	tierBCreateVersion     = "1.29"                  // the sole ClusterVersion registered by the Tier B workflow
 	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
 	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
 	// deploys that stack, distinct from Phase 1's envKeycloakURL gate.
 	envPhase2Enabled = "TIERB_PHASE2_ENABLED"
 )
 
+type createClusterPayload struct {
+	Spec createClusterSpec `json:"spec"`
+}
+
+type createClusterSpec struct {
+	Version       string                     `json:"version"`
+	Nodes         createClusterNodes         `json:"nodes"`
+	Metadata      createClusterMetadata      `json:"metadata"`
+	ProviderHints createClusterProviderHints `json:"provider_hints"`
+}
+
+type createClusterNodes struct {
+	Worker createClusterWorker `json:"worker"`
+}
+
+type createClusterWorker struct {
+	Count int `json:"count"`
+}
+
+type createClusterMetadata struct {
+	Name string `json:"name"`
+}
+
+type createClusterProviderHints struct {
+	OSAC createClusterOSACHints `json:"osac"`
+}
+
+type createClusterOSACHints struct {
+	TemplateID string `json:"template_id"`
+}
+
 var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func() {
 	// TC-TB-020 / REQ-TB-020
 	It("issues a client_credentials token for osac-admin carrying username and osac-api audience claims", func() {
-		keycloakURL := os.Getenv(envKeycloakURL)
-		if keycloakURL == "" {
-			Skip("not a Tier B run: " + envKeycloakURL + " is unset")
-		}
-		adminSecret := os.Getenv(envTierBAdminSecret)
-		Expect(adminSecret).NotTo(BeEmpty(), "%s must be set alongside %s", envTierBAdminSecret, envKeycloakURL)
-
-		claims := fetchTokenClaims(keycloakURL, "osac-admin", adminSecret)
+		claims := fetchTokenClaims(keycloakURL, "osac-admin", tierBAdminSecret)
 
 		// Per DD-150: real OSAC checks `username`/`groups`, not
 		// `organization`/`realm_access.roles` as an earlier draft of this
@@ -88,16 +114,11 @@ var _ = Describe("Tier B: real Keycloak issues correctly-claimed tokens", func()
 var _ = Describe("Tier B: SP registration with environment-agent", func() {
 	// TC-E2E-020 / REQ-E2E-050, REQ-E2E-051 / AC-E2E-020, AC-E2E-021
 	It("registers a cluster-type provider with metadata", func() {
-		eaURL := os.Getenv(envEnvironmentAgentURL)
-		if eaURL == "" {
-			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
-		}
-
 		// Wait for osac-sp to register (it takes a few seconds after the pod becomes Ready)
 		var providers []eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			providers, err = getProvidersList(eaURL)
+			providers, err = getProvidersList(environmentAgentURL)
 			return err == nil && findProvider(providers, "cluster") != nil
 		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the cluster provider with environment-agent by now")
 
@@ -127,15 +148,10 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 
 	// TC-E2E-030 / REQ-E2E-050 / AC-E2E-020
 	It("registers a vm-type provider independently", func() {
-		eaURL := os.Getenv(envEnvironmentAgentURL)
-		if eaURL == "" {
-			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
-		}
-
 		var providers []eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			providers, err = getProvidersList(eaURL)
+			providers, err = getProvidersList(environmentAgentURL)
 			return err == nil && findProvider(providers, "vm") != nil
 		}, "30s", "500ms").Should(BeTrue(), "osac-sp should have registered the vm provider with environment-agent by now")
 
@@ -151,17 +167,12 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 
 	// TC-E2E-040 / REQ-E2E-050 / AC-E2E-020
 	It("maintains both registrations across the re-registration interval", func() {
-		eaURL := os.Getenv(envEnvironmentAgentURL)
-		if eaURL == "" {
-			Skip("not a Tier B run: " + envEnvironmentAgentURL + " is unset")
-		}
-
 		// Capture initial state
 		var initialProviders []eav1alpha1.Provider
 		var initialCluster, initialVM *eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			initialProviders, err = getProvidersList(eaURL)
+			initialProviders, err = getProvidersList(environmentAgentURL)
 			if err != nil {
 				return false
 			}
@@ -182,7 +193,7 @@ var _ = Describe("Tier B: SP registration with environment-agent", func() {
 		var updatedCluster, updatedVM *eav1alpha1.Provider
 		Eventually(func() bool {
 			var err error
-			updatedProviders, err = getProvidersList(eaURL)
+			updatedProviders, err = getProvidersList(environmentAgentURL)
 			if err != nil {
 				return false
 			}
@@ -272,12 +283,6 @@ var phase2CRDs = []string{
 }
 
 var _ = Describe("Tier B Phase 2: infra is up before any reconciliation is exercised", func() {
-	BeforeEach(func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-	})
-
 	// TC-TB-060 / REQ-TB-070 / AC-TB-030 (given clause). Deployment
 	// readiness is deliberately NOT re-checked here: the workflow's own
 	// `kubectl rollout status`/`kubectl wait --for=condition=Available`
@@ -302,10 +307,6 @@ var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal st
 	// (ClusterOrder-only, direct-CR-create scope this landing — DD-216,
 	// DD-218).
 	It("drives a directly-created ClusterOrder to Ready via real osac-operator + osac-aap-mock", func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-
 		// TC-TB-080: create the fixture directly against the cluster's
 		// own API server.
 		applyOut, err := exec.Command("kubectl", "apply", "-f", clusterOrderFixture).CombinedOutput() //nolint:gosec // fixed, repo-local path, not user input
@@ -374,23 +375,52 @@ var _ = Describe("Tier B Phase 2: a real ClusterOrder reaches a real terminal st
 	})
 })
 
+// randomID generates a random 8-character hex string for use in test fixture names.
+func randomID() string {
+	b := make([]byte, 4)
+	_, err := rand.Read(b)
+	Expect(err).NotTo(HaveOccurred())
+	return hex.EncodeToString(b)
+}
+
 // getClusterOrderStatus shells out to kubectl to fetch the ClusterOrder
 // fixture's current .status — this suite has no Kubernetes client-go
 // dependency (REQ-E2E-080 keeps this module's own go.mod minimal), and the
 // CI runner already has kubectl configured against the kind cluster for
 // every other step in .github/workflows/e2e-tierb.yaml.
-func getClusterOrderStatus() clusterOrderStatus {
+// If name is empty, uses the default fixture clusterOrderName. For a
+// provider-created order, fulfillment-service assigns a generated Kubernetes
+// name and preserves the provider request ID in the clusterorder-uuid label.
+func getClusterOrderStatus(name ...string) clusterOrderStatus {
+	orderName := clusterOrderName
+	if len(name) > 0 && name[0] != "" {
+		orderName = name[0]
+	}
+
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("kubectl", "get", "clusterorder", clusterOrderName, "-o", "jsonpath={.status}") //nolint:gosec // fixed args, not user input
+	args := []string{"get", "clusterorder"}
+	byRequestID := len(name) > 0 && name[0] != ""
+	jsonPath := "{.status}"
+	if byRequestID {
+		args = append(args, "--selector", "osac.openshift.io/clusterorder-uuid="+orderName)
+		jsonPath = "{.items[*].status.phase}"
+	} else {
+		args = append(args, orderName)
+	}
+	args = append(args, "-o", "jsonpath="+jsonPath)
+	cmd := exec.Command("kubectl", args...) //nolint:gosec // fixed command and repo-controlled label value
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		Fail(fmt.Sprintf("kubectl get clusterorder %s failed: %v: %s", clusterOrderName, err, stderr.String()))
+		Fail(fmt.Sprintf("kubectl get clusterorder %s failed: %v: %s", orderName, err, stderr.String()))
 	}
 
 	raw := strings.TrimSpace(stdout.String())
 	if raw == "" {
 		return clusterOrderStatus{}
+	}
+	if byRequestID {
+		return clusterOrderStatus{Phase: raw}
 	}
 
 	var status clusterOrderStatus
@@ -454,12 +484,6 @@ type bareMetalInstanceStatus struct {
 }
 
 var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real terminal state", func() {
-	BeforeEach(func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-	})
-
 	// TC-TB-110 / REQ-TB-110 / AC-TB-040 (runStrategy unset variant). No
 	// real Metal3/Ironic/virtual-BMC infrastructure involved (DD-226/227) —
 	// a static BareMetalHost fixture, patched once to simulate completed
@@ -572,12 +596,6 @@ var _ = Describe("Tier B Phase 2: a real BareMetalInstance reaches a real termin
 })
 
 var _ = Describe("Tier B Phase 2: BareMetalInstance allocation fails safe, and releases its host on deletion", func() {
-	BeforeEach(func() {
-		if os.Getenv(envPhase2Enabled) == "" {
-			Skip("not a Tier B Phase 2 run: " + envPhase2Enabled + " is unset")
-		}
-	})
-
 	// TC-TB-130 / REQ-TB-120 / AC-TB-050: a hostType with zero matching
 	// BareMetalHost fixtures must converge to a real terminal Failed phase
 	// with the exact Allocated=False/"Failed"/"No matching hosts
@@ -706,32 +724,55 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 	// TC-TB-200 / REQ-TB-100 / AC-TB-060: validate osac-sp's POST /api/v1alpha1/clusters
 	// routes through fulfillment-service's dispatch layer to create a real ClusterOrder
 	// on a registered Hub, driving it to Ready via real osac-operator + osac-aap-mock.
-	//
-	// Status: PENDING OSAC-4826 (fulfillment-service `osac create hub` CLI fix).
-	// Hub registration requires the CLI to support --name flag (currently fails with
-	// "metadata is required"). See https://redhat.atlassian.net/browse/OSAC-4826
-	//
-	// Once OSAC-4826 lands:
-	// 1. Remove this Skip() marker
-	// 2. Uncomment the Hub registration step in .github/workflows/e2e-tierb.yaml
-	// 3. This test becomes fully functional, validating the complete dispatch flow
 	It("routes osac-sp Create through fulfillment-service dispatch to a real ClusterOrder (TC-TB-200)", func() {
-		Skip("Pending OSAC-4826: fulfillment-service osac create hub CLI fix")
-
 		// This test assumes a Hub has been registered via the fulfillment-service CLI.
-		// Until OSAC-4826 is fixed, the Hub registration step in the workflow is skipped.
-		// All infrastructure below is in place and ready to uncomment/enable.
 
 		// Call osac-sp's Create endpoint (not direct CR creation)
-		// Note: once OSAC-4826 is fixed upstream, this can call osac-sp's actual Create endpoint:
-		//   POST {osacSPURL}/api/v1alpha1/clusters?id=tc-tb-200-osac-dispatch-{random-id}
-		// For now, assume ClusterOrder is created (perhaps manually for testing)
+		clusterID := "tc-tb-200-osac-dispatch-" + randomID()
+		// Tier B registers only 1.29, so this exercises the sole live catalog
+		// entry; matrix-wide support and newest-z-stream selection are covered by
+		// TC-U-520..524/TC-I-502..503.
+		createPayload := createClusterPayload{
+			Spec: createClusterSpec{
+				Version:  tierBCreateVersion,
+				Nodes:    createClusterNodes{Worker: createClusterWorker{Count: 3}},
+				Metadata: createClusterMetadata{Name: clusterID},
+				ProviderHints: createClusterProviderHints{
+					OSAC: createClusterOSACHints{TemplateID: "default-hcp"}, // or the Hub-configured template
+				},
+			},
+		}
+
+		payload, err := json.Marshal(createPayload)
+		Expect(err).NotTo(HaveOccurred())
+
+		// POST to osac-sp's cluster Create endpoint
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			fmt.Sprintf("%s/api/v1alpha1/clusters?id=%s", osacSPURL, clusterID),
+			bytes.NewReader(payload))
+		Expect(err).NotTo(HaveOccurred())
+		// This request targets osac-sp. osac-sp obtains the OIDC token and adds
+		// bearer credentials to its internal fulfillment-service gRPC calls.
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		responseBody, err := io.ReadAll(resp.Body)
+		Expect(err).NotTo(HaveOccurred())
+
+		// 202 Accepted or 201 Created expected
+		Expect(resp.StatusCode).To(Or(Equal(http.StatusCreated), Equal(http.StatusAccepted)),
+			"osac-sp Create response: %s", responseBody)
 
 		// Eventually, the real ClusterOrder CR reaches Ready via osac-operator + osac-aap-mock
 		// Same as AC-TB-030, but triggered via osac-sp's REST API + fulfillment-service dispatch,
 		// not direct CR creation
 		Eventually(func() string {
-			status := getClusterOrderStatus()
+			status := getClusterOrderStatus(clusterID)
 			return status.Phase
 		}, "5m", "5s").Should(Equal("Ready"))
 	})

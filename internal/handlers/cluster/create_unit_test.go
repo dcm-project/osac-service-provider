@@ -107,9 +107,9 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	// TC-U-531 (REQ-VERSION-080, AC-VERSION-070): an explicit
-	// release_image override bypasses the unsupported-version rejection.
-	It("does not reject an unsupported version when an explicit release_image override is given (TC-U-531)", func() {
+	// TC-U-531 (REQ-VERSION-080, AC-VERSION-070): the legacy release_image
+	// override is rejected because current OSAC uses ClusterVersions.
+	It("rejects the legacy release_image override (TC-U-531)", func() {
 		testMatrix := versionmatrix.Matrix{"1.29": "quay.io/example/release:1.29"}
 		f = newFixtureWithMatrix(testMatrix)
 		DeferCleanup(f.Close)
@@ -128,9 +128,8 @@ var _ = Describe("Handler.CreateCluster request validation (Topic 1 Cluster Crea
 
 		rec := httptest.NewRecorder()
 		Expect(resp.VisitCreateClusterResponse(rec)).To(Succeed())
-		Expect(rec.Code).To(Equal(http.StatusCreated))
-		Expect(f.fake.CreateCallCount()).To(Equal(1))
-		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-image"))
+		Expect(rec.Code).To(Equal(http.StatusBadRequest))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
 	// Supplementary to TC-U-206: a wholly-absent spec (nil — also newly

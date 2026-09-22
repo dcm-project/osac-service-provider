@@ -1,63 +1,39 @@
-# Specification: OSAC Service Provider — Milestone 6 (Version-Translation Compatibility Matrix)
+# Specification: OSAC Service Provider — Milestone 6 (Version Compatibility and Catalog Resolution)
 
 ## 1. Overview
 
-Milestone 6 per [issue #1](https://github.com/dcm-project/osac-service-provider/issues/1)'s
-suggested delivery milestones ("kubeconfig retrieval + version translation
-matrix" — kubeconfig retrieval already landed in Milestone 3, `REQ-GET-020`/
-`REQ-GET-030`): replace the two independently hardcoded, duplicated
-Kubernetes-version lists introduced as explicit placeholders in Milestones 1
-and 3 with a single, shared, validated version-translation compatibility
-matrix.
+Milestone 6 defines a single, shared, validated version-support matrix for
+the Kubernetes minors this provider advertises and accepts.
 
-Today, on the branch this milestone stacks on
-(`feat/milestone-3-cluster-crud`), there are two hand-maintained lists that
-are supposed to stay in sync but have no shared source of truth:
+The current OSAC public API does not accept a container `release_image` on
+`Clusters/Create`. It accepts a typed `ClusterVersionReference`. Therefore
+Create uses the shared matrix only to decide whether a requested Kubernetes
+minor is supported, then queries OSAC's `ClusterVersions/List` catalog and
+selects the newest matching SemVer z-stream. The matrix's legacy image values
+remain part of the JSON/configuration shape for compatibility, but are not sent
+to OSAC.
 
-- `internal/registration/registration.go`'s `kubernetesSupportedVersions` —
-  advertised to `control-plane` as cluster-service-type capability metadata
-  (`osac-sp.spec.md` REQ-REG-040, SC-001).
-- `internal/cluster/translate.go`'s `releaseImageByVersion` — a 5-entry map
-  used to translate `spec.version` into an OSAC `release_image` on Create
-  (`osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-025).
+The delivered behavior has one source of truth for supported Kubernetes minor
+versions. Registration advertises its keys, Create validates against the same
+keys, and Create resolves the concrete OSAC version reference from the live
+catalog. Unsupported versions and the obsolete non-empty
+`provider_hints.osac.release_image` field are rejected before OSAC mutation.
 
-Both variables' own comments already say the full compatibility matrix is
-Milestone 6 scope. Additionally, `releaseImage()` currently **silently falls
-back** to OSAC's template default `release_image` when a requested version
-has no table entry — no validation, no error surfaced to the caller
-(§2 of the OSAC SP enhancement's own design describes an internal
-compatibility matrix, not a silent-fallback one).
-
-**This spec covers the version-translation matrix only.** It does not
+**This spec covers version support and catalog resolution.** It does not
 expand the set of supported versions: the same 5 Kubernetes minor versions
-(`1.29`-`1.33`, mapping to OpenShift `4.16`-`4.20`) that Milestones 1/3
-already established are carried forward verbatim as this matrix's hardcoded
-default — this milestone formalizes and validates that data through a
-single shared, testable component; it does not add new version support.
-Also out of scope: any dynamic version-discovery call to OSAC — confirmed
-directly against `osac-project/fulfillment-service`'s
-`cluster_template_type.proto` that `ClusterTemplateSpecDefaults` only
-exposes a single per-template *default* `release_image`, with no API to
-enumerate supported Kubernetes/OpenShift versions, matching the enhancement
-doc's own language that "the SP maintains an internal compatibility
-matrix." No dynamic-query shortcut exists; the matrix must stay
-self-maintained.
-
-**Branch stacking:** unlike Milestone 5 (whose spec/implementation only
-needed Milestone 3/4's *types* and was delivered as a self-contained PR off
-`main`, validated via a throwaway merge worktree — DD-075), this milestone
-edits Milestone 3's own files directly (`internal/registration/registration.go`,
-`internal/cluster/translate.go`, `internal/handlers/cluster/create.go`).
-Consequently this milestone's branch/PR stacks directly on top of
-`feat/milestone-3-cluster-crud` (mirroring this repo's own e2e PR chain
-precedent: `#24` on `#23` on `#20` on `#18`), not on `main` — see DD-133.
+(`1.29`-`1.33`, mapping to OpenShift `4.16`-`4.20`) are carried in the
+matrix's hardcoded default. The matrix is a single shared, testable component;
+it does not add version support beyond those five minors.
+OSAC catalog lookup is in scope because the current public API exposes
+`ClusterVersions/List`; the matrix remains the operator-controlled admission
+policy while the catalog supplies the concrete resource reference.
 
 **Reference documents:**
 
 - [OSAC SP Enhancement](https://github.com/dcm-project/enhancements/blob/main/enhancements/osac-sp/osac-sp.md) — the enhancement's own "the SP maintains an internal compatibility matrix" language
 - [Milestone 1 spec](./osac-sp.spec.md) — SC-001 (superseded by this milestone, see below), REQ-REG-040
 - [Milestone 3 spec](./osac-sp-m3-cluster-crud.spec.md) — REQ-CREATE-025, REQ-CREATE-060 (this milestone's `validateCreateRequest` extension reuses the exact same `InvalidArgument`/`mapError` path that requirement already established)
-- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-130 through DD-133 (new, this milestone)
+- [Design Decisions](../decisions/osac-sp.decisions.md) — DD-130 through DD-133 and DD-238 (catalog resolution)
 - `acm-cluster-service-provider` (sibling SP, same OpenShift-provisioning problem) — precedent for the hardcoded-default-plus-optional-JSON-override pattern and hard-rejection-of-unsupported-versions behavior adopted below
 
 ---
@@ -82,12 +58,11 @@ synchronization):
 - **`internal/registration`** — `Registrar` gains a `matrix` field; its
   cluster registration payload's `kubernetes_supported_versions` is now
   `matrix.SupportedVersions()` instead of a separately hand-typed slice.
-- **`internal/cluster`** — `Service` gains a `matrix` field; `releaseImage()`
-  looks up `spec.Version` in the injected matrix (with the existing
-  `provider_hints.osac.release_image` override still taking precedence);
-  a new `Service.SupportsVersion(version string) bool` method lets
-  `internal/handlers/cluster` query matrix membership without importing
-  `internal/versionmatrix` itself or duplicating the matrix.
+- **`internal/cluster`** — `Service` gains a `matrix` field and a
+  `ClusterVersionsClient`; `SupportsVersion` checks matrix membership, while
+  Create lists OSAC `ClusterVersion` resources and selects the newest matching
+  SemVer z-stream. The obsolete `provider_hints.osac.release_image` override
+  is rejected.
 
 `internal/handlers/cluster`'s `Handler.validateCreateRequest` (existing,
 Milestone 3) gains one more pre-flight case, querying `Service.SupportsVersion`
@@ -106,15 +81,14 @@ Milestone 3) gains one more pre-flight case, querying `Service.SupportsVersion`
       registration.NewRegistrar(cfg, logger,   cluster.New(client, matrix)
                      matrix, ...)                          |
                     |                                     |
-                    v                                     v
-      kubernetes_supported_versions          releaseImage(): matrix.Lookup(version)
-      = matrix.SupportedVersions()           SupportsVersion(): matrix.Lookup(version) ok?
-                                                            |
-                                                            v
-                                          internal/handlers/cluster.validateCreateRequest:
-                                          override present? -> skip check
-                                          else -> svc.SupportsVersion(version) required,
-                                                  else 400 InvalidArgument, pre-flight
+                     v                                     v
+      kubernetes_supported_versions          ClusterVersions/List -> newest matching
+      = matrix.SupportedVersions()           SemVer ClusterVersionReference
+                                                             |
+                                                             v
+                                           internal/handlers/cluster.validateCreateRequest:
+                                           release_image present? -> 400 InvalidArgument
+                                           unsupported version? -> 400 InvalidArgument
 ```
 
 No changes to `internal/osac`, `internal/apiserver`, `internal/httperror`, or
@@ -142,7 +116,7 @@ Topic 1: Version Matrix Package  --->  Topic 2: Matrix Consumption
 #### Overview
 
 A new, standalone package providing the `Matrix` type (a Kubernetes minor
-version -> OSAC `release_image` mapping), a hardcoded default instance
+version -> retained compatibility image metadata mapping), a hardcoded default instance
 carrying forward the same 5 entries Milestones 1/3 already established, and
 a loader that optionally replaces the default entirely from an external
 JSON file.
@@ -151,8 +125,8 @@ JSON file.
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-VERSION-010 | The package MUST expose a `Matrix` type mapping a Kubernetes minor version string (e.g. `"1.29"`) to an OSAC `release_image` string, with a `Lookup(version string) (string, bool)` method returning the mapped image and whether `version` is present | MUST | |
-| REQ-VERSION-020 | The package MUST expose a hardcoded `DefaultMatrix` value containing exactly the same 5 entries as Milestone 3's `releaseImageByVersion` (`"1.29"`-`"1.33"` -> the OpenShift `4.16.0`-`4.20.0` `-multi` release images) — this milestone carries the data forward unchanged, it does not add or remove entries | MUST | Data continuity with M1 SC-001 / M3 REQ-CREATE-025 |
+| REQ-VERSION-010 | The package MUST expose a `Matrix` type mapping a Kubernetes minor version string (e.g. `"1.29"`) to retained compatibility image metadata, with a `Lookup(version string) (string, bool)` method returning the metadata and whether `version` is present | MUST | Matrix keys, not image values, control support admission |
+| REQ-VERSION-020 | The package MUST expose a hardcoded `DefaultMatrix` value containing exactly the five supported minor versions (`"1.29"`-`"1.33"`) and their retained OpenShift image metadata (`4.16.0`-`4.20.0`, `-multi`) | MUST | The metadata is retained for configuration compatibility; Create resolves a live `ClusterVersionReference` |
 | REQ-VERSION-030 | `Matrix` MUST expose a `SupportedVersions() []string` method returning the matrix's keys sorted in ascending lexical order, for deterministic consumption by registration payloads and tests | MUST | |
 | REQ-VERSION-040 | The package MUST expose `Load(path string) (Matrix, error)`: when `path == ""`, it MUST return `DefaultMatrix` unchanged; when `path != ""`, it MUST read `path` as a JSON object (`{"<k8s-version>": "<release_image>", ...}`) and, on success, return **that file's content alone** as the resulting `Matrix` — fully replacing, not merging with, `DefaultMatrix`. `Load` MUST return a non-nil error (and a nil `Matrix`) if `path != ""` and the file is missing, unreadable, not valid JSON, decodes to zero entries, or contains any entry with an empty version key or an empty `release_image` value | MUST | Full-replace (not merge) and fail-fast-on-empty (including blank-key/blank-value entries) are both deliberate — see DD-131 |
 
@@ -198,31 +172,31 @@ None — standalone new package.
 
 ---
 
-### 4.2 Matrix Consumption (Registration, Translation, Validation, Config)
+### 4.2 Matrix Consumption (Registration, Catalog Resolution, Validation, Config)
 
 #### Overview
 
-Wires the Topic 4.1 package into the three places that currently either
-hand-maintain their own version list or silently fall back on an unmapped
-version: registration's capability advertisement, Create's `release_image`
-translation, and Create's pre-flight request validation. Also adds the
-optional configuration surface controlling `Load`'s `path` argument.
+Wires the Topic 4.1 package into registration's capability advertisement and
+Create's pre-flight request validation. Create also resolves supported minors
+against OSAC's live `ClusterVersions/List` catalog and selects the newest valid
+SemVer z-stream. The optional configuration surface controlling `Load`'s
+`path` argument is included here.
 
 #### Requirements
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-VERSION-050 | `internal/registration.Registrar` MUST accept a `versionmatrix.Matrix` at construction and its cluster registration payload's `kubernetes_supported_versions` MUST be exactly `matrix.SupportedVersions()` — the package-level `kubernetesSupportedVersions` variable (M1) is removed | MUST | Supersedes `osac-sp.spec.md` SC-001; single source of truth, no possible drift between registration and translation |
-| REQ-VERSION-060 | `internal/cluster.Service` MUST accept a `versionmatrix.Matrix` at construction (`New(client, matrix)`); `releaseImage()` MUST consult the injected matrix's `Lookup` instead of the package-level `releaseImageByVersion` map (M3) — the existing override precedence (`provider_hints.osac.release_image`, when non-empty, always wins over any matrix lookup) MUST be unchanged | MUST | Supersedes `osac-sp-m3-cluster-crud.spec.md` REQ-CREATE-025's "hardcoded placeholder table" wording |
+| REQ-VERSION-060 | `internal/cluster.Service` MUST accept a `versionmatrix.Matrix` and `ClusterVersionsClient` at construction; Create MUST list OSAC `ClusterVersion` resources and resolve `spec.version` to a `ClusterVersionReference` for the newest valid SemVer candidate whose version equals the requested minor or begins with that minor followed by a dot | MUST | The live catalog, not a local `release_image`, supplies the concrete OSAC version reference |
 | REQ-VERSION-070 | `internal/cluster.Service` MUST expose `SupportsVersion(version string) bool`, reporting whether `version` has a matrix entry, for `internal/handlers/cluster`'s pre-flight validation (REQ-VERSION-080) to query without duplicating or directly importing the matrix | MUST | Keeps the matrix instance itself owned by exactly one component (`Service`) even though two packages need to consult it |
-| REQ-VERSION-080 | `internal/handlers/cluster.Handler`'s existing `validateCreateRequest` (M3, REQ-CREATE-060) MUST gain one more pre-flight case: when the request's `provider_hints.osac.release_image` is absent or empty **and** `spec.version` is not supported (per REQ-VERSION-070's `SupportsVersion`), the handler MUST reject the request with the same synthetic `codes.InvalidArgument` gRPC status used for the function's other validation failures — mapped to `400 Bad Request` by the existing shared `mapError`/`internal/grpcerror` machinery (REQ-ERR-030) — before ever calling `Service.Create`/dispatching to OSAC. An explicit non-empty `release_image` override MUST bypass this check entirely, even for a `spec.version` with no matrix entry | MUST | Hard rejection, not silent fallback to OSAC's template default `release_image` — see DD-131. No new `v1alpha1.ErrorType`/schema value needed; `INVALIDARGUMENT` already fits, matching REQ-CREATE-060's existing precedent |
+| REQ-VERSION-080 | `internal/handlers/cluster.Handler`'s existing `validateCreateRequest` (M3, REQ-CREATE-060) MUST reject a non-empty legacy `provider_hints.osac.release_image` and MUST reject a `spec.version` absent from the injected matrix, using the same synthetic `codes.InvalidArgument` status mapped to `400 Bad Request` before ever calling `Service.Create`/dispatching to OSAC | MUST | The current OSAC API uses `ClusterVersionReference`; no image override bypass exists |
 | REQ-VERSION-090 | `internal/config.Config` MUST add an optional `SP_VERSION_MATRIX_PATH` environment variable (empty/unset is valid and MUST result in `DefaultMatrix` being used); `cmd/osac-service-provider`'s `run` MUST call `versionmatrix.Load(cfg.VersionMatrix.Path)` once at startup, before starting any subsystem, and MUST fail fast (return a non-nil error, causing `mainRun` to exit non-zero) if `Load` returns an error | MUST | Mirrors REQ-XC-CFG-020's existing fail-fast convention (`osac-sp.spec.md`) for the case where the var *is* set but its file is missing/malformed |
 
 #### Configuration Introduced
 
 | Env Var | Required | Default | Description |
 |---|---|---|---|
-| `SP_VERSION_MATRIX_PATH` | No | *(empty — use `DefaultMatrix`)* | Optional path to a JSON file fully replacing the hardcoded default version-translation matrix. If set, the file MUST exist and contain a valid, non-empty `{"<k8s-version>": "<release_image>", ...}` object, or the service fails to start (REQ-VERSION-090). |
+| `SP_VERSION_MATRIX_PATH` | No | *(empty — use `DefaultMatrix`)* | Optional path to a JSON file fully replacing the default supported-version policy and retained image metadata. If set, the file MUST exist and contain a valid, non-empty `{"<k8s-version>": "<release_image>", ...}` object, or the service fails to start (REQ-VERSION-090). |
 
 #### Acceptance Criteria
 
@@ -233,19 +207,19 @@ optional configuration surface controlling `Load`'s `path` argument.
 - **When** the cluster registration payload is built
 - **Then** its `metadata.kubernetes_supported_versions` MUST equal exactly `matrix.SupportedVersions()` for that same matrix — proving the value is derived, not separately maintained
 
-##### AC-VERSION-060: Create dispatches the injected matrix's `release_image`, per version
+##### AC-VERSION-060: Create resolves each supported version through the OSAC catalog
 
 - **Validates:** REQ-VERSION-060
-- **Given** a `Service` constructed with a known `Matrix`
-- **When** `Create` is called, table-driven, once per matrix entry
-- **Then** each call's dispatched `Cluster.spec.release_image` MUST equal exactly that entry's mapped value (same outcome Milestone 3's `TC-U-200`/`TC-U-204` already prove for the old hardcoded map, now proven against the injected matrix instead)
+- **Given** a `Service` constructed with a known `Matrix` and an OSAC catalog containing a matching `ClusterVersion`
+- **When** `Create` is called for a supported version
+- **Then** the dispatched `Cluster.spec.version` MUST contain a `ClusterVersionReference` with the selected catalog item's exact `id` and metadata name
 
-##### AC-VERSION-070: An explicit `release_image` override bypasses the matrix entirely, even for an unsupported version
+##### AC-VERSION-070: The obsolete `release_image` override is rejected
 
 - **Validates:** REQ-VERSION-060, REQ-VERSION-080
-- **Given** a Create request with `spec.version` set to a value absent from the injected matrix, and `provider_hints.osac.release_image` set to an explicit non-empty override string
-- **When** the request is validated and then processed
-- **Then** `validateCreateRequest` MUST NOT reject the request, and the dispatched `Cluster.spec.release_image` MUST equal exactly the override string, not any matrix-derived value
+- **Given** a Create request with a non-empty `provider_hints.osac.release_image`
+- **When** the request is validated
+- **Then** the response MUST be `400 Bad Request` (`INVALIDARGUMENT`) and the fake OSAC server MUST record zero `Clusters/Create` calls
 
 ##### AC-VERSION-080: An unsupported version with no override is rejected before ever calling OSAC
 
@@ -267,6 +241,13 @@ optional configuration surface controlling `Load`'s `path` argument.
 - **Given** `SP_VERSION_MATRIX_PATH` unset (all other required config valid)
 - **When** `run(ctx, logger)` is invoked
 - **Then** it MUST start successfully, and the resulting registrar's advertised `kubernetes_supported_versions` MUST equal `versionmatrix.DefaultMatrix.SupportedVersions()` exactly
+
+##### AC-VERSION-110: Create selects the newest matching SemVer z-stream
+
+- **Validates:** REQ-VERSION-060
+- **Given** an OSAC catalog containing matching versions `1.29.2` and `1.29.10`, plus an unrelated `1.30.99`, in that order
+- **When** Create is called for Kubernetes minor `1.29`
+- **Then** the dispatched `Cluster.spec.version.name` MUST be the catalog item's name for `1.29.10`, regardless of catalog order
 
 #### Dependencies
 

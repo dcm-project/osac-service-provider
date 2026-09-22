@@ -1,12 +1,14 @@
 package cluster_test
 
 import (
+	"bytes"
 	"context"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
@@ -55,11 +57,16 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		obj := req.GetObject()
 
 		Expect(obj.GetId()).To(Equal("X"))
-		Expect(obj.GetSpec().GetTemplate()).To(Equal("default-hcp"))
+		Expect(obj.GetSpec().GetTemplate().GetId()).To(Equal("default-hcp"))
 		Expect(obj.GetSpec().GetNodeSets()).To(HaveKey(defaultNodeSetKey))
 		Expect(obj.GetSpec().GetNodeSets()[defaultNodeSetKey].GetSize()).To(Equal(int32(3)))
 		Expect(obj.GetMetadata().GetName()).To(Equal("foo"))
-		Expect(obj.GetSpec().GetReleaseImage()).To(Equal("quay.io/openshift-release-dev/ocp-release:4.16.0-multi"))
+		Expect(obj.GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29"))
+
+		wire, err := proto.Marshal(f.fake.LastCreateCall())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(bytes.Contains(wire, []byte{0x2a, 0x03, 'f', 'o', 'o'})).To(BeTrue(),
+			"metadata.name must use FFS v0.0.107's field 5 wire tag")
 	})
 
 	// TC-U-200b (REQ-CREATE-080): the node-set key comes from
@@ -190,55 +197,115 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		nodeSet := f.fake.LastCreateCall().GetObject().GetSpec().GetNodeSets()[defaultNodeSetKey]
-		Expect(nodeSet.GetHostType()).To(Equal(""))
+		Expect(nodeSet.GetHostType()).To(BeNil())
 	})
 
-	// TC-U-204 (REQ-CREATE-025): version translation table covers each
-	// supported placeholder version, and an explicit release_image override
-	// is used verbatim instead of the table lookup.
-	DescribeTable("translates spec.version to the documented release_image (TC-U-204)",
-		func(version, wantReleaseImage string) {
+	// TC-U-204 (REQ-CREATE-025): each supported DCM minor resolves to the
+	// matching OSAC ClusterVersion reference.
+	DescribeTable("resolves spec.version to an OSAC ClusterVersion reference (TC-U-204)",
+		func(version, wantVersionName string) {
 			spec := baseSpec()
 			spec.Version = version
 
 			_, err := f.svc.Create(context.Background(), "X", spec)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal(wantReleaseImage))
+			Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal(wantVersionName))
 		},
-		Entry("1.29 -> OpenShift 4.16", "1.29", "quay.io/openshift-release-dev/ocp-release:4.16.0-multi"),
-		Entry("1.30 -> OpenShift 4.17", "1.30", "quay.io/openshift-release-dev/ocp-release:4.17.0-multi"),
-		Entry("1.31 -> OpenShift 4.18", "1.31", "quay.io/openshift-release-dev/ocp-release:4.18.0-multi"),
-		Entry("1.32 -> OpenShift 4.19", "1.32", "quay.io/openshift-release-dev/ocp-release:4.19.0-multi"),
-		Entry("1.33 -> OpenShift 4.20", "1.33", "quay.io/openshift-release-dev/ocp-release:4.20.0-multi"),
+		Entry("1.29 -> tierb-1-29", "1.29", "tierb-1-29"),
+		Entry("1.30 -> tierb-1-30", "1.30", "tierb-1-30"),
+		Entry("1.31 -> tierb-1-31", "1.31", "tierb-1-31"),
+		Entry("1.32 -> tierb-1-32", "1.32", "tierb-1-32"),
+		Entry("1.33 -> tierb-1-33", "1.33", "tierb-1-33"),
 	)
 
-	It("leaves release_image unset when the version has no table entry and no override is given (TC-U-204)", func() {
+	It("rejects a version with no matching OSAC ClusterVersion (TC-U-204)", func() {
 		spec := baseSpec()
-		spec.Version = "1.99" // not in the placeholder table
+		spec.Version = "1.99"
 
 		_, err := f.svc.Create(context.Background(), "X", spec)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal(""))
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	It("uses an explicit provider_hints.osac.release_image override verbatim instead of the table lookup (TC-U-204)", func() {
+	// TC-U-523 (REQ-VERSION-060, AC-VERSION-110): the resolver compares
+	// SemVer values instead of trusting OSAC catalog order.
+	It("selects the latest matching OSAC ClusterVersion z-stream regardless of list order (TC-U-523)", func() {
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-2"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.2"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-30-99"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.30.99"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+			}}, nil
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29-10"))
+	})
+
+	It("ignores malformed and unnamed catalog candidates and tie-breaks equal versions by name (TC-U-524)", func() {
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{
+				{
+					Metadata: &publicv1.Metadata{},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.8"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-invalid"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.not-semver"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10-z"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10-a"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+			}}, nil
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29-10-a"))
+	})
+
+	It("propagates a ClusterVersions/List error before dispatching Create (TC-U-525)", func() {
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return nil, grpcstatus.Error(codes.Unavailable, "catalog unavailable")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(grpcstatus.Code(err)).To(Equal(codes.Unavailable))
+		Expect(grpcstatus.Convert(err).Message()).To(Equal("catalog unavailable"))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
+	})
+
+	It("rejects the legacy release_image override because OSAC now uses ClusterVersions", func() {
 		spec := baseSpec()
-		spec.Version = "1.29" // has its own table entry, to prove the override wins
+		spec.Version = "1.29"
 		spec.ProviderHints.Osac.ReleaseImage = util.Ptr("custom-registry.example.com/custom-image:latest")
 
 		_, err := f.svc.Create(context.Background(), "X", spec)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-registry.example.com/custom-image:latest"))
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(grpcstatus.Convert(err).Message()).To(Equal("OSAC ClusterVersion selection does not support provider_hints.osac.release_image"))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	// TC-U-520 (REQ-VERSION-060, AC-VERSION-060): Create dispatches the
-	// injected matrix's release_image, per version — proven against a
-	// test matrix whose values differ from DefaultMatrix.
-	DescribeTable("dispatches the injected matrix's release_image, per version (TC-U-520)",
-		func(version, wantReleaseImage string) {
+	// TC-U-520 (REQ-VERSION-060, AC-VERSION-060): Create resolves the
+	// requested version against the live catalog rather than a hardcoded name.
+	DescribeTable("resolves versions from the OSAC catalog (TC-U-520)",
+		func(version, wantVersionName string) {
 			testMatrix := versionmatrix.Matrix{
 				"9.01": "quay.io/example/release:9.01",
 				"9.02": "quay.io/example/release:9.02",
@@ -252,16 +319,15 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 			_, err := f.svc.Create(context.Background(), "X", spec)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal(wantReleaseImage))
+			Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal(wantVersionName))
 		},
-		Entry("9.01 -> injected matrix's own image", "9.01", "quay.io/example/release:9.01"),
-		Entry("9.02 -> injected matrix's own image", "9.02", "quay.io/example/release:9.02"),
+		Entry("9.01 -> tierb-9-01", "9.01", "tierb-9-01"),
+		Entry("9.02 -> tierb-9-02", "9.02", "tierb-9-02"),
 	)
 
-	// TC-U-521 (REQ-VERSION-060, AC-VERSION-070): an explicit
-	// release_image override bypasses the injected matrix entirely,
-	// even for a version absent from it.
-	It("uses an explicit release_image override verbatim even when the injected matrix has no entry for the version (TC-U-521)", func() {
+	// TC-U-521 (REQ-VERSION-060, AC-VERSION-070): the legacy override is
+	// rejected rather than silently changing the OSAC version selection.
+	It("rejects an explicit release_image override", func() {
 		testMatrix := versionmatrix.Matrix{"9.01": "quay.io/example/release:9.01"}
 		f := newFixtureWithMatrix(testMatrix)
 		defer f.Close()
@@ -271,9 +337,8 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		spec.ProviderHints.Osac.ReleaseImage = util.Ptr("custom-image")
 
 		_, err := f.svc.Create(context.Background(), "X", spec)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-image"))
+		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
 	// TC-U-522 (REQ-VERSION-070): SupportsVersion reports injected-matrix

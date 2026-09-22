@@ -1,9 +1,8 @@
-// Package versionmatrix implements the version-translation compatibility
-// matrix mapping DCM's Kubernetes minor versions to OSAC release_image
-// values (Milestone 6). It is the single source of truth previously
-// duplicated across internal/registration (kubernetesSupportedVersions)
-// and internal/cluster (releaseImageByVersion) — see
-// .ai/decisions/osac-sp.decisions.md DD-130.
+// Package versionmatrix implements the version-support policy for DCM's
+// Kubernetes minor versions (Milestone 6). The map values retain the existing
+// compatibility image metadata, while Create resolves the concrete OSAC
+// ClusterVersion reference from OSAC's live catalog. The keys are the single
+// source of truth shared by registration and Create validation.
 //
 // This package deliberately depends on nothing else in this repository,
 // to avoid coupling internal/registration and internal/cluster (which do
@@ -18,19 +17,17 @@ import (
 	"sort"
 )
 
-// Matrix maps a Kubernetes minor version (e.g. "1.29") to the OSAC
-// release_image it translates to. It is an immutable value once
+// Matrix maps a Kubernetes minor version (e.g. "1.29") to retained
+// compatibility image metadata. It is an immutable value once
 // constructed — callers never mutate a Matrix after Load/DefaultMatrix
 // returns it, so sharing one Matrix value across multiple owners (as
 // internal/registration and internal/cluster do) requires no
 // synchronization.
 type Matrix map[string]string
 
-// DefaultMatrix is the hardcoded default version-translation table,
-// carrying forward the same 5 entries Milestones 1/3 originally
-// hand-maintained separately (REQ-VERSION-020) — Kubernetes 1.29-1.33
-// mapping to the OpenShift 4.16-4.20 release images OSAC's fulfillment
-// service already has catalog item templates for.
+// DefaultMatrix is the hardcoded default support table (REQ-VERSION-020),
+// containing Kubernetes 1.29-1.33 and retained OpenShift 4.16-4.20 image
+// metadata. Create does not send these image values to OSAC.
 var DefaultMatrix = Matrix{
 	"1.29": "quay.io/openshift-release-dev/ocp-release:4.16.0-multi",
 	"1.30": "quay.io/openshift-release-dev/ocp-release:4.17.0-multi",
@@ -39,8 +36,8 @@ var DefaultMatrix = Matrix{
 	"1.33": "quay.io/openshift-release-dev/ocp-release:4.20.0-multi",
 }
 
-// Lookup returns the release_image mapped to version and whether version
-// is present in m (REQ-VERSION-010).
+// Lookup returns the compatibility metadata mapped to version and whether
+// version is present in m (REQ-VERSION-010).
 func (m Matrix) Lookup(version string) (string, bool) {
 	img, ok := m[version]
 	return img, ok

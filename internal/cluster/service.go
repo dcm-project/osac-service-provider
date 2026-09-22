@@ -7,7 +7,9 @@ package cluster
 
 import (
 	"context"
+	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 
@@ -23,16 +25,21 @@ import (
 type Service struct {
 	client    publicv1.ClustersClient
 	templates publicv1.ClusterTemplatesClient
+	versions  publicv1.ClusterVersionsClient
 	matrix    versionmatrix.Matrix
 }
 
-// New constructs a Service wrapping the given Clusters/ClusterTemplates
-// clients. matrix is consulted by Create's release_image translation
-// (REQ-VERSION-060) and by SupportsVersion (REQ-VERSION-070) — the same
-// instance main.go loads once at startup and also injects into
-// internal/registration, so the two can never drift apart.
-func New(client publicv1.ClustersClient, templates publicv1.ClusterTemplatesClient, matrix versionmatrix.Matrix) *Service {
-	return &Service{client: client, templates: templates, matrix: matrix}
+// New constructs a Service wrapping the given Clusters, ClusterTemplates,
+// and ClusterVersions clients. matrix is consulted by SupportsVersion
+// (REQ-VERSION-070) — the same instance main.go loads once at startup and
+// also injects into internal/registration, so the two can never drift apart.
+func New(
+	client publicv1.ClustersClient,
+	templates publicv1.ClusterTemplatesClient,
+	versions publicv1.ClusterVersionsClient,
+	matrix versionmatrix.Matrix,
+) *Service {
+	return &Service{client: client, templates: templates, versions: versions, matrix: matrix}
 }
 
 // SupportsVersion reports whether version has an entry in s's injected
@@ -50,15 +57,25 @@ func (s *Service) SupportsVersion(version string) bool {
 // current state — REQ-CREATE-040/DD-100: this SP is the real idempotency
 // backstop, since upstream (control-plane) retry-safety has a known gap.
 func (s *Service) Create(ctx context.Context, id string, spec v1alpha1.ClusterSpec) (v1alpha1.Cluster, error) {
+	if override := spec.ProviderHints.Osac.ReleaseImage; override != nil && *override != "" {
+		return v1alpha1.Cluster{}, grpcstatus.Error(codes.InvalidArgument,
+			"OSAC ClusterVersion selection does not support provider_hints.osac.release_image")
+	}
+
 	nodeSetKey, err := s.resolveNodeSetKey(ctx, spec.ProviderHints.Osac.TemplateId)
 	if err != nil {
 		return v1alpha1.Cluster{}, err
 	}
+	versionRef, err := s.resolveVersion(ctx, spec.Version)
+	if err != nil {
+		return v1alpha1.Cluster{}, err
+	}
 
-	obj := s.toOSACCluster(id, spec, nodeSetKey)
+	obj := s.toOSACCluster(id, spec, nodeSetKey, versionRef)
 	version := spec.Version
+	request := &publicv1.ClustersCreateRequest{Object: obj}
 
-	resp, err := s.client.Create(ctx, &publicv1.ClustersCreateRequest{Object: obj})
+	resp, err := s.client.Create(ctx, request)
 	if err != nil {
 		if grpcstatus.Code(err) == codes.AlreadyExists {
 			getResp, getErr := s.client.Get(ctx, &publicv1.ClustersGetRequest{Id: id})
@@ -104,6 +121,52 @@ func (s *Service) resolveNodeSetKey(ctx context.Context, templateID string) (str
 		key = k
 	}
 	return key, nil
+}
+
+// resolveVersion maps DCM's Kubernetes minor version to the matching OSAC
+// ClusterVersion resource. The public OSAC API now accepts a typed version
+// reference, not the old release_image field, so matching by spec.version
+// keeps the provider independent of deployment-specific metadata names.
+func (s *Service) resolveVersion(ctx context.Context, version string) (*publicv1.ClusterVersionReference, error) {
+	// TODO: cache the catalog once Create traffic makes this round trip material;
+	// define an explicit refresh/invalidation policy because OSAC versions can change.
+	resp, err := s.versions.List(ctx, &publicv1.ClusterVersionsListRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	var selected *publicv1.ClusterVersion
+	var selectedVersion *semver.Version
+	for _, candidate := range resp.GetItems() {
+		candidateVersion := candidate.GetSpec().GetVersion()
+		if candidateVersion != version && !strings.HasPrefix(candidateVersion, version+".") {
+			continue
+		}
+		name := candidate.GetMetadata().GetName()
+		if name == "" {
+			continue
+		}
+
+		parsedVersion, err := semver.NewVersion(candidateVersion)
+		if err != nil {
+			continue
+		}
+		if selectedVersion == nil || parsedVersion.GreaterThan(selectedVersion) ||
+			(parsedVersion.Equal(selectedVersion) && name < selected.GetMetadata().GetName()) {
+			selected = candidate
+			selectedVersion = parsedVersion
+		}
+	}
+
+	if selected != nil {
+		return &publicv1.ClusterVersionReference{
+			Id:   selected.GetId(),
+			Name: selected.GetMetadata().GetName(),
+		}, nil
+	}
+
+	return nil, grpcstatus.Errorf(codes.InvalidArgument,
+		"cluster version %q is not available from OSAC", version)
 }
 
 // Get calls Clusters/Get(id), maps the result via MapStatus, and — only

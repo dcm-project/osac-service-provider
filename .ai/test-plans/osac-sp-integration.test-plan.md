@@ -105,8 +105,9 @@ itself, unrelated to registration) — not an `httptest.Server` modeling its
 contract (that's section 3). Proves the fake's modeled behavior actually
 matches the real implementation, not just its OpenAPI spec. Gated behind
 the `realbackend` build tag (`internal/registration/registration_realbackend_test.go`)
-and the `REAL_ENVIRONMENT_AGENT_URL` env var — both specs `Skip` if unset,
-so this file is safely excluded from `make test`/`make check`. Run via
+and the `REAL_ENVIRONMENT_AGENT_URL` env var — the tagged suite fails closed if
+the URL is unset, while the build tag keeps it safely excluded from `make
+test`/`make check`. Run via
 `make test-realbackend-environment-agent` (after starting a real backend
 locally, see the file's doc comment) or in CI via
 `.github/workflows/environment-agent-registration.yaml`.

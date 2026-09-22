@@ -30,7 +30,7 @@ var _ = Describe("Service.Get (Topic 4.2 Cluster Get)", func() {
 				Status: &publicv1.ClusterStatus{
 					State: publicv1.ClusterState_CLUSTER_STATE_READY,
 					NodeSets: map[string]*publicv1.ClusterNodeSet{
-						"default-hcp": {HostType: "acme_1tb", Size: 3},
+						"default-hcp": {HostType: &publicv1.HostTypeReference{Id: "acme_1tb"}, Size: 3},
 					},
 				},
 			}}, nil

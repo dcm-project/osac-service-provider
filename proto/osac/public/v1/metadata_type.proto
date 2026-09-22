@@ -26,25 +26,24 @@ message Metadata {
   // Time of deletion of the object.
   google.protobuf.Timestamp deletion_timestamp = 2;
 
-  // Name of the creator of the object.
+  // Creator contains the identifier of the user or group that created the object.
   string creator = 3;
 
-  // Human friendly name of the object.
+  // Tenant contains the identifier of the tenant that the object belongs to.
+  string tenant = 4;
+
+  // Mandatory, immutable, and unique within scope. Must be a valid RFC 1123 DNS label.
   //
-  // Has the same restrictions than DNS labels, as described in RFC 1035:
+  // Has the same restrictions as DNS labels, as described in RFC 1123:
   //
   // - Must be between 1 and 63 characters long.
-  // - Must only contain letters (a-z), digits (0-9) and hyphens (-).
-  // - It isn't case sensitive.
-  //
-  // It is optional and not unique, so multiple objecs, even created by the same user or tenant, can have the same name.
-  string name = 4 [(buf.validate.field).string = {
+  // - Must only contain lowercase letters (a-z), digits (0-9) and hyphens (-).
+  // - Must start and end with an alphanumeric character.
+  string name = 5 [(buf.validate.field).string = {
+    min_len: 1,
     max_len: 63,
-    pattern: "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)?$"
+    pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
   }];
-
-  // Identifier of the tenant that the object is assigned to.
-  string tenant = 5;
 
   // Labels contains key-value pairs for organizing and selecting objects.
   //
@@ -58,35 +57,16 @@ message Metadata {
   // rules as names.
   //
   // Labels are indexed and searchable.
-  map<string, string> labels = 7 [(buf.validate.field).map = {
-    keys: {
-      string: {
-        min_len: 1,
-        max_len: 316  // 253 (prefix) + 1 (/) + 62 (name)
-      }
-    },
-    values: {
-      string: {
-        max_len: 63
-      }
-    }
-  }];
+  map<string, string> labels = 6;
 
   // Annotations contains arbitrary metadata for objects.
   //
   // Keys follow the same rules as label keys, including the optional DNS subdomain prefix and the 1-63 character name
   // restrictions. Values can be any string.
-  map<string, string> annotations = 8 [(buf.validate.field).map = {
-    keys: {
-      string: {
-        min_len: 1,
-        max_len: 316  // 253 (prefix) + 1 (/) + 62 (name)
-      }
-    }
-  }];
+  map<string, string> annotations = 7;
 
   // Version is a numeric field that is automatically incremented with every change to the object.
-  int32 version = 9;
+  int32 version = 8;
 
   // Full name of the project that the object is assigned to. It can be empty, which means the object belongs to
   // the default project of the tenant.
@@ -105,5 +85,17 @@ message Metadata {
   // `team-a.frontend`.
   //
   // For organization objects this field is always empty, as organizations don't belong to a project.
-  string project = 10;
+  string project = 9;
+
+  // Human-friendly display name. Optional, not unique, mutable.
+  // Not constrained to DNS-label format.
+  string display_name = 10 [(buf.validate.field).string = {
+    max_len: 63
+  }];
+
+  // Optional human-friendly description. Opaque string; clients may
+  // treat content as Markdown. Not unique, mutable.
+  string description = 11 [(buf.validate.field).string = {
+    max_len: 256
+  }];
 }

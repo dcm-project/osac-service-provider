@@ -160,9 +160,10 @@ var _ = Describe("Cluster Create version-matrix validation (integration, real HT
 		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	// TC-I-501 (REQ-VERSION-070, AC-VERSION-070): an explicit
-	// release_image override bypasses matrix validation, over real HTTP.
-	It("bypasses matrix validation via an explicit release_image override, over real HTTP (TC-I-501)", func() {
+	// TC-I-501 (REQ-VERSION-070, AC-VERSION-070): the legacy release_image
+	// override is rejected over real HTTP because current OSAC uses
+	// ClusterVersions.
+	It("rejects the legacy release_image override over real HTTP (TC-I-501)", func() {
 		testMatrix := versionmatrix.Matrix{"1.29": "quay.io/example/release:1.29"}
 		f := newIntegrationFixtureWithMatrix(testMatrix)
 		defer f.Close()
@@ -171,15 +172,13 @@ var _ = Describe("Cluster Create version-matrix validation (integration, real HT
 		resp := postCreate(f, body)
 		defer func() { _ = resp.Body.Close() }()
 
-		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
-		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-image"))
+		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		Expect(f.fake.CreateCallCount()).To(Equal(0))
 	})
 
-	// TC-I-502 (REQ-VERSION-060, AC-VERSION-010/030/060): Create dispatches
-	// an injected, non-default matrix's release_image, over real HTTP —
-	// proving the real HTTP path consults the actually-injected matrix,
-	// not a hardcoded default.
-	It("dispatches an injected, non-default matrix's release_image, over real HTTP (TC-I-502)", func() {
+	// TC-I-502 (REQ-VERSION-060, AC-VERSION-010/030/060): Create resolves
+	// an injected, non-default matrix version through the OSAC catalog.
+	It("resolves an injected, non-default matrix version over real HTTP (TC-I-502)", func() {
 		testMatrix := versionmatrix.Matrix{"1.40": "custom-release-image"}
 		f := newIntegrationFixtureWithMatrix(testMatrix)
 		defer f.Close()
@@ -189,6 +188,36 @@ var _ = Describe("Cluster Create version-matrix validation (integration, real HT
 		defer func() { _ = resp.Body.Close() }()
 
 		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
-		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetReleaseImage()).To(Equal("custom-release-image"))
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-40"))
+	})
+
+	// TC-I-503 (REQ-VERSION-060, AC-VERSION-110): Create selects the newest
+	// matching SemVer z-stream through the real HTTP/router boundary.
+	It("selects the newest matching z-stream over real HTTP (TC-I-503)", func() {
+		f := newIntegrationFixture()
+		defer f.Close()
+
+		f.versions.listFunc = func(*publicv1.ClusterVersionsListRequest) (*publicv1.ClusterVersionsListResponse, error) {
+			return &publicv1.ClusterVersionsListResponse{Items: []*publicv1.ClusterVersion{
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-2"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.2"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-30-99"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.30.99"},
+				},
+				{
+					Metadata: &publicv1.Metadata{Name: "tierb-1-29-10"},
+					Spec:     &publicv1.ClusterVersionSpec{Version: "1.29.10"},
+				},
+			}}, nil
+		}
+
+		resp := postCreate(f, validCreateJSON)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+		Expect(f.fake.LastCreateCall().GetObject().GetSpec().GetVersion().GetName()).To(Equal("tierb-1-29-10"))
 	})
 })

@@ -3694,3 +3694,32 @@ tests, but it is no longer deployed by E2E CI.
 
 **Related requirements:** REQ-E2E-010..103, REQ-TB-010..120,
 REQ-CREATE-100, REQ-VMCREATE-070
+
+---
+
+## DD-238: OSAC ClusterVersion catalog resolution is the Create contract
+
+**Decision:** Cluster Create resolves `spec.version` through OSAC's live
+`ClusterVersions/List` catalog and sends a typed `ClusterVersionReference` in
+the Create request. The shared `internal/versionmatrix` remains the source of
+truth for supported Kubernetes minor-version keys used by registration and
+pre-flight validation. For a requested minor, the SP selects the newest valid
+SemVer candidate whose version equals that minor or starts with that minor and a
+dot. Malformed candidates and candidates without a metadata name are ignored;
+equal SemVer candidates are tie-broken by metadata name. A non-empty legacy
+`provider_hints.osac.release_image` is rejected.
+
+**Rationale:** The current OSAC public API no longer accepts the old
+`release_image` field as the concrete version selector. The catalog owns the
+deployment-specific resource IDs and names, while the matrix still provides a
+stable operator-controlled support policy. Selecting by SemVer rather than
+catalog order prevents an unsorted response from choosing an older z-stream.
+
+**Consequence:** The matrix's existing image values are retained for
+configuration compatibility but are not sent to OSAC. The M6 specification
+and test plan must assert catalog references and SemVer selection, not local
+image translation or an image-override bypass.
+
+**Related requirements:** REQ-CREATE-025, REQ-VERSION-060,
+REQ-VERSION-070, REQ-VERSION-080, AC-VERSION-060, AC-VERSION-070,
+AC-VERSION-110

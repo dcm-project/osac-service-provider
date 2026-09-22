@@ -93,9 +93,12 @@ Binding, not advisory — same 4 rules Milestone 3 established:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-520 | Create dispatches the injected matrix's `release_image`, per version | REQ-VERSION-060, AC-VERSION-060 | Construct a `Service` via `New(client, matrix)` with a test `Matrix` whose values differ from `DefaultMatrix`; table-driven over each of its entries, call `Create`; assert the fake's recorded `Cluster.spec.release_image` equals exactly that entry's mapped value. |
-| TC-U-521 | An explicit `release_image` override bypasses the injected matrix entirely, even for an unmapped version | REQ-VERSION-060, AC-VERSION-070 | Construct a `Service` with a test `Matrix` that has no entry for `"9.99"`; call `Create` with `spec.version="9.99"` and `provider_hints.osac.release_image="custom-image"`; assert the fake's recorded `release_image` equals exactly `"custom-image"` (not empty, not a matrix miss). |
+| TC-U-520 | Create resolves a supported version through the OSAC catalog | REQ-VERSION-060, AC-VERSION-060 | Construct a `Service` via `New(client, templates, versions, matrix)` with a test matrix and catalog entries; call `Create`; assert the fake's recorded `Cluster.spec.version` contains the exact selected `ClusterVersionReference` id and metadata name. |
+| TC-U-521 | An explicit `release_image` override is rejected | REQ-VERSION-060, AC-VERSION-070 | Construct a `Service` with a test matrix; call `Create` with a non-empty `provider_hints.osac.release_image`; assert `InvalidArgument` and zero `Clusters/Create` calls. |
 | TC-U-522 | `SupportsVersion` reports matrix membership exactly | REQ-VERSION-070 | Construct a `Service` with a known 2-entry test `Matrix`; call `SupportsVersion` for one of its keys (assert `true`) and for a key absent from it (assert `false`). |
+| TC-U-523 | Create selects the newest matching SemVer z-stream regardless of catalog order | REQ-VERSION-060, AC-VERSION-110 | Return `1.29.2`, unrelated `1.30.99`, and `1.29.10` in that order; call Create for `1.29`; assert the dispatched reference names `tierb-1-29-10`. |
+| TC-U-524 | Resolver ignores malformed/unnamed candidates and deterministically tie-breaks equal versions | REQ-VERSION-060, AC-VERSION-110 | Return a matching candidate without a metadata name, a malformed matching SemVer, and two `1.29.10` candidates with names in reverse lexical order; assert the selected reference uses the lexically first valid name. |
+| TC-U-525 | ClusterVersions/List failures are propagated before Create dispatch | REQ-VERSION-060 | Make the catalog fake return `Unavailable`; assert the same code/message is returned and `Clusters/Create` is not called. |
 
 ---
 
@@ -104,7 +107,7 @@ Binding, not advisory — same 4 rules Milestone 3 established:
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-U-530 | An unsupported version with no override is rejected before calling OSAC | REQ-VERSION-080, AC-VERSION-080 | Construct a `Handler` wrapping a `Service` whose injected matrix has no entry for `"9.99"`; invoke `CreateCluster` (`StrictServerInterface` layer, same white-box technique as M3's `TC-U-205`/`206`) with `spec.version="9.99"` and no `release_image` hint; assert the response is `400`-mapped (`v1alpha1.ErrorTypeINVALIDARGUMENT`) and the fake OSAC server recorded zero `Clusters/Create` calls. |
-| TC-U-531 | An explicit `release_image` override bypasses the unsupported-version rejection | REQ-VERSION-080, AC-VERSION-070 | Same fixture as TC-U-530, but the request additionally sets `provider_hints.osac.release_image="custom-image"`; invoke `CreateCluster`; assert it is **not** rejected (no synthetic validation error is returned) and the fake OSAC server recorded exactly one `Clusters/Create` call with `release_image=="custom-image"`. |
+| TC-U-531 | An explicit `release_image` override is rejected | REQ-VERSION-080, AC-VERSION-070 | Same fixture as TC-U-530, but the request additionally sets `provider_hints.osac.release_image="custom-image"`; invoke `CreateCluster`; assert the response is `400`-mapped (`INVALIDARGUMENT`) and the fake OSAC server recorded zero `Clusters/Create` calls. |
 
 ---
 
@@ -136,8 +139,9 @@ documents for `mainRun`'s own happy path (proven only via
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
 | TC-I-500 | Create rejects an unsupported version with no override, over real HTTP | REQ-VERSION-080, AC-VERSION-080 | Start the real HTTP server wired to a `Handler`/`Service` constructed with a test matrix lacking an entry for `"9.99"`; issue a real `POST /api/v1alpha1/clusters?id=X` with `spec.version="9.99"` and no `release_image` hint; assert the real response is `400` (RFC 9457, `type` exactly `INVALIDARGUMENT`) and the fake OSAC server recorded zero `Clusters/Create` calls. |
-| TC-I-501 | An explicit `release_image` override bypasses matrix validation, over real HTTP | REQ-VERSION-070, AC-VERSION-070 | Same fixture as TC-I-500, but the request additionally sets `provider_hints.osac.release_image="custom-image"`; issue the real request; assert `201 Created` and the fake OSAC server's recorded `Cluster.spec.release_image` equals exactly `"custom-image"`. |
-| TC-I-502 | Create dispatches an injected, non-default matrix's `release_image`, over real HTTP | REQ-VERSION-060, AC-VERSION-010, AC-VERSION-030, AC-VERSION-060 | Construct the fixture with a test matrix `{"1.40":"custom-release-image"}` (a version/image pair absent from `DefaultMatrix`); issue a real Create request with `spec.version="1.40"` and no override; assert `201 Created` and the fake OSAC server's recorded `release_image` equals exactly `"custom-release-image"` — proving the real HTTP path consults the actually-injected matrix, not a hardcoded default (incidental integration-tier proof for Topic 4.1's lookup/full-replace behavior, mirroring M3's Status/Error Mapping precedent). |
+| TC-I-501 | An explicit `release_image` override is rejected over real HTTP | REQ-VERSION-070, AC-VERSION-070 | Same fixture as TC-I-500, but the request additionally sets `provider_hints.osac.release_image="custom-image"`; issue the real request; assert `400 Bad Request` (`INVALIDARGUMENT`) and zero `Clusters/Create` calls. |
+| TC-I-502 | Create resolves an injected, non-default matrix version through the catalog over real HTTP | REQ-VERSION-060, AC-VERSION-010, AC-VERSION-030, AC-VERSION-060 | Construct the fixture with a test matrix `{"1.40":"retained-image-metadata"}` and a matching catalog item; issue a real Create request with `spec.version="1.40"`; assert `201 Created` and the fake OSAC server's recorded `Cluster.spec.version.name` equals `tierb-1-40`. |
+| TC-I-503 | Create selects the newest matching z-stream over real HTTP | REQ-VERSION-060, AC-VERSION-110 | Configure the real fixture's catalog with `1.29.2`, unrelated `1.30.99`, and `1.29.10` in that order; issue a real Create request for `1.29`; assert `201 Created` and the fake OSAC server's recorded `Cluster.spec.version.name` equals `tierb-1-29-10`. |
 
 ---
 
@@ -163,5 +167,5 @@ documents for `mainRun`'s own happy path (proven only via
 | Spec Section | REQ Count | AC Count | TC-U (this file) | TC-I (this file) | Pyramid complete? |
 |---|---|---|---|---|---|
 | 4.1 Version Matrix Package | 4 | 4 | 5 (TC-U-500..504) | 0 dedicated + incidentally via TC-I-502 (AC-010/030) and TC-I-510 (AC-020) and TC-I-520 (AC-040) | Yes — no HTTP surface of its own, same treatment as M3's Status/Error Mapping topics |
-| 4.2 Matrix Consumption | 5 | 6 | 9 (TC-U-510, 520..522, 530..531, 540..541, 550) | 6 (TC-I-500..502, 510, 520..521) | Yes — every AC has both tiers |
-| **Total** | **9** | **10** | **14** | **6** | |
+| 4.2 Matrix Consumption | 5 | 7 | 12 (TC-U-510, 520..525, 530..531, 540..541, 550) | 7 (TC-I-500..503, 510, 520..521) | Yes — every AC has both tiers; TC-U-524/525 are supplementary resolver robustness cases |
+| **Total** | **9** | **11** | **17** | **7** | |
