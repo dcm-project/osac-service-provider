@@ -57,12 +57,12 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
-            # "fulfillment-api" is the chart's external-api ingress-proxy
-            # Service (port 8000) — the public osac.public.v1.* gRPC
-            # surface osac-sp is a legitimate consumer of, as opposed to
-            # "fulfillment-internal-api" (administrator/console access).
+            # Cluster Get resolves status.kubeconfig_secret through the
+            # private Secrets API, so osac-sp must use the chart's internal
+            # gRPC endpoint (port 8001), which exposes both public and private
+            # services. The external endpoint filters out private services.
             - name: SP_OSAC_FULFILLMENT_ADDRESS
-              value: "fulfillment-api:8000"
+              value: "fulfillment-internal-api:8001"
             - name: SP_OSAC_TLS_CERT_FILE
               value: "/etc/osac-ca/bundle.pem"
             - name: SP_OSAC_OIDC_ISSUER_URL
