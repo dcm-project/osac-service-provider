@@ -23,6 +23,8 @@ import (
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
+	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
 
@@ -116,5 +118,20 @@ var _ = Describe("Mock provider binary (integration)", func() {
 		probe := bootstrap.Probe(ctx)
 		Expect(probe.Err).NotTo(HaveOccurred())
 		Expect(probe.Connected).To(BeTrue())
+
+		clusters := publicv1.NewClustersClient(bootstrap.Conn())
+		createResp, err := clusters.Create(ctx, &publicv1.ClustersCreateRequest{
+			Object: &publicv1.Cluster{Id: "tc-i-031"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		secretID := createResp.GetObject().GetStatus().GetKubeconfigSecret().GetId()
+		Expect(secretID).To(Equal("mock-kubeconfig-tc-i-031"))
+
+		secretResp, err := privatev1.NewSecretsClient(bootstrap.Conn()).Get(ctx,
+			&privatev1.SecretsGetRequest{Id: secretID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(secretResp.GetObject().GetData()["kubeconfig"]).To(Equal([]byte(
+			"apiVersion: v1\nkind: Config\nclusters:\n- name: tc-i-031\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: tc-i-031\n",
+		)))
 	})
 })

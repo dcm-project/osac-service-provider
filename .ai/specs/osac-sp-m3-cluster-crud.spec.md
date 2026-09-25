@@ -36,7 +36,7 @@ confirmed scoping:
 - [`dcm-project/control-plane`](https://github.com/dcm-project/control-plane)'s actual outbound dispatch code — [`internal/sp/service/resource_manager/service_type_instance.go`](https://github.com/dcm-project/control-plane/blob/f243dfaa2e2752c63202432409e78cc2a4ad7d85/internal/sp/service/resource_manager/service_type_instance.go) (`createInstanceWithProvider`/`deleteInstanceWithProvider`) and [`convert.go`](https://github.com/dcm-project/control-plane/blob/f243dfaa2e2752c63202432409e78cc2a4ad7d85/internal/sp/service/resource_manager/convert.go) (`ProviderResponse`) — read directly, not inferred from any OpenAPI doc, since `control-plane`'s own inbound `resource_manager/openapi.yaml` describes a *different* API (catalog-facing) than what it sends to this SP
 - [Generic Service Type Schema](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-type-definitions/service-type-definitions.md#generic-service) and [Kubernetes Cluster Schema](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-type-definitions/service-type-definitions.md#kubernetes-cluster)
 - [Service Provider Status Reporting — Cluster status](https://github.com/dcm-project/enhancements/blob/main/enhancements/state-management/service-provider-status-reporting.md#cluster-status) — the canonical 7-value status vocabulary (§4.5)
-- OSAC public protos, vendored in Milestone 2: [`clusters_service.proto`/`cluster_type.proto`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1) — plus `cluster_template_type.proto`/`cluster_templates_service.proto` (`osac.public.v1.ClusterTemplates`), newly vendored **this** milestone (DD-110)
+- OSAC public protos pinned to Fulfillment Service v0.0.107 at monorepo commit [`bff38394`](https://github.com/osac-project/osac/tree/bff38394f1ad724c1b0b17fd655480c2c202ea11/proto/public/osac/public/v1), including `Clusters/Get`, `ClusterStatus.kubeconfig_secret`, and `SecretLocalReference`; the private `Secrets/Get` client is generated from the matching private API schema
 - [Milestone 1 spec](./osac-sp.spec.md) (`internal/httperror`, RFC 9457 error writing — DD-070) and [Milestone 2 spec](./osac-sp-m2-grpc-client-generation.spec.md) (`Bootstrap.Conn()`) — both extended, not replaced
 - [Design Decisions](../decisions/osac-sp.decisions.md) — DD-080/090/100/110/111/112/113/114 (new, this milestone)
 
@@ -79,12 +79,13 @@ control-plane (synchronous, direct REST — DD-080)
 |           ownership labels, Clusters/Create,                  |
 |           AlreadyExists->Get (DD-100)                         |
 |   Get:    Clusters/Get, status mapper (4.5), conditional      |
-|           Clusters/GetKubeconfig                              |
+|           private Secrets/Get by kubeconfig_secret id         |
 |   List:   Clusters/List (CEL ownership filter, offset/limit)  |
 |   Delete: Clusters/Delete, NotFound treated as success        |
 |         |                                                     |
 |         v                                                     |
 |   publicv1.NewClustersClient(bootstrap.Conn())  <-- M2        |
+|   privatev1.NewSecretsClient(bootstrap.Conn())                 |
 |   publicv1.NewClusterTemplatesClient(bootstrap.Conn())        |
 +--------------------------------------------------------------+
         |
@@ -252,9 +253,10 @@ conditionally fetches the kubeconfig.
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | REQ-GET-010 | The SP MUST implement `GET /api/v1alpha1/clusters/{clusterId}`, calling `Clusters/Get(clusterId)` and mapping the result per the shared status mapper (§4.5) | MUST | |
-| REQ-GET-020 | When the mapped status is exactly `ACTIVE`, the SP MUST call `Clusters/GetKubeconfig` and populate the response's `kubeconfig` field with its (base64) value | MUST | |
-| REQ-GET-030 | When the mapped status is anything other than `ACTIVE`, the response's `kubeconfig` field MUST be the empty string, and `Clusters/GetKubeconfig` MUST NOT be called | MUST | Avoids an unnecessary/premature OSAC call |
+| REQ-GET-020 | When the mapped status is exactly `ACTIVE`, the SP MUST read `status.kubeconfig_secret.id` from `Clusters/Get`, call private `Secrets/Get` with that ID, and populate the response's `kubeconfig` field with the standard-base64 encoding of the returned secret's `data["kubeconfig"]` bytes | MUST | The OSAC v0.0.107 `Clusters` API no longer provides `GetKubeconfig`; a kubeconfig is stored in a typed Secret |
+| REQ-GET-030 | When the mapped status is anything other than `ACTIVE`, the response's `kubeconfig` field MUST be the empty string, and private `Secrets/Get` MUST NOT be called | MUST | Avoids an unnecessary/premature OSAC call |
 | REQ-GET-040 | `Clusters/Get` returning gRPC `NotFound` MUST map to HTTP `404` via the shared error-mapping topic (§4.6) | MUST | |
+| REQ-GET-050 | When an `ACTIVE` cluster has no kubeconfig Secret reference, its referenced Secret cannot be found, or the Secret has no non-empty `kubeconfig` data entry, the SP MUST return an internal server error rather than a successful response with an empty kubeconfig or a cluster `404` | MUST | A missing backend-managed Secret is a broken cluster invariant, not a missing cluster |
 
 #### Configuration Introduced
 
@@ -262,19 +264,19 @@ None.
 
 #### Acceptance Criteria
 
-##### AC-GET-010: `ACTIVE` cluster returns its kubeconfig, fetched exactly once
+##### AC-GET-010: `ACTIVE` cluster returns the Secret-backed kubeconfig, fetched exactly once
 
 - **Validates:** REQ-GET-010, REQ-GET-020
-- **Given** a fake `Clusters/Get` returning `status.state=CLUSTER_STATE_READY` and a fake `Clusters/GetKubeconfig` returning `"kubeconfig-abc"`
+- **Given** a fake `Clusters/Get` returning `status.state=CLUSTER_STATE_READY` and `status.kubeconfig_secret.id="secret-1"`, and a fake private `Secrets/Get("secret-1")` returning `data["kubeconfig"]` equal to the bytes `"apiVersion: v1"`
 - **When** `GET /api/v1alpha1/clusters/{id}` is called
-- **Then** the response is `200 OK` with `status` exactly `"ACTIVE"`, `kubeconfig` exactly `"kubeconfig-abc"`, and the fake's `GetKubeconfig` call counter equals exactly `1`
+- **Then** the response is `200 OK` with `status` exactly `"ACTIVE"`, `kubeconfig` exactly `"YXBpVmVyc2lvbjogdjE="`, and the fake's `Secrets/Get` call counter equals exactly `1` with request ID exactly `"secret-1"`
 
-##### AC-GET-020: Non-`ACTIVE` cluster never triggers a kubeconfig fetch
+##### AC-GET-020: Non-`ACTIVE` cluster never fetches the kubeconfig Secret
 
 - **Validates:** REQ-GET-030
 - **Given** a fake `Clusters/Get` returning `status.state=CLUSTER_STATE_PROGRESSING`
 - **When** `GET` is called
-- **Then** the response's `status` is exactly `"PROGRESSING"`, `kubeconfig` is exactly `""`, and the fake's `GetKubeconfig` call counter equals exactly `0`
+- **Then** the response's `status` is exactly `"PROGRESSING"`, `kubeconfig` is exactly `""`, and the fake's `Secrets/Get` call counter equals exactly `0`
 
 ##### AC-GET-030: Nonexistent cluster returns 404
 
@@ -282,6 +284,13 @@ None.
 - **Given** a fake `Clusters/Get` returning gRPC `NotFound`
 - **When** `GET` is called
 - **Then** the response is `404 Not Found` (RFC 9457, `type` exactly `.../not-found`)
+
+##### AC-GET-040: Missing kubeconfig Secret data is reported as an internal error
+
+- **Validates:** REQ-GET-050
+- **Given** an `ACTIVE` cluster whose kubeconfig Secret reference is absent, whose referenced Secret is not found, or whose Secret has no non-empty `data["kubeconfig"]` entry
+- **When** `GET /api/v1alpha1/clusters/{id}` is called
+- **Then** the response is `500 Internal Server Error` with the RFC 9457 internal-error type, and a missing referenced Secret is not mapped to cluster `404`
 
 #### Dependencies
 
@@ -330,9 +339,9 @@ None.
 ##### AC-LIST-030: List entries never populate `kubeconfig`
 
 - **Validates:** REQ-LIST-030
-- **Given** a fake `Clusters/List` returning a cluster with `status.state=CLUSTER_STATE_READY` (which would trigger a kubeconfig fetch under Get, per AC-GET-010) and a fake `GetKubeconfig` that would fail the test if called
+- **Given** a fake `Clusters/List` returning a cluster with `status.state=CLUSTER_STATE_READY` (which would trigger a kubeconfig fetch under Get, per AC-GET-010) and a fake private `Secrets/Get` that would fail the test if called
 - **When** `GET /api/v1alpha1/clusters` is called
-- **Then** the response entry has no `kubeconfig` field populated, and the fake `GetKubeconfig` call counter equals exactly `0`
+- **Then** the response entry has no `kubeconfig` field populated, and the fake `Secrets/Get` call counter equals exactly `0`
 
 ##### AC-LIST-040: A `page_token` this SP never issued (not valid base64, or not numeric once decoded) is rejected as `400 Bad Request`, without calling `Clusters/List`
 
@@ -674,7 +683,7 @@ DD-111.
 | Prefix | Topic | Count |
 |--------|-------|-------|
 | REQ-CREATE-NNN | 4.1: Cluster Create | 10 |
-| REQ-GET-NNN | 4.2: Cluster Get | 4 |
+| REQ-GET-NNN | 4.2: Cluster Get | 5 |
 | REQ-LIST-NNN | 4.3: Cluster List | 4 |
 | REQ-DELETE-NNN | 4.4: Cluster Delete | 4 |
 | REQ-STATUS-NNN | 4.5: Status Mapping | 3 |

@@ -24,6 +24,7 @@ import "osac/public/v1/cluster_version_type.proto";
 import "osac/public/v1/condition_status_type.proto";
 import "osac/public/v1/metadata_type.proto";
 import "osac/public/v1/host_type_type.proto";
+import "osac/public/v1/secret_type.proto";
 import "osac/public/v1/security_group_type.proto";
 import "osac/public/v1/subnet_type.proto";
 
@@ -266,6 +267,16 @@ message ClusterStatus {
   //
   // This will be empty if no state transition has been reported yet.
   optional google.protobuf.Timestamp state_transition_time = 8;
+
+  // Reference to a Secret containing the cluster's kubeconfig.
+  //
+  // System-populated after cluster provisioning.
+  SecretLocalReference kubeconfig_secret = 9;
+
+  // Reference to a Secret containing the cluster's kubeadmin password.
+  //
+  // System-populated after cluster provisioning.
+  SecretLocalReference password_secret = 10;
 }
 
 // Represents the overall state of a cluster.

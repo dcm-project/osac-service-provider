@@ -1,6 +1,7 @@
 package cluster_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 
@@ -10,6 +11,7 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
 
@@ -30,17 +32,25 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 		DeferCleanup(f.Close)
 	})
 
-	// TC-I-210 (REQ-GET-010/020, AC-GET-010): Get returns the kubeconfig
-	// for an ACTIVE cluster over real HTTP.
-	It("returns the kubeconfig for an ACTIVE cluster over real HTTP (TC-I-210)", func() {
+	// TC-I-210 (REQ-GET-010/020, AC-GET-010): Get resolves the Secret-backed
+	// kubeconfig and returns the existing base64 API contract over real HTTP.
+	It("returns the referenced Secret's base64 kubeconfig for an ACTIVE cluster over real HTTP (TC-I-210)", func() {
+		kubeconfigBytes := []byte("apiVersion: v1")
 		f.fake.getFunc = func(req *publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error) {
 			return &publicv1.ClustersGetResponse{Object: &publicv1.Cluster{
-				Id:     req.GetId(),
-				Status: &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY},
+				Id: req.GetId(),
+				Status: &publicv1.ClusterStatus{
+					State:            publicv1.ClusterState_CLUSTER_STATE_READY,
+					KubeconfigSecret: &publicv1.SecretLocalReference{Id: "secret-1"},
+				},
 			}}, nil
 		}
-		f.fake.getKubeconfigFunc = func(*publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error) {
-			return &publicv1.ClustersGetKubeconfigResponse{Kubeconfig: "kubeconfig-abc"}, nil
+		f.secrets.getFunc = func(req *privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+			Expect(req.GetId()).To(Equal("secret-1"))
+			return &privatev1.SecretsGetResponse{Object: &privatev1.Secret{
+				Type: privatev1.SecretType_SECRET_TYPE_KUBECONFIG,
+				Data: map[string][]byte{"kubeconfig": kubeconfigBytes},
+			}}, nil
 		}
 
 		resp := getCluster(f)
@@ -50,7 +60,8 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 		var cluster v1alpha1.Cluster
 		Expect(json.NewDecoder(resp.Body).Decode(&cluster)).To(Succeed())
 		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusACTIVE))
-		Expect(*cluster.Kubeconfig).To(Equal("kubeconfig-abc"))
+		Expect(*cluster.Kubeconfig).To(Equal(base64.StdEncoding.EncodeToString(kubeconfigBytes)))
+		Expect(f.secrets.GetCallCount()).To(Equal(1))
 	})
 
 	// TC-I-211 (REQ-GET-030, AC-GET-020): Get omits a real kubeconfig for a
@@ -71,6 +82,7 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 		Expect(json.NewDecoder(resp.Body).Decode(&cluster)).To(Succeed())
 		Expect(*cluster.Status).To(Equal(v1alpha1.ClusterStatusPROGRESSING))
 		Expect(*cluster.Kubeconfig).To(Equal(""))
+		Expect(f.secrets.GetCallCount()).To(Equal(0))
 	})
 
 	// TC-I-212 (REQ-GET-040, AC-GET-030): Get returns 404 for a nonexistent
@@ -88,5 +100,33 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeNOTFOUND))
+		Expect(f.secrets.GetCallCount()).To(Equal(0))
+	})
+
+	// TC-I-213 (REQ-GET-050, AC-GET-040): a Secret lookup NotFound is a broken
+	// kubeconfig invariant, not a missing Cluster.
+	It("returns an internal error when the ACTIVE cluster's kubeconfig Secret is missing (TC-I-213)", func() {
+		f.fake.getFunc = func(req *publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error) {
+			return &publicv1.ClustersGetResponse{Object: &publicv1.Cluster{
+				Id: req.GetId(),
+				Status: &publicv1.ClusterStatus{
+					State:            publicv1.ClusterState_CLUSTER_STATE_READY,
+					KubeconfigSecret: &publicv1.SecretLocalReference{Id: "secret-1"},
+				},
+			}}, nil
+		}
+		f.secrets.getFunc = func(*privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+			return nil, grpcstatus.Error(codes.NotFound, "no such secret")
+		}
+
+		resp := getCluster(f)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusInternalServerError))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
+		var body v1alpha1.Error
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINTERNAL))
+		Expect(f.secrets.GetCallCount()).To(Equal(1))
 	})
 })

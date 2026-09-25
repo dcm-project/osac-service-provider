@@ -2,7 +2,6 @@ package mockprovider_test
 
 import (
 	"context"
-	"encoding/base64"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -10,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
@@ -66,6 +66,7 @@ var _ = Describe("ClustersServer", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(createResp.GetObject().GetStatus().GetState()).To(Equal(publicv1.ClusterState_CLUSTER_STATE_READY))
+		Expect(createResp.GetObject().GetStatus().GetKubeconfigSecret().GetId()).To(Equal("mock-kubeconfig-x"))
 
 		getResp, err := srv.Get(ctx, &publicv1.ClustersGetRequest{Id: "x"})
 		Expect(err).NotTo(HaveOccurred())
@@ -133,19 +134,24 @@ var _ = Describe("ClustersServer", func() {
 		Expect(st.Code()).To(Equal(codes.NotFound))
 	})
 
-	// TC-U-155: GetKubeconfig round-trips a non-empty, base64-encoded stub
-	// for a known id; unknown id is NotFound.
-	It("round-trips a non-empty, base64-encoded kubeconfig for a known id, NotFound for an unknown one (TC-U-155)", func() {
+	// TC-U-155: an ACTIVE Cluster's Secret reference resolves to raw kubeconfig
+	// bytes; an unknown Secret ID is NotFound.
+	It("resolves a Cluster's kubeconfig Secret and returns NotFound for an unknown Secret ID (TC-U-155)", func() {
 		_, err := srv.Create(ctx, &publicv1.ClustersCreateRequest{Object: &publicv1.Cluster{Id: "x"}})
 		Expect(err).NotTo(HaveOccurred())
 
-		kcResp, err := srv.GetKubeconfig(ctx, &publicv1.ClustersGetKubeconfigRequest{Id: "x"})
+		clusterResp, err := srv.Get(ctx, &publicv1.ClustersGetRequest{Id: "x"})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(kcResp.GetKubeconfig()).NotTo(BeEmpty())
-		_, decodeErr := base64.StdEncoding.DecodeString(kcResp.GetKubeconfig())
-		Expect(decodeErr).NotTo(HaveOccurred())
+		secretID := clusterResp.GetObject().GetStatus().GetKubeconfigSecret().GetId()
+		Expect(secretID).To(Equal("mock-kubeconfig-x"))
 
-		_, err = srv.GetKubeconfig(ctx, &publicv1.ClustersGetKubeconfigRequest{Id: "missing"})
+		secrets := mockprovider.NewSecretsServer(srv)
+		secretResp, err := secrets.Get(ctx, &privatev1.SecretsGetRequest{Id: secretID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(secretResp.GetObject().GetType()).To(Equal(privatev1.SecretType_SECRET_TYPE_KUBECONFIG))
+		Expect(secretResp.GetObject().GetData()["kubeconfig"]).To(Equal([]byte("apiVersion: v1\nkind: Config\nclusters:\n- name: x\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: x\n")))
+
+		_, err = secrets.Get(ctx, &privatev1.SecretsGetRequest{Id: "mock-kubeconfig-missing"})
 		st, ok := status.FromError(err)
 		Expect(ok).To(BeTrue())
 		Expect(st.Code()).To(Equal(codes.NotFound))

@@ -6,6 +6,10 @@ modules:
 lint:
   use:
     - STANDARD
+  # OSAC's published API service names intentionally omit the `Service`
+  # suffix; match upstream's lint exception for the vendored contract.
+  except:
+    - SERVICE_SUFFIX
 
 breaking:
   use:
@@ -14,3 +18,4 @@ breaking:
 deps:
   - buf.build/googleapis/googleapis
   - buf.build/bufbuild/protovalidate
+  - buf.build/cleanapi/cleanapi:v0.0.12

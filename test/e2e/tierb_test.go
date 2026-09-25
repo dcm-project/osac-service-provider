@@ -21,8 +21,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -30,6 +32,14 @@ import (
 	eav1alpha1 "github.com/dcm-project/environment-agent/api/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
+
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 )
 
 // insecureHTTPClient skips TLS verification for the direct Keycloak
@@ -51,6 +61,7 @@ const (
 	envTierBAdminSecret    = "TIERB_ADMIN_SECRET"    // osac-admin's client secret (tierb-config/realm.json)
 	envEnvironmentAgentURL = "ENVIRONMENT_AGENT_URL" // e.g. http://127.0.0.1:18090/api/v1alpha1
 	tierBCreateVersion     = "1.29"                  // the sole ClusterVersion registered by the Tier B workflow
+	tierBCreateVersionCLI  = "1.29.0"                // osac CLI requires the full catalog version
 	// envPhase2Enabled gates Phase 2 specs (osac-operator/BMFO/osac-aap-mock,
 	// REQ-TB-070..100) — set only once .github/workflows/e2e-tierb.yaml
 	// deploys that stack, distinct from Phase 1's envKeycloakURL gate.
@@ -778,6 +789,164 @@ var _ = Describe("Tier B Phase 2: osac-sp-initiated Create routes through fulfil
 	})
 })
 
+var _ = Describe("Tier B Phase 2: Cluster Get resolves a real kubeconfig Secret", func() {
+	// TC-TB-210 / REQ-TB-130 / AC-TB-070: exercise the migrated Get path
+	// against real Fulfillment Service v0.0.107 without provisioning a real
+	// OpenShift cluster. The test creates the Cluster through osac-sp, then
+	// uses the private API to provide the Ready status/Secret fixture exactly
+	// as the real backend does after provisioning.
+	It("returns the kubeconfig bytes from a real private Secret through Get (TC-TB-210)", func() {
+		Expect(eventuallyHealthy("/api/v1alpha1/clusters/health").Status).To(Equal("healthy"))
+
+		token := fetchAccessToken(keycloakURL, "osac-admin", tierBAdminSecret)
+		adminConn, err := grpc.NewClient(fulfillmentInternalAddress,
+			grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})), //nolint:gosec // test-only connection to the throwaway Tier B cluster's self-signed service certificate
+		)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = adminConn.Close() })
+		adminCtx, adminCancel := context.WithTimeout(context.Background(), 8*time.Minute)
+		defer adminCancel()
+		adminCtx = metadata.AppendToOutgoingContext(adminCtx, "authorization", "Bearer "+token)
+
+		clustersClient := privatev1.NewClustersClient(adminConn)
+		secretsClient := privatev1.NewSecretsClient(adminConn)
+		tenantsClient := privatev1.NewTenantsClient(adminConn)
+		testTenant := "tc-tb-210-" + randomID()
+		_, err = tenantsClient.Create(adminCtx, &privatev1.TenantsCreateRequest{
+			Object: &privatev1.Tenant{
+				Metadata: &privatev1.Metadata{Name: testTenant, Tenant: testTenant},
+				Spec:     &privatev1.TenantSpec{Domains: []string{testTenant + ".example.test"}},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() privatev1.TenantState {
+			tenantResp, getErr := tenantsClient.Get(adminCtx, &privatev1.TenantsGetRequest{Id: testTenant})
+			if getErr != nil {
+				return privatev1.TenantState_TENANT_STATE_UNSPECIFIED
+			}
+			return tenantResp.GetObject().GetStatus().GetState()
+		}, "2m", "2s").Should(Equal(privatev1.TenantState_TENANT_STATE_SYNCED))
+
+		clusterName := "tc-tb-210-osac-get-" + randomID()
+		cliCtx, cliCancel := context.WithTimeout(context.Background(), 90*time.Second)
+		cliEnv := make([]string, 0, len(os.Environ())+1)
+		for _, env := range os.Environ() {
+			if !strings.HasPrefix(env, "OSAC_TOKEN=") {
+				cliEnv = append(cliEnv, env)
+			}
+		}
+		cliEnv = append(cliEnv, "OSAC_TOKEN="+token)
+		cliLoginCmd := exec.CommandContext(cliCtx, "osac", "login", "--insecure", "--private", "https://"+fulfillmentInternalAddress)
+		cliLoginCmd.Env = cliEnv
+		loginOutput, err := cliLoginCmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), "osac login failed: %s", loginOutput)
+		setTenantCmd := exec.CommandContext(cliCtx, "osac", "tenant", testTenant)
+		setTenantOutput, err := setTenantCmd.CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), "osac tenant failed: %s", setTenantOutput)
+		cliCmd := exec.CommandContext(cliCtx, "osac", "create", "cluster",
+			"--name", clusterName, "--template", "default-hcp", "--version", tierBCreateVersionCLI)
+		cliOutput, err := cliCmd.CombinedOutput()
+		cliCancel()
+		Expect(err).NotTo(HaveOccurred(), "osac create cluster failed: %s", cliOutput)
+		const createResultPrefix = "Created cluster '"
+		resultStart := strings.Index(string(cliOutput), createResultPrefix)
+		Expect(resultStart).NotTo(BeNumerically("<", 0), "unexpected osac create cluster output: %s", cliOutput)
+		idStart := resultStart + len(createResultPrefix)
+		idEnd := strings.Index(string(cliOutput[idStart:]), "'")
+		Expect(idEnd).To(BeNumerically(">", 0), "unexpected osac create cluster output: %s", cliOutput)
+		clusterID := string(cliOutput[idStart : idStart+idEnd])
+		Expect(clusterID).NotTo(BeEmpty())
+
+		// Wait for the real Fulfillment Service dispatch/reconciliation path to
+		// finish before setting the test Secret state, avoiding a concurrent
+		// status update from the real operator.
+		Eventually(func() string { return getClusterOrderStatus(clusterID).Phase }, "5m", "5s").Should(Equal("Ready"))
+
+		clusterResp, err := clustersClient.Get(adminCtx, &privatev1.ClustersGetRequest{Id: clusterID})
+		Expect(err).NotTo(HaveOccurred())
+		clusterObject := clusterResp.GetObject()
+		Expect(clusterObject).NotTo(BeNil())
+		Expect(clusterObject.GetId()).To(Equal(clusterID))
+		Expect(clusterObject.GetMetadata().GetTenant()).To(Equal(testTenant))
+		if clusterObject.GetStatus() == nil {
+			clusterObject.Status = &privatev1.ClusterStatus{}
+		}
+
+		kubeconfigBytes := []byte("apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n")
+		secretResp, err := secretsClient.Create(adminCtx, &privatev1.SecretsCreateRequest{Object: &privatev1.Secret{
+			Metadata: &privatev1.Metadata{
+				Name:    clusterID + "-kubeconfig",
+				Tenant:  testTenant,
+				Project: "",
+				Creator: "tc-tb-210",
+			},
+			Data: map[string][]byte{"kubeconfig": kubeconfigBytes},
+			Type: privatev1.SecretType_SECRET_TYPE_KUBECONFIG,
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		secretID := secretResp.GetObject().GetId()
+		Expect(secretID).NotTo(BeEmpty())
+		DeferCleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cleanupCancel()
+			cleanupCtx = metadata.AppendToOutgoingContext(cleanupCtx, "authorization", "Bearer "+token)
+			deleteReq, requestErr := http.NewRequestWithContext(cleanupCtx, http.MethodDelete,
+				fmt.Sprintf("%s/api/v1alpha1/clusters/%s", osacSPURL, clusterID), nil)
+			if requestErr == nil {
+				deleteResp, deleteErr := http.DefaultClient.Do(deleteReq)
+				if deleteErr != nil {
+					GinkgoT().Logf("cleanup of Tier B test Cluster %q failed: %v", clusterID, deleteErr)
+				} else {
+					_ = deleteResp.Body.Close()
+					if deleteResp.StatusCode != http.StatusNoContent && deleteResp.StatusCode != http.StatusNotFound {
+						GinkgoT().Logf("cleanup of Tier B test Cluster %q returned HTTP %d", clusterID, deleteResp.StatusCode)
+					}
+				}
+			} else {
+				GinkgoT().Logf("could not construct cleanup request for Tier B test Cluster %q: %v", clusterID, requestErr)
+			}
+			_, cleanupErr := secretsClient.Delete(cleanupCtx, &privatev1.SecretsDeleteRequest{Id: secretID})
+			if cleanupErr != nil && grpcstatus.Code(cleanupErr) != codes.NotFound {
+				GinkgoT().Logf("cleanup of Tier B test Secret %q failed: %v", secretID, cleanupErr)
+			}
+		})
+
+		clusterObject.GetStatus().State = privatev1.ClusterState_CLUSTER_STATE_READY
+		clusterObject.GetStatus().KubeconfigSecret = &privatev1.SecretLocalReference{Id: secretID}
+		_, err = clustersClient.Update(adminCtx, &privatev1.ClustersUpdateRequest{
+			Object: clusterObject,
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{
+				"status.state",
+				"status.kubeconfig_secret",
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		getCtx, getCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer getCancel()
+		getReq, err := http.NewRequestWithContext(getCtx, http.MethodGet,
+			fmt.Sprintf("%s/api/v1alpha1/clusters/%s", osacSPURL, clusterID), nil)
+		Expect(err).NotTo(HaveOccurred())
+		getResp, err := http.DefaultClient.Do(getReq)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = getResp.Body.Close() }()
+		responseBody, err := io.ReadAll(getResp.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(getResp.StatusCode).To(Equal(http.StatusOK), "response body: %s", responseBody)
+
+		var result struct {
+			Status     string `json:"status"`
+			Kubeconfig string `json:"kubeconfig"`
+		}
+		Expect(json.Unmarshal(responseBody, &result)).To(Succeed())
+		Expect(result.Status).To(Equal("ACTIVE"))
+		Expect(result.Kubeconfig).To(Equal(base64.StdEncoding.EncodeToString(kubeconfigBytes)))
+		decoded, decodeErr := base64.StdEncoding.DecodeString(result.Kubeconfig)
+		Expect(decodeErr).NotTo(HaveOccurred())
+		Expect(decoded).To(Equal(kubeconfigBytes))
+	})
+})
+
 // getBareMetalInstanceStatus mirrors getClusterOrderStatus's own
 // kubectl-shell-out approach (see that function's doc comment for why: no
 // client-go dependency in this module, kubectl is already configured for
@@ -947,7 +1116,31 @@ func resolveInstanceNameByUID(uid string) string {
 // verification is deliberately skipped — this only asserts claim shape,
 // not cryptographic validity, matching TC-TB-020's stated scope.
 func fetchTokenClaims(issuerURL, clientID, clientSecret string) map[string]any {
+	return decodeJWTPayload(fetchAccessToken(issuerURL, clientID, clientSecret))
+}
+
+func fetchAccessToken(issuerURL, clientID, clientSecret string) string {
 	tokenURL := strings.TrimSuffix(issuerURL, "/") + "/protocol/openid-connect/token"
+	client := insecureHTTPClient
+	if strings.HasPrefix(issuerURL, "https://localhost:18082") {
+		// The real service trusts tokens whose issuer is the in-cluster
+		// Keycloak hostname. Keep that hostname in the URL/Host/TLS SNI while
+		// dialing the local port-forward used by the E2E workflow.
+		tokenURL = strings.Replace(tokenURL, "https://localhost:18082", "https://ffs-keycloak:8443", 1)
+		dialer := &net.Dialer{Timeout: 10 * time.Second}
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only TLS to the throwaway Tier B cluster
+				DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+					if address == "ffs-keycloak:8443" {
+						address = "127.0.0.1:18082"
+					}
+					return dialer.DialContext(ctx, network, address)
+				},
+			},
+			Timeout: 10 * time.Second,
+		}
+	}
 
 	form := url.Values{
 		"grant_type":    {"client_credentials"},
@@ -962,7 +1155,7 @@ func fetchTokenClaims(issuerURL, clientID, clientSecret string) map[string]any {
 	Expect(err).NotTo(HaveOccurred())
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := insecureHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	Expect(err).NotTo(HaveOccurred())
 	defer func() { _ = resp.Body.Close() }()
 	Expect(resp.StatusCode).To(Equal(http.StatusOK), "token endpoint: %s", tokenURL)
@@ -973,7 +1166,7 @@ func fetchTokenClaims(issuerURL, clientID, clientSecret string) map[string]any {
 	Expect(json.NewDecoder(resp.Body).Decode(&tokenResp)).To(Succeed())
 	Expect(tokenResp.AccessToken).NotTo(BeEmpty())
 
-	return decodeJWTPayload(tokenResp.AccessToken)
+	return tokenResp.AccessToken
 }
 
 func decodeJWTPayload(token string) map[string]any {

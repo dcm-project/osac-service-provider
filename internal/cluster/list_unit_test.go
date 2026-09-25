@@ -88,7 +88,7 @@ var _ = Describe("Service.List (Topic 4.3 Cluster List)", func() {
 	})
 
 	// TC-U-222 (REQ-LIST-030, AC-LIST-030): List entries never populate
-	// kubeconfig, and never trigger a kubeconfig fetch.
+	// kubeconfig, and never trigger a Secret fetch.
 	It("never populates kubeconfig on List entries (TC-U-222)", func() {
 		f.fake.listFunc = func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
 			return &publicv1.ClustersListResponse{
@@ -104,7 +104,7 @@ var _ = Describe("Service.List (Topic 4.3 Cluster List)", func() {
 
 		Expect(result.Results).To(HaveLen(1))
 		Expect(result.Results[0].Kubeconfig).To(BeNil())
-		Expect(f.fake.GetKubeconfigCallCount()).To(Equal(0))
+		Expect(f.secrets.GetCallCount()).To(Equal(0))
 	})
 
 	// TC-U-223 (REQ-LIST-040, AC-LIST-050, regression): a Size/Total
