@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/dcm-project/osac-service-provider/internal/cluster"
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
@@ -27,17 +28,14 @@ type fakeClustersServer struct {
 
 	mu sync.Mutex
 
-	createFunc        func(*publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error)
-	getFunc           func(*publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error)
-	listFunc          func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error)
-	deleteFunc        func(*publicv1.ClustersDeleteRequest) (*publicv1.ClustersDeleteResponse, error)
-	getKubeconfigFunc func(*publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error)
-
-	createCalls        []*publicv1.ClustersCreateRequest
-	getCalls           []*publicv1.ClustersGetRequest
-	listCalls          []*publicv1.ClustersListRequest
-	deleteCalls        []*publicv1.ClustersDeleteRequest
-	getKubeconfigCalls []*publicv1.ClustersGetKubeconfigRequest
+	createFunc  func(*publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error)
+	getFunc     func(*publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error)
+	listFunc    func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error)
+	deleteFunc  func(*publicv1.ClustersDeleteRequest) (*publicv1.ClustersDeleteResponse, error)
+	createCalls []*publicv1.ClustersCreateRequest
+	getCalls    []*publicv1.ClustersGetRequest
+	listCalls   []*publicv1.ClustersListRequest
+	deleteCalls []*publicv1.ClustersDeleteRequest
 }
 
 func (s *fakeClustersServer) Create(_ context.Context, req *publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error) {
@@ -84,17 +82,6 @@ func (s *fakeClustersServer) Delete(_ context.Context, req *publicv1.ClustersDel
 	return &publicv1.ClustersDeleteResponse{}, nil
 }
 
-func (s *fakeClustersServer) GetKubeconfig(_ context.Context, req *publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error) {
-	s.mu.Lock()
-	s.getKubeconfigCalls = append(s.getKubeconfigCalls, req)
-	fn := s.getKubeconfigFunc
-	s.mu.Unlock()
-	if fn != nil {
-		return fn(req)
-	}
-	return &publicv1.ClustersGetKubeconfigResponse{}, nil
-}
-
 func (s *fakeClustersServer) CreateCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,10 +115,29 @@ func (s *fakeClustersServer) DeleteCallCount() int {
 	return len(s.deleteCalls)
 }
 
-func (s *fakeClustersServer) GetKubeconfigCallCount() int {
+type fakeSecretsServer struct {
+	privatev1.UnimplementedSecretsServer
+
+	mu       sync.Mutex
+	getFunc  func(*privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error)
+	getCalls []*privatev1.SecretsGetRequest
+}
+
+func (s *fakeSecretsServer) Get(_ context.Context, req *privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+	s.mu.Lock()
+	s.getCalls = append(s.getCalls, req)
+	fn := s.getFunc
+	s.mu.Unlock()
+	if fn != nil {
+		return fn(req)
+	}
+	return &privatev1.SecretsGetResponse{}, nil
+}
+
+func (s *fakeSecretsServer) GetCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.getKubeconfigCalls)
+	return len(s.getCalls)
 }
 
 // fakeClusterTemplatesServer backs Create's REQ-CREATE-080 node-set-key
@@ -203,6 +209,7 @@ func (s *fakeClusterVersionsServer) List(_ context.Context, req *publicv1.Cluste
 type fixture struct {
 	svc       *cluster.Service
 	fake      *fakeClustersServer
+	secrets   *fakeSecretsServer
 	templates *fakeClusterTemplatesServer
 	versions  *fakeClusterVersionsServer
 	conn      *grpc.ClientConn
@@ -220,9 +227,11 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
+	secrets := &fakeSecretsServer{}
 	templates := &fakeClusterTemplatesServer{}
 	versions := &fakeClusterVersionsServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	privatev1.RegisterSecretsServer(grpcSrv, secrets)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, templates)
 	publicv1.RegisterClusterVersionsServer(grpcSrv, versions)
 	go func() { _ = grpcSrv.Serve(lis) }()
@@ -236,8 +245,9 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	Expect(err).NotTo(HaveOccurred())
 
 	return &fixture{
-		svc:       cluster.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix),
+		svc:       cluster.New(publicv1.NewClustersClient(conn), privatev1.NewSecretsClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix),
 		fake:      fake,
+		secrets:   secrets,
 		templates: templates,
 		versions:  versions,
 		conn:      conn,

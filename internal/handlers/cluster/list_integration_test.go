@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
 
@@ -106,8 +107,8 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 				},
 			}, nil
 		}
-		f.fake.getKubeconfigFunc = func(*publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error) {
-			Fail("GetKubeconfig must never be called from List")
+		f.secrets.getFunc = func(*privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+			Fail("Secrets/Get must never be called from List")
 			return nil, nil
 		}
 
@@ -122,6 +123,7 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 		entry, ok := results[0].(map[string]interface{})
 		Expect(ok).To(BeTrue())
 		Expect(entry).NotTo(HaveKey("kubeconfig"))
+		Expect(f.secrets.GetCallCount()).To(Equal(0))
 	})
 
 	// TC-I-223 (REQ-LIST-020, REQ-ERR-010, AC-LIST-040): a page_token this

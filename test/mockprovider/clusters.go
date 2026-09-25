@@ -2,35 +2,37 @@ package mockprovider
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
+	"sync"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
 
 // ClustersServer is a real, in-memory fake of osac.public.v1.Clusters
 // (REQ-MOCK-010). Create requires and uses the caller-supplied
 // object.id (REQ-MOCK-020), matching how osac-sp itself sets Cluster.id
-// for idempotent create-retry (M3 DD-100). Update and the
-// GetKubeconfigViaHttp/password RPCs are left on the embedded
-// UnimplementedClustersServer default (gRPC UNIMPLEMENTED) — osac-sp never
-// calls them. Plain GetKubeconfig, by contrast, IS implemented below
-// (REQ-MOCK-120): osac-sp's M3 Get handler calls it for every ACTIVE-status
-// cluster, which every mock-created cluster immediately is (REQ-MOCK-030).
-// See DD-143 for how this correction was found.
+// for create-retry (M3 DD-100). Update and the removed GetKubeconfig RPCs
+// remain unimplemented; kubeconfig is served by the paired private Secrets
+// service.
 type ClustersServer struct {
 	publicv1.UnimplementedClustersServer
 
-	store *resourceStore[*publicv1.Cluster]
+	store   *resourceStore[*publicv1.Cluster]
+	mu      sync.RWMutex
+	secrets map[string]*privatev1.Secret
 }
 
 // NewClustersServer returns an empty ClustersServer ready to register on a
 // grpc.Server.
 func NewClustersServer() *ClustersServer {
-	return &ClustersServer{store: newResourceStore[*publicv1.Cluster]()}
+	return &ClustersServer{
+		store:   newResourceStore[*publicv1.Cluster](),
+		secrets: make(map[string]*privatev1.Secret),
+	}
 }
 
 func (s *ClustersServer) Create(_ context.Context, req *publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error) {
@@ -38,12 +40,27 @@ func (s *ClustersServer) Create(_ context.Context, req *publicv1.ClustersCreateR
 	if obj.GetId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "object.id is required")
 	}
-	obj.Status = &publicv1.ClusterStatus{State: publicv1.ClusterState_CLUSTER_STATE_READY}
+	secretID := "mock-kubeconfig-" + obj.GetId()
+	obj.Status = &publicv1.ClusterStatus{
+		State: publicv1.ClusterState_CLUSTER_STATE_READY,
+		KubeconfigSecret: &publicv1.SecretLocalReference{
+			Id:   secretID,
+			Name: obj.GetId() + "-kubeconfig",
+		},
+	}
 
 	created, err := s.store.create(obj.GetId(), obj)
 	if err != nil {
 		return nil, err
 	}
+	stub := fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: %s\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: %s\n", obj.GetId(), obj.GetId())
+	s.mu.Lock()
+	s.secrets[secretID] = &privatev1.Secret{
+		Id:   secretID,
+		Type: privatev1.SecretType_SECRET_TYPE_KUBECONFIG,
+		Data: map[string][]byte{"kubeconfig": []byte(stub)},
+	}
+	s.mu.Unlock()
 	return &publicv1.ClustersCreateResponse{Object: created}, nil
 }
 
@@ -64,19 +81,37 @@ func (s *ClustersServer) Delete(_ context.Context, req *publicv1.ClustersDeleteR
 	if err := s.store.delete(req.GetId()); err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	delete(s.secrets, "mock-kubeconfig-"+req.GetId())
+	s.mu.Unlock()
 	return &publicv1.ClustersDeleteResponse{}, nil
 }
 
-// GetKubeconfig returns a stub, non-functional kubeconfig for a known id,
-// and gRPC NOT_FOUND for an unknown one (REQ-MOCK-120) — mirroring the
-// other four CRUD-shaped services' Get semantics (REQ-MOCK-040). The
-// content is never parsed by osac-sp (internal/cluster.Service.Get copies
-// it through as an opaque base64 string), so a deterministic placeholder
-// is sufficient; it only needs to be present and valid base64.
-func (s *ClustersServer) GetKubeconfig(_ context.Context, req *publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error) {
-	if _, err := s.store.get(req.GetId()); err != nil {
-		return nil, err
+// SecretsServer serves the inline kubeconfig Secrets attached by
+// ClustersServer.Create (REQ-MOCK-120).
+type SecretsServer struct {
+	privatev1.UnimplementedSecretsServer
+	clusters *ClustersServer
+}
+
+// NewSecretsServer returns a Secrets service backed by the given Clusters
+// server's mock kubeconfig store.
+func NewSecretsServer(clusters *ClustersServer) *SecretsServer {
+	return &SecretsServer{clusters: clusters}
+}
+
+func (s *SecretsServer) Get(_ context.Context, req *privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+	s.clusters.mu.RLock()
+	secret := s.clusters.secrets[req.GetId()]
+	if secret == nil {
+		s.clusters.mu.RUnlock()
+		return nil, status.Error(codes.NotFound, "secret not found")
 	}
-	stub := fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: %s\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: %s\n", req.GetId(), req.GetId())
-	return &publicv1.ClustersGetKubeconfigResponse{Kubeconfig: base64.StdEncoding.EncodeToString([]byte(stub))}, nil
+	data := make(map[string][]byte, len(secret.GetData()))
+	for key, value := range secret.GetData() {
+		data[key] = append([]byte(nil), value...)
+	}
+	responseSecret := &privatev1.Secret{Id: secret.GetId(), Type: secret.GetType(), Data: data}
+	s.clusters.mu.RUnlock()
+	return &privatev1.SecretsGetResponse{Object: responseSecret}, nil
 }

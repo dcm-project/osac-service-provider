@@ -6,18 +6,19 @@ specified in
 Unlike Milestones 1/2 (separate `-unit`/`-integration` files), this
 milestone uses one file for both tiers, since the pyramid-invariant rule
 below requires reading a `REQ`/`AC`'s unit and integration case side by side
-to verify the pyramid is actually complete for it. There is no e2e tier for
-this milestone — scope is CRUD-only; the deferred NATS/status-polling work
-(Milestone 5) is where an e2e-style tier applies.
+to verify the pyramid is actually complete for it. The active Tier B plan
+separately adds TC-TB-210 for Cluster Get against real Fulfillment Service; it
+supplements rather than replaces the required unit and integration cases.
 
 The retired Phase A cases `TC-E2E-090..092` and `TC-E2E-103` are represented
 by the integration cases below (`TC-I-200/201/205` and the existing Get/List/
 Delete cases). No mock-backend E2E deployment is required.
 
 **Framework:** Ginkgo v2 + Gomega. Unit tests: `internal/cluster/*_unit_test.go`,
-`internal/handlers/cluster/*_unit_test.go` — pure business logic against a
-`bufconn`-backed fake `publicv1.ClustersServer` (same technique as M2's
-`conn_unit_test.go`), no real HTTP. Integration tests:
+`internal/handlers/cluster/*_unit_test.go` — pure business logic against
+`bufconn`-backed fake `publicv1.ClustersServer` and
+`privatev1.SecretsServer` (same technique as M2's `conn_unit_test.go`), no
+real HTTP. Integration tests:
 `internal/handlers/cluster/*_integration_test.go` — a real HTTP server
 (loopback listener, same pattern as M1's `server_integration_test.go`) with
 the real router/`StrictServerInterface` wiring, backed by the same
@@ -85,9 +86,10 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-210 | `ACTIVE` cluster fetches kubeconfig exactly once | REQ-GET-010, REQ-GET-020, AC-GET-010 | Exercises AC-GET-010 via `internal/cluster.Get` against the bufconn fake. |
-| TC-U-211 | Non-`ACTIVE` cluster never triggers a kubeconfig fetch | REQ-GET-030, AC-GET-020 | Exercises AC-GET-020 via `internal/cluster.Get` against the bufconn fake. |
+| TC-U-210 | `ACTIVE` cluster fetches the referenced Secret exactly once and returns its base64 kubeconfig | REQ-GET-010, REQ-GET-020, AC-GET-010 | `Clusters/Get` returns `CLUSTER_STATE_READY` with `kubeconfig_secret.id="secret-1"`; fake `Secrets/Get` asserts the exact ID and returns raw `data["kubeconfig"]` bytes; assert `internal/cluster.Get` returns exactly their standard-base64 encoding and the Secret call count is exactly 1. |
+| TC-U-211 | Non-`ACTIVE` cluster never fetches a kubeconfig Secret | REQ-GET-030, AC-GET-020 | Exercises AC-GET-020 via `internal/cluster.Get`; assert empty kubeconfig and exactly zero `Secrets/Get` calls. |
 | TC-U-212 | Nonexistent cluster maps to a not-found result | REQ-GET-040, AC-GET-030 | Exercises AC-GET-030's mapper-level outcome directly via `internal/cluster.Get` (the HTTP-level `404` assertion is TC-I-212). |
+| TC-U-213 | An ACTIVE cluster with a missing or unusable kubeconfig Secret fails internally | REQ-GET-050, AC-GET-040 | Table-driven across absent/empty Secret reference ID, `Secrets/Get` NotFound/nil object, absent `kubeconfig` key, and empty key bytes; assert each returns gRPC `Internal` rather than an empty successful result or cluster `NotFound`. Also assert a transient `Secrets/Get` `Unavailable` error is propagated unchanged for the shared error mapper. |
 
 ---
 
@@ -148,9 +150,10 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-210 | Get returns kubeconfig for an `ACTIVE` cluster over real HTTP | REQ-GET-010, REQ-GET-020, AC-GET-010 | Real-HTTP counterpart of TC-U-210. |
-| TC-I-211 | Get omits kubeconfig for a non-`ACTIVE` cluster over real HTTP | REQ-GET-030, AC-GET-020 | Real-HTTP counterpart of TC-U-211. |
-| TC-I-212 | Get returns 404 for a nonexistent cluster over real HTTP | REQ-GET-040, AC-GET-030 | Real-HTTP counterpart of TC-U-212, asserting the HTTP-level `404`/RFC 9457 `type` that TC-U-212 doesn't cover. |
+| TC-I-210 | Get returns the referenced Secret's base64 kubeconfig for an `ACTIVE` cluster over real HTTP | REQ-GET-010, REQ-GET-020, AC-GET-010 | Real-HTTP counterpart of TC-U-210; assert exact response status, base64 content, Secret ID, and one `Secrets/Get` call. |
+| TC-I-211 | Get returns empty kubeconfig and skips Secrets/Get for a non-`ACTIVE` cluster over real HTTP | REQ-GET-030, AC-GET-020 | Real-HTTP counterpart of TC-U-211. |
+| TC-I-212 | Get returns 404 for a nonexistent cluster over real HTTP | REQ-GET-040, AC-GET-030 | Real-HTTP counterpart of TC-U-212, asserting the HTTP-level `404`/RFC 9457 `type` and zero `Secrets/Get` calls. |
+| TC-I-213 | An unresolved kubeconfig Secret returns HTTP 500, not cluster 404, over real HTTP | REQ-GET-050, AC-GET-040 | Configure an `ACTIVE` cluster with a Secret reference and have the real `bufconn` private `SecretsServer` return `NotFound`; assert HTTP 500 and the RFC 9457 internal-error type. |
 
 ---
 
@@ -199,9 +202,9 @@ CRUD happy-path test would incidentally prove.
 | Spec Section | REQ Count | AC Count | TC-U (this file) | TC-I (this file) | Pyramid complete? |
 |---|---|---|---|---|---|
 | 4.1 Cluster Create | 10 | 8 | 10 (TC-U-200..209) | 6 (TC-I-200..205) | Yes — every AC has both tiers; AC-CREATE-030 covered by TC-U-202 (unit) + TC-I-201 (2 real sequential HTTP requests, per rule 3); AC-CREATE-070's zero-key case (TC-U-209) is unit-only, same tier-split rationale as its multi-key case |
-| 4.2 Cluster Get | 4 | 3 | 3 (TC-U-210..212) | 3 (TC-I-210..212) | Yes |
+| 4.2 Cluster Get | 5 | 4 | 4 (TC-U-210..213) | 4 (TC-I-210..213) | Yes — every Get acceptance criterion has both unit and real-HTTP integration coverage; the active kubeconfig fixture additionally gets real-backend Tier B coverage in TC-TB-210. |
 | 4.3 Cluster List | 4 | 4 | 3 (TC-U-220..222) | 4 (TC-I-220..223) | Yes — AC-LIST-040 covered by a pre-existing, untagged unit test in `list_unit_test.go` (base64/non-numeric `page_token` rejection) plus dedicated TC-I-223 for the real-HTTP boundary |
 | 4.4 Cluster Delete | 4 | 3 | 3 (TC-U-230..232) | 3 (TC-I-230..232) | Yes — AC-DELETE-020 covered by TC-U-231 (unit) + TC-I-231 (2 real sequential HTTP requests, per rule 3) |
 | 4.5 Status Mapping | 3 | 3 | 3 (TC-U-240..242) | 1 dedicated (TC-I-240) + incidentally via TC-I-210/211/220 | Yes — AC-STATUS-020 has both tiers (TC-U-241 + TC-I-240); AC-STATUS-010's rules 1/2/5/6 and all of AC-STATUS-030 are unit-only by design, not an incomplete pyramid (SC-M3-001/SC-M3-003 — those gRPC outcomes are resolved as sync HTTP errors before the mapper runs in M3) |
 | 4.6 Error Mapping | 3 | 2 | 2 (TC-U-250..251) | 1 dedicated (TC-I-250) + incidentally via TC-I-202/212/232 | Yes |
-| **Total** | **28** | **23** | **24** | **18** | |
+| **Total** | **29** | **24** | **25** | **19** | |

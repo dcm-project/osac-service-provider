@@ -19,6 +19,7 @@ import (
 	vmhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/vm"
 	"github.com/dcm-project/osac-service-provider/internal/health"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
+	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/registration"
 	"github.com/dcm-project/osac-service-provider/internal/statuspoll"
@@ -161,6 +162,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	healthHandler := health.NewHandler(osacBootstrap, time.Now(), version)
 	clusterSvc := cluster.New(
 		publicv1.NewClustersClient(osacBootstrap.Conn()),
+		privatev1.NewSecretsClient(osacBootstrap.Conn()),
 		publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()),
 		publicv1.NewClusterVersionsClient(osacBootstrap.Conn()),
 		matrix,
