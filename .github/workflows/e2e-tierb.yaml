@@ -208,6 +208,9 @@ jobs:
 
       - name: Register Hub (TC-TB-200)
         run: |
+          # This forward is for Hub/ClusterVersion fixture creation only.
+          # Start port-forwards below creates a fresh internal-API forward for
+          # the e2e suite instead of reusing this one after its CLI traffic.
           kubectl port-forward svc/fulfillment-internal-api 18083:8001 >/tmp/pf-fulfillment-internal-api.log 2>&1 &
           echo $! > /tmp/pf-fulfillment-internal-api.pid
           sleep 3
@@ -263,12 +266,22 @@ jobs:
           echo $! > /tmp/pf-keycloak.pid
           kubectl port-forward svc/environment-agent 18090:8090 >/tmp/pf-environment-agent.log 2>&1 &
           echo $! > /tmp/pf-environment-agent.pid
+          # TC-TB-210 creates private tenant/Secret fixtures. Use a fresh
+          # forward here because the earlier Hub setup forward can lose its
+          # connection to the FFS pod after its CLI traffic.
+          kubectl port-forward svc/fulfillment-internal-api 18084:8001 >/tmp/pf-fulfillment-internal-api-e2e.log 2>&1 &
+          echo $! > /tmp/pf-fulfillment-internal-api-e2e.pid
           sleep 3
+          if ! grep -Fq "Forwarding from 127.0.0.1:18084 -> 8001" /tmp/pf-fulfillment-internal-api-e2e.log; then
+            cat /tmp/pf-fulfillment-internal-api-e2e.log
+            echo "Fulfillment Service internal API port-forward did not become ready" >&2
+            exit 1
+          fi
 
       - name: Run Tier B e2e suite
         env:
           OSAC_SP_URL: http://localhost:18081
-          FULFILLMENT_INTERNAL_ADDRESS: 127.0.0.1:18083
+          FULFILLMENT_INTERNAL_ADDRESS: 127.0.0.1:18084
           KEYCLOAK_URL: https://localhost:18082/realms/osac
           TIERB_ADMIN_SECRET: tierb-osac-admin-secret
           ENVIRONMENT_AGENT_URL: http://127.0.0.1:18090/api/v1alpha1
@@ -278,7 +291,7 @@ jobs:
       - name: Stop port-forwards
         if: always()
         run: |
-          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-environment-agent.pid /tmp/pf-fulfillment-internal-api.pid; do
+          for f in /tmp/pf-osac-sp.pid /tmp/pf-keycloak.pid /tmp/pf-environment-agent.pid /tmp/pf-fulfillment-internal-api.pid /tmp/pf-fulfillment-internal-api-e2e.pid; do
             [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true
           done
 
