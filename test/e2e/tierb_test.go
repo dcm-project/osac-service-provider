@@ -795,7 +795,7 @@ var _ = Describe("Tier B Phase 2: Cluster Get resolves a real kubeconfig Secret"
 	// OpenShift cluster. The test creates the Cluster through osac-sp, then
 	// uses the private API to provide the Ready status/Secret fixture exactly
 	// as the real backend does after provisioning.
-	It("returns the kubeconfig bytes from a real private Secret through Get (TC-TB-210)", func() {
+	It("returns kubeconfig bytes from a real Secret through public Get (TC-TB-210)", func() {
 		Expect(eventuallyHealthy("/api/v1alpha1/clusters/health").Status).To(Equal("healthy"))
 
 		token := fetchAccessToken(keycloakURL, "osac-admin", tierBAdminSecret)

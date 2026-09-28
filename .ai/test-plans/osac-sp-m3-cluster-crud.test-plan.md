@@ -17,7 +17,7 @@ Delete cases). No mock-backend E2E deployment is required.
 **Framework:** Ginkgo v2 + Gomega. Unit tests: `internal/cluster/*_unit_test.go`,
 `internal/handlers/cluster/*_unit_test.go` — pure business logic against
 `bufconn`-backed fake `publicv1.ClustersServer` and
-`privatev1.SecretsServer` (same technique as M2's `conn_unit_test.go`), no
+`publicv1.SecretsServer` (same technique as M2's `conn_unit_test.go`), no
 real HTTP. Integration tests:
 `internal/handlers/cluster/*_integration_test.go` — a real HTTP server
 (loopback listener, same pattern as M1's `server_integration_test.go`) with
@@ -86,10 +86,10 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-U-210 | `ACTIVE` cluster fetches the referenced Secret exactly once and returns its base64 kubeconfig | REQ-GET-010, REQ-GET-020, AC-GET-010 | `Clusters/Get` returns `CLUSTER_STATE_READY` with `kubeconfig_secret.id="secret-1"`; fake `Secrets/Get` asserts the exact ID and returns raw `data["kubeconfig"]` bytes; assert `internal/cluster.Get` returns exactly their standard-base64 encoding and the Secret call count is exactly 1. |
-| TC-U-211 | Non-`ACTIVE` cluster never fetches a kubeconfig Secret | REQ-GET-030, AC-GET-020 | Exercises AC-GET-020 via `internal/cluster.Get`; assert empty kubeconfig and exactly zero `Secrets/Get` calls. |
+| TC-U-210 | `ACTIVE` cluster fetches the referenced Secret exactly once and returns its base64 kubeconfig | REQ-GET-010, REQ-GET-020, AC-GET-010 | `Clusters/Get` returns `CLUSTER_STATE_READY` with `kubeconfig_secret.id="secret-1"`; fake public `Secrets/Get` asserts the exact ID and returns raw `data["kubeconfig"]` bytes; assert `internal/cluster.Get` returns exactly their standard-base64 encoding and the Secret call count is exactly 1. |
+| TC-U-211 | Non-`ACTIVE` cluster never fetches a kubeconfig Secret | REQ-GET-030, AC-GET-020 | Exercises AC-GET-020 via `internal/cluster.Get`; assert empty kubeconfig and exactly zero public `Secrets/Get` calls. |
 | TC-U-212 | Nonexistent cluster maps to a not-found result | REQ-GET-040, AC-GET-030 | Exercises AC-GET-030's mapper-level outcome directly via `internal/cluster.Get` (the HTTP-level `404` assertion is TC-I-212). |
-| TC-U-213 | An ACTIVE cluster with a missing or unusable kubeconfig Secret fails internally | REQ-GET-050, AC-GET-040 | Table-driven across absent/empty Secret reference ID, `Secrets/Get` NotFound/nil object, absent `kubeconfig` key, and empty key bytes; assert each returns gRPC `Internal` rather than an empty successful result or cluster `NotFound`. Also assert a transient `Secrets/Get` `Unavailable` error is propagated unchanged for the shared error mapper. |
+| TC-U-213 | An ACTIVE cluster with a missing or unusable kubeconfig Secret fails internally | REQ-GET-050, AC-GET-040 | Table-driven across absent/empty Secret reference ID, public `Secrets/Get` NotFound/nil object, absent `kubeconfig` key, and empty key bytes; assert each returns gRPC `Internal` rather than an empty successful result or cluster `NotFound`. Also assert a transient public `Secrets/Get` `Unavailable` error is propagated unchanged for the shared error mapper. |
 
 ---
 
@@ -150,10 +150,10 @@ done, regardless of coverage percentage:
 
 | TC ID | Test Name | Validates | Description |
 |-------|-----------|-----------|-------------|
-| TC-I-210 | Get returns the referenced Secret's base64 kubeconfig for an `ACTIVE` cluster over real HTTP | REQ-GET-010, REQ-GET-020, AC-GET-010 | Real-HTTP counterpart of TC-U-210; assert exact response status, base64 content, Secret ID, and one `Secrets/Get` call. |
+| TC-I-210 | Get returns the referenced Secret's base64 kubeconfig for an `ACTIVE` cluster over real HTTP | REQ-GET-010, REQ-GET-020, AC-GET-010 | Real-HTTP counterpart of TC-U-210; assert exact response status, base64 content, Secret ID, and one public `Secrets/Get` call. |
 | TC-I-211 | Get returns empty kubeconfig and skips Secrets/Get for a non-`ACTIVE` cluster over real HTTP | REQ-GET-030, AC-GET-020 | Real-HTTP counterpart of TC-U-211. |
-| TC-I-212 | Get returns 404 for a nonexistent cluster over real HTTP | REQ-GET-040, AC-GET-030 | Real-HTTP counterpart of TC-U-212, asserting the HTTP-level `404`/RFC 9457 `type` and zero `Secrets/Get` calls. |
-| TC-I-213 | An unresolved kubeconfig Secret returns HTTP 500, not cluster 404, over real HTTP | REQ-GET-050, AC-GET-040 | Configure an `ACTIVE` cluster with a Secret reference and have the real `bufconn` private `SecretsServer` return `NotFound`; assert HTTP 500 and the RFC 9457 internal-error type. |
+| TC-I-212 | Get returns 404 for a nonexistent cluster over real HTTP | REQ-GET-040, AC-GET-030 | Real-HTTP counterpart of TC-U-212, asserting the HTTP-level `404`/RFC 9457 `type` and zero public `Secrets/Get` calls. |
+| TC-I-213 | An unresolved kubeconfig Secret returns HTTP 500, not cluster 404, over real HTTP | REQ-GET-050, AC-GET-040 | Configure an `ACTIVE` cluster with a Secret reference and have the real `bufconn` public `SecretsServer` return `NotFound`; assert HTTP 500 and the RFC 9457 internal-error type. |
 
 ---
 

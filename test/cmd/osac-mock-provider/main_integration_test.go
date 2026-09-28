@@ -3,7 +3,7 @@ package main
 // TC-I-031 (per .ai/test-plans/osac-sp-e2e-mock-provider.test-plan.md,
 // "5. test/cmd/osac-mock-provider — integration"): drives this binary's real
 // run() end to end — real env-var config loading, a real net.Listen-backed
-// grpc.Server hosting all 5 fake osac.public.v1 services, and a real
+// grpc.Server hosting the fake osac.public.v1 services, and a real
 // net.Listen-backed OIDC discovery+token HTTP server — then points a real
 // osac.Bootstrap (production osac.New(), the real SP's own client-side
 // code) at those two addresses to prove the mock is a genuine end-to-end
@@ -23,7 +23,6 @@ import (
 
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	"github.com/dcm-project/osac-service-provider/internal/osac"
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
@@ -127,8 +126,8 @@ var _ = Describe("Mock provider binary (integration)", func() {
 		secretID := createResp.GetObject().GetStatus().GetKubeconfigSecret().GetId()
 		Expect(secretID).To(Equal("mock-kubeconfig-tc-i-031"))
 
-		secretResp, err := privatev1.NewSecretsClient(bootstrap.Conn()).Get(ctx,
-			&privatev1.SecretsGetRequest{Id: secretID})
+		secretResp, err := publicv1.NewSecretsClient(bootstrap.Conn()).Get(ctx,
+			&publicv1.SecretsGetRequest{Id: secretID})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(secretResp.GetObject().GetData()["kubeconfig"]).To(Equal([]byte(
 			"apiVersion: v1\nkind: Config\nclusters:\n- name: tc-i-031\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: tc-i-031\n",

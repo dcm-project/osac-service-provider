@@ -10,7 +10,6 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/util"
 )
@@ -39,10 +38,10 @@ var _ = Describe("Service.Get (Topic 4.2 Cluster Get)", func() {
 				},
 			}}, nil
 		}
-		f.secrets.getFunc = func(req *privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+		f.secrets.getFunc = func(req *publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
 			Expect(req.GetId()).To(Equal("secret-1"))
-			return &privatev1.SecretsGetResponse{Object: &privatev1.Secret{
-				Type: privatev1.SecretType_SECRET_TYPE_KUBECONFIG,
+			return &publicv1.SecretsGetResponse{Object: &publicv1.Secret{
+				Type: publicv1.SecretType_SECRET_TYPE_KUBECONFIG,
 				Data: map[string][]byte{"kubeconfig": kubeconfigBytes},
 			}}, nil
 		}
@@ -101,7 +100,7 @@ var _ = Describe("Service.Get (Topic 4.2 Cluster Get)", func() {
 	// an internal invariant failure, not a successful empty kubeconfig or a
 	// cluster NotFound.
 	DescribeTable("handles an ACTIVE cluster's kubeconfig Secret resolution errors (TC-U-213)",
-		func(ref *publicv1.SecretLocalReference, secret *privatev1.Secret, secretErr error, wantCalls int, wantCode codes.Code) {
+		func(ref *publicv1.SecretLocalReference, secret *publicv1.Secret, secretErr error, wantCalls int, wantCode codes.Code) {
 			f.fake.getFunc = func(req *publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error) {
 				return &publicv1.ClustersGetResponse{Object: &publicv1.Cluster{
 					Id: req.GetId(),
@@ -111,11 +110,11 @@ var _ = Describe("Service.Get (Topic 4.2 Cluster Get)", func() {
 					},
 				}}, nil
 			}
-			f.secrets.getFunc = func(*privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+			f.secrets.getFunc = func(*publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
 				if secretErr != nil {
 					return nil, secretErr
 				}
-				return &privatev1.SecretsGetResponse{Object: secret}, nil
+				return &publicv1.SecretsGetResponse{Object: secret}, nil
 			}
 
 			_, err := f.svc.Get(context.Background(), "X")
@@ -123,12 +122,12 @@ var _ = Describe("Service.Get (Topic 4.2 Cluster Get)", func() {
 			Expect(grpcstatus.Code(err)).To(Equal(wantCode))
 			Expect(f.secrets.GetCallCount()).To(Equal(wantCalls))
 		},
-		Entry("missing reference", (*publicv1.SecretLocalReference)(nil), (*privatev1.Secret)(nil), nil, 0, codes.Internal),
-		Entry("empty reference ID", &publicv1.SecretLocalReference{}, (*privatev1.Secret)(nil), nil, 0, codes.Internal),
-		Entry("referenced Secret not found", &publicv1.SecretLocalReference{Id: "secret-1"}, (*privatev1.Secret)(nil), grpcstatus.Error(codes.NotFound, "no such secret"), 1, codes.Internal),
-		Entry("nil Secret object", &publicv1.SecretLocalReference{Id: "secret-1"}, (*privatev1.Secret)(nil), nil, 1, codes.Internal),
-		Entry("missing kubeconfig data key", &publicv1.SecretLocalReference{Id: "secret-1"}, &privatev1.Secret{Data: map[string][]byte{}}, nil, 1, codes.Internal),
-		Entry("empty kubeconfig data", &publicv1.SecretLocalReference{Id: "secret-1"}, &privatev1.Secret{Data: map[string][]byte{"kubeconfig": {}}}, nil, 1, codes.Internal),
-		Entry("transient Secrets/Get failure preserves its status", &publicv1.SecretLocalReference{Id: "secret-1"}, (*privatev1.Secret)(nil), grpcstatus.Error(codes.Unavailable, "osac unreachable"), 1, codes.Unavailable),
+		Entry("missing reference", (*publicv1.SecretLocalReference)(nil), (*publicv1.Secret)(nil), nil, 0, codes.Internal),
+		Entry("empty reference ID", &publicv1.SecretLocalReference{}, (*publicv1.Secret)(nil), nil, 0, codes.Internal),
+		Entry("referenced Secret not found", &publicv1.SecretLocalReference{Id: "secret-1"}, (*publicv1.Secret)(nil), grpcstatus.Error(codes.NotFound, "no such secret"), 1, codes.Internal),
+		Entry("nil Secret object", &publicv1.SecretLocalReference{Id: "secret-1"}, (*publicv1.Secret)(nil), nil, 1, codes.Internal),
+		Entry("missing kubeconfig data key", &publicv1.SecretLocalReference{Id: "secret-1"}, &publicv1.Secret{Data: map[string][]byte{}}, nil, 1, codes.Internal),
+		Entry("empty kubeconfig data", &publicv1.SecretLocalReference{Id: "secret-1"}, &publicv1.Secret{Data: map[string][]byte{"kubeconfig": {}}}, nil, 1, codes.Internal),
+		Entry("transient Secrets/Get failure preserves its status", &publicv1.SecretLocalReference{Id: "secret-1"}, (*publicv1.Secret)(nil), grpcstatus.Error(codes.Unavailable, "osac unreachable"), 1, codes.Unavailable),
 	)
 })

@@ -9,7 +9,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
 
@@ -107,7 +106,7 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 				},
 			}, nil
 		}
-		f.secrets.getFunc = func(*privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+		f.secrets.getFunc = func(*publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
 			Fail("Secrets/Get must never be called from List")
 			return nil, nil
 		}

@@ -22,7 +22,6 @@ import (
 	"github.com/dcm-project/osac-service-provider/internal/cluster"
 	clusterhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/cluster"
 	vmhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/vm"
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/util"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
@@ -197,7 +196,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 		grpcSrv := grpc.NewServer()
 		fake := &minimalClustersServer{}
 		publicv1.RegisterClustersServer(grpcSrv, fake)
-		privatev1.RegisterSecretsServer(grpcSrv, &privatev1.UnimplementedSecretsServer{})
+		publicv1.RegisterSecretsServer(grpcSrv, &publicv1.UnimplementedSecretsServer{})
 		publicv1.RegisterClusterTemplatesServer(grpcSrv, &minimalClusterTemplatesServer{})
 		publicv1.RegisterClusterVersionsServer(grpcSrv, &minimalClusterVersionsServer{})
 		go func() { _ = grpcSrv.Serve(lis) }()
@@ -214,7 +213,7 @@ var _ = Describe("apiHandler's Cluster CRUD forwarding (unit)", func() {
 
 		svc := cluster.New(
 			publicv1.NewClustersClient(conn),
-			privatev1.NewSecretsClient(conn),
+			publicv1.NewSecretsClient(conn),
 			publicv1.NewClusterTemplatesClient(conn),
 			publicv1.NewClusterVersionsClient(conn),
 			versionmatrix.DefaultMatrix,

@@ -1,6 +1,6 @@
 // Command osac-mock-provider fakes the OSAC backend side of the gRPC
-// contract osac-sp dials (osac.public.v1's Capabilities, Clusters,
-// ComputeInstances, Subnets, VirtualNetworks; osac.private.v1.Secrets) plus a
+// contract osac-sp dials (osac.public.v1's Capabilities, Clusters, Secrets,
+// ComputeInstances, Subnets, VirtualNetworks) plus a
 // client-credentials OIDC discovery+token stub, for focused process tests and
 // the retired kind-based e2e infra (Phase 1 of
 // osac-service-provider#17 / FLPATH-4759). See
@@ -22,7 +22,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
@@ -90,7 +89,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	clustersServer := mockprovider.NewClustersServer()
 	publicv1.RegisterCapabilitiesServer(grpcSrv, mockprovider.NewCapabilitiesServer())
 	publicv1.RegisterClustersServer(grpcSrv, clustersServer)
-	privatev1.RegisterSecretsServer(grpcSrv, mockprovider.NewSecretsServer(clustersServer))
+	publicv1.RegisterSecretsServer(grpcSrv, mockprovider.NewSecretsServer(clustersServer))
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, mockprovider.NewClusterTemplatesServer())
 	publicv1.RegisterComputeInstancesServer(grpcSrv, mockprovider.NewComputeInstancesServer())
 	publicv1.RegisterSubnetsServer(grpcSrv, mockprovider.NewSubnetsServer())

@@ -8,7 +8,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
 
@@ -16,14 +15,14 @@ import (
 // (REQ-MOCK-010). Create requires and uses the caller-supplied
 // object.id (REQ-MOCK-020), matching how osac-sp itself sets Cluster.id
 // for create-retry (M3 DD-100). Update and the removed GetKubeconfig RPCs
-// remain unimplemented; kubeconfig is served by the paired private Secrets
+// remain unimplemented; kubeconfig is served by the paired public Secrets
 // service.
 type ClustersServer struct {
 	publicv1.UnimplementedClustersServer
 
 	store   *resourceStore[*publicv1.Cluster]
 	mu      sync.RWMutex
-	secrets map[string]*privatev1.Secret
+	secrets map[string]*publicv1.Secret
 }
 
 // NewClustersServer returns an empty ClustersServer ready to register on a
@@ -31,7 +30,7 @@ type ClustersServer struct {
 func NewClustersServer() *ClustersServer {
 	return &ClustersServer{
 		store:   newResourceStore[*publicv1.Cluster](),
-		secrets: make(map[string]*privatev1.Secret),
+		secrets: make(map[string]*publicv1.Secret),
 	}
 }
 
@@ -55,9 +54,9 @@ func (s *ClustersServer) Create(_ context.Context, req *publicv1.ClustersCreateR
 	}
 	stub := fmt.Sprintf("apiVersion: v1\nkind: Config\nclusters:\n- name: %s\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: %s\n", obj.GetId(), obj.GetId())
 	s.mu.Lock()
-	s.secrets[secretID] = &privatev1.Secret{
+	s.secrets[secretID] = &publicv1.Secret{
 		Id:   secretID,
-		Type: privatev1.SecretType_SECRET_TYPE_KUBECONFIG,
+		Type: publicv1.SecretType_SECRET_TYPE_KUBECONFIG,
 		Data: map[string][]byte{"kubeconfig": []byte(stub)},
 	}
 	s.mu.Unlock()
@@ -90,7 +89,7 @@ func (s *ClustersServer) Delete(_ context.Context, req *publicv1.ClustersDeleteR
 // SecretsServer serves the inline kubeconfig Secrets attached by
 // ClustersServer.Create (REQ-MOCK-120).
 type SecretsServer struct {
-	privatev1.UnimplementedSecretsServer
+	publicv1.UnimplementedSecretsServer
 	clusters *ClustersServer
 }
 
@@ -100,7 +99,7 @@ func NewSecretsServer(clusters *ClustersServer) *SecretsServer {
 	return &SecretsServer{clusters: clusters}
 }
 
-func (s *SecretsServer) Get(_ context.Context, req *privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+func (s *SecretsServer) Get(_ context.Context, req *publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
 	s.clusters.mu.RLock()
 	secret := s.clusters.secrets[req.GetId()]
 	if secret == nil {
@@ -111,7 +110,7 @@ func (s *SecretsServer) Get(_ context.Context, req *privatev1.SecretsGetRequest)
 	for key, value := range secret.GetData() {
 		data[key] = append([]byte(nil), value...)
 	}
-	responseSecret := &privatev1.Secret{Id: secret.GetId(), Type: secret.GetType(), Data: data}
+	responseSecret := &publicv1.Secret{Id: secret.GetId(), Type: secret.GetType(), Data: data}
 	s.clusters.mu.RUnlock()
-	return &privatev1.SecretsGetResponse{Object: responseSecret}, nil
+	return &publicv1.SecretsGetResponse{Object: responseSecret}, nil
 }

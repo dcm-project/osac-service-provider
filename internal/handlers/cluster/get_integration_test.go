@@ -11,7 +11,6 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 )
 
@@ -45,10 +44,10 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 				},
 			}}, nil
 		}
-		f.secrets.getFunc = func(req *privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+		f.secrets.getFunc = func(req *publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
 			Expect(req.GetId()).To(Equal("secret-1"))
-			return &privatev1.SecretsGetResponse{Object: &privatev1.Secret{
-				Type: privatev1.SecretType_SECRET_TYPE_KUBECONFIG,
+			return &publicv1.SecretsGetResponse{Object: &publicv1.Secret{
+				Type: publicv1.SecretType_SECRET_TYPE_KUBECONFIG,
 				Data: map[string][]byte{"kubeconfig": kubeconfigBytes},
 			}}, nil
 		}
@@ -115,7 +114,7 @@ var _ = Describe("Cluster Get (integration, real HTTP + router + bufconn OSAC fa
 				},
 			}}, nil
 		}
-		f.secrets.getFunc = func(*privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+		f.secrets.getFunc = func(*publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
 			return nil, grpcstatus.Error(codes.NotFound, "no such secret")
 		}
 

@@ -18,7 +18,6 @@ import (
 	clusterservice "github.com/dcm-project/osac-service-provider/internal/cluster"
 	"github.com/dcm-project/osac-service-provider/internal/config"
 	clusterhandlers "github.com/dcm-project/osac-service-provider/internal/handlers/cluster"
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
@@ -125,14 +124,14 @@ func (s *fakeClustersServer) GetCallCount() int {
 }
 
 type fakeSecretsServer struct {
-	privatev1.UnimplementedSecretsServer
+	publicv1.UnimplementedSecretsServer
 
 	mu       sync.Mutex
-	getFunc  func(*privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error)
-	getCalls []*privatev1.SecretsGetRequest
+	getFunc  func(*publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error)
+	getCalls []*publicv1.SecretsGetRequest
 }
 
-func (s *fakeSecretsServer) Get(_ context.Context, req *privatev1.SecretsGetRequest) (*privatev1.SecretsGetResponse, error) {
+func (s *fakeSecretsServer) Get(_ context.Context, req *publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
 	s.mu.Lock()
 	s.getCalls = append(s.getCalls, req)
 	fn := s.getFunc
@@ -140,7 +139,7 @@ func (s *fakeSecretsServer) Get(_ context.Context, req *privatev1.SecretsGetRequ
 	if fn != nil {
 		return fn(req)
 	}
-	return &privatev1.SecretsGetResponse{}, nil
+	return &publicv1.SecretsGetResponse{}, nil
 }
 
 func (s *fakeSecretsServer) GetCallCount() int {
@@ -212,7 +211,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	fake := &fakeClustersServer{}
 	secrets := &fakeSecretsServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
-	privatev1.RegisterSecretsServer(grpcSrv, secrets)
+	publicv1.RegisterSecretsServer(grpcSrv, secrets)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
 	publicv1.RegisterClusterVersionsServer(grpcSrv, &fakeClusterVersionsServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
@@ -225,7 +224,7 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), privatev1.NewSecretsClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewSecretsClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
 	return &fixture{
 		handler: clusterhandlers.NewHandler(svc, discardLogger),
 		fake:    fake,
@@ -314,7 +313,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	templates := &fakeClusterTemplatesServer{}
 	versions := &fakeClusterVersionsServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
-	privatev1.RegisterSecretsServer(grpcSrv, secrets)
+	publicv1.RegisterSecretsServer(grpcSrv, secrets)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, templates)
 	publicv1.RegisterClusterVersionsServer(grpcSrv, versions)
 	go func() { _ = grpcSrv.Serve(lis) }()
@@ -327,7 +326,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), privatev1.NewSecretsClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewSecretsClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
 	h := &realHandler{Handler: clusterhandlers.NewHandler(svc, discardLogger)}
 	strict := oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(discardLogger),

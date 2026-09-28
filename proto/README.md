@@ -34,6 +34,8 @@ Milestone 3 additionally vendors, at the same pinned commit:
   earlier Milestone 2 versions for the Cluster Get migration: `GetKubeconfig`
   is removed and `ClusterStatus.kubeconfig_secret` is included.
 - `osac/public/v1/secret_type.proto`
+- `osac/public/v1/secrets_service.proto` supplies the public `Secrets/Get`
+  client used by Cluster Get to retrieve kubeconfig bytes.
 - `osac/public/v1/cluster_catalog_item_type.proto`
 - `osac/public/v1/cluster_common_type.proto`
 - `osac/public/v1/cluster_templates_service.proto`
@@ -44,16 +46,16 @@ Milestone 3 additionally vendors, at the same pinned commit:
 - `osac/public/v1/host_type_type.proto`
 - `osac/public/v1/security_rule_type.proto`
 
-The Secret-backed Cluster Get path also needs the private `Secrets/Get` client.
-The following wire-compatible `osac.private.v1` schema subset is sourced from
-the same `bff38394` release commit: `metadata_type.proto`, `secret_type.proto`,
+The Secret-backed Cluster Get path uses the public `Secrets/Get` client, whose
+`Get` response includes Secret data. The following wire-compatible
+`osac.private.v1` schema subset is sourced from the same `bff38394` release
+commit for Tier B fixture setup: `metadata_type.proto`, `secret_type.proto`,
 `secrets_service.proto`, and the `Cluster`/`Clusters.Get`/`Clusters.Update`
-messages needed by the Tier B regression fixture. `tenant_type.proto` and the
-`Tenants.Create`/`Tenants.Get` subset let that fixture create and await a
-tenant-scoped test Secret.
-Production uses only `Secrets/Get`; private Cluster and Tenant clients are for
-test setup, not production provider operations. `buf.build/cleanapi/cleanapi:v0.0.12`
-is pinned in `buf.yaml` for the private API annotations.
+messages. `tenant_type.proto` and the `Tenants.Create`/`Tenants.Get` subset let
+that fixture create and await a tenant-scoped test Secret. Private Cluster,
+Secret, and Tenant clients are test-only; production provider operations use
+the public API. `buf.build/cleanapi/cleanapi:v0.0.12` is pinned in `buf.yaml`
+for the private API annotations.
 
 Needed by Create's node-set-key resolution: `Cluster.spec.node_sets`' keys
 are per-template and not derivable from `template_id`, so the SP calls

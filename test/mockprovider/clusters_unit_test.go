@@ -9,7 +9,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/test/mockprovider"
 )
@@ -146,12 +145,12 @@ var _ = Describe("ClustersServer", func() {
 		Expect(secretID).To(Equal("mock-kubeconfig-x"))
 
 		secrets := mockprovider.NewSecretsServer(srv)
-		secretResp, err := secrets.Get(ctx, &privatev1.SecretsGetRequest{Id: secretID})
+		secretResp, err := secrets.Get(ctx, &publicv1.SecretsGetRequest{Id: secretID})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(secretResp.GetObject().GetType()).To(Equal(privatev1.SecretType_SECRET_TYPE_KUBECONFIG))
+		Expect(secretResp.GetObject().GetType()).To(Equal(publicv1.SecretType_SECRET_TYPE_KUBECONFIG))
 		Expect(secretResp.GetObject().GetData()["kubeconfig"]).To(Equal([]byte("apiVersion: v1\nkind: Config\nclusters:\n- name: x\n  cluster:\n    server: https://mock-provider.invalid:6443\ncurrent-context: x\n")))
 
-		_, err = secrets.Get(ctx, &privatev1.SecretsGetRequest{Id: "mock-kubeconfig-missing"})
+		_, err = secrets.Get(ctx, &publicv1.SecretsGetRequest{Id: "mock-kubeconfig-missing"})
 		st, ok := status.FromError(err)
 		Expect(ok).To(BeTrue())
 		Expect(st.Code()).To(Equal(codes.NotFound))

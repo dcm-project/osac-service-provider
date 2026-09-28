@@ -57,12 +57,10 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
-            # Cluster Get resolves status.kubeconfig_secret through the
-            # private Secrets API, so osac-sp must use the chart's internal
-            # gRPC endpoint (port 8001), which exposes both public and private
-            # services. The external endpoint filters out private services.
+            # The SP consumes public osac.public.v1 APIs, including Secrets/Get;
+            # the public listener exposes that supported client surface.
             - name: SP_OSAC_FULFILLMENT_ADDRESS
-              value: "fulfillment-internal-api:8001"
+              value: "fulfillment-api:8000"
             - name: SP_OSAC_TLS_CERT_FILE
               value: "/etc/osac-ca/bundle.pem"
             - name: SP_OSAC_OIDC_ISSUER_URL

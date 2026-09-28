@@ -11,8 +11,8 @@ from repo-root `cmd/osac-mock-provider` per DD-224: test-only binaries stay
 out of `cmd/`, which is reserved for shipped product code), that fakes the
 **OSAC backend side** of the gRPC contract `osac-sp` dials — a real
 `net.Listen`-backed `grpc.Server` implementing `osac.public.v1`'s
-`Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`, and
-`VirtualNetworks` services plus `osac.private.v1.Secrets`, and a real HTTP
+`Capabilities`, `Clusters`, `ClusterTemplates`, `ComputeInstances`, `Secrets`,
+`Subnets`, and `VirtualNetworks` services, and a real HTTP
 OIDC discovery-and-token stub satisfying `internal/osac.Bootstrap`'s
 client-credentials flow.
 
@@ -38,7 +38,7 @@ integration tests; Tier B uses real fulfillment-service and Keycloak instead.
   `osac-sp` and remain on the generated `Unimplemented*Server` default. The
   plain `Clusters/GetKubeconfig` RPC was removed from Fulfillment Service
   v0.0.107. The current Cluster Get contract reads
-  `status.kubeconfig_secret` and calls private `Secrets/Get`; the mock models
+  `status.kubeconfig_secret` and calls public `Secrets/Get`; the mock models
   that path under REQ-MOCK-120. DD-143 records the earlier mock-only
   implementation of the now-removed RPC.
 - Real JWT signing/validation for the OIDC stub — the mock's own gRPC server
@@ -145,7 +145,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
-| REQ-MOCK-010 | The binary MUST run a real `net.Listen("tcp", ...)`-backed `grpc.Server` exposing `osac.public.v1`'s `Capabilities`, `Clusters`, `ComputeInstances`, `Subnets`, and `VirtualNetworks` services and `osac.private.v1.Secrets`, generated from the same vendored protos (`internal/osacpb`) the real SP already uses | MUST | |
+| REQ-MOCK-010 | The binary MUST run a real `net.Listen("tcp", ...)`-backed `grpc.Server` exposing `osac.public.v1`'s `Capabilities`, `Clusters`, `ClusterTemplates`, `ComputeInstances`, `Secrets`, `Subnets`, and `VirtualNetworks` services, generated from the same vendored protos (`internal/osacpb`) the real SP already uses | MUST | |
 | REQ-MOCK-020 | For `Clusters`/`ComputeInstances` (SP-supplied-ID services), `Create` MUST reject an empty `object.id` with gRPC `INVALID_ARGUMENT` and MUST reject a second `Create` for an `id` that already exists with gRPC `ALREADY_EXISTS`, without mutating the stored object | MUST | Mirrors M3 DD-100 / M4 REQ-VMCREATE-070's precondition |
 | REQ-MOCK-021 | For `Subnets`/`VirtualNetworks` (server-generated-ID services), `Create` MUST always assign a fresh, unique server-generated `id` — any caller-supplied `object.id` MUST be ignored/overwritten | MUST | |
 | REQ-MOCK-030 | A successful `Create` on any of the four CRUD-shaped services MUST store the object with a terminal "ready" status set by the mock itself (`ComputeInstance`→`COMPUTE_INSTANCE_STATE_RUNNING`, `Cluster`→`CLUSTER_STATE_READY`, `Subnet`/`VirtualNetwork`→`{SUBNET,VIRTUAL_NETWORK}_STATE_READY`), regardless of what (if anything) the caller set on `object.status` | MUST | Out-of-scope note in §1: no simulated delay |
@@ -157,7 +157,7 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
 | REQ-MOCK-090 | The token endpoint MUST accept `POST` with `grant_type=client_credentials` (client_id/secret via HTTP Basic auth or form body) and respond `200` with a JSON body containing non-empty `access_token`, `token_type="Bearer"`, and a positive `expires_in` | MUST | |
 | REQ-MOCK-100 | The token endpoint MUST reject any request whose `grant_type` is missing or not `client_credentials` with HTTP `400` and an RFC 6749 §5.2-shaped `{"error": "..."}` body | MUST | |
 | REQ-MOCK-110 | The binary MUST load its gRPC and HTTP listen addresses from environment variables, failing fast (matching `internal/config.Load()`'s convention) when a required value is missing/empty, and MUST shut down both listeners gracefully on `SIGTERM`/`SIGINT` | MUST | |
-| REQ-MOCK-120 | A created Cluster MUST carry a deterministic `status.kubeconfig_secret.id` reference (`mock-kubeconfig-<cluster-id>`); private `Secrets/Get` for that ID MUST return a `SECRET_TYPE_KUBECONFIG` Secret with non-empty raw kubeconfig bytes at `data["kubeconfig"]`, and an unknown Secret ID MUST return gRPC `NOT_FOUND` | MUST | Models the Fulfillment Service v0.0.107 contract used by M3 REQ-GET-020; replaces the removed `Clusters/GetKubeconfig` fake (DD-143 records its earlier correction) |
+| REQ-MOCK-120 | A created Cluster MUST carry a deterministic `status.kubeconfig_secret.id` reference (`mock-kubeconfig-<cluster-id>`); public `Secrets/Get` for that ID MUST return a `SECRET_TYPE_KUBECONFIG` Secret with non-empty raw kubeconfig bytes at `data["kubeconfig"]`, and an unknown Secret ID MUST return gRPC `NOT_FOUND` | MUST | Models the Fulfillment Service v0.0.107 contract used by M3 REQ-GET-020; replaces the removed `Clusters/GetKubeconfig` fake (DD-143 records its earlier correction) |
 | REQ-MOCK-130 | `ClusterTemplates/Get` MUST return a template with exactly one entry in `node_sets` for the well-known id `default-hcp` (matching the e2e suite's own `validClusterCreateBody`'s `provider_hints.osac.template_id`), and gRPC `NOT_FOUND` for any other id | MUST | Second correction to §1's original scope, same category as REQ-MOCK-120/DD-143: `internal/cluster.Service.Create`'s `resolveNodeSetKey` (M3 REQ-CREATE-080) calls this RPC on every Create, and this binary was originally built before `ClusterTemplates` existed (M3 landed after Phase 1) — without it, every real e2e Cluster Create fails 500/INTERNAL on the real mock (`ClusterTemplates/Get` is UNIMPLEMENTED), a gap found while building Milestone 3/4's own e2e CRUD coverage |
 | REQ-MOCK-140 | The gRPC server MUST terminate real TLS (a static, checked-in self-signed test certificate), never plaintext | MUST | Added once `osac-sp`'s own fulfillment-service dial became unconditionally TLS with no insecure fallback (DD-229) — a plaintext mock could no longer be dialed by the real `osac.Bootstrap` at all |
 
@@ -272,11 +272,11 @@ at implementation time), two `net.Listen` calls, `signal.NotifyContext`
   the mock is a genuine, real-transport (including real TLS) substitute for
   OSAC before it is ever wired into `kind`
 
-##### AC-MOCK-130: Cluster kubeconfig Secret resolves through private Secrets/Get
+##### AC-MOCK-130: Cluster kubeconfig Secret resolves through public Secrets/Get
 
 - **Validates:** REQ-MOCK-120
 - **Given** a cluster already created via `Clusters/Create`
-- **When** private `Secrets/Get` is called with its `status.kubeconfig_secret.id`
+- **When** public `Secrets/Get` is called with its `status.kubeconfig_secret.id`
 - **Then** the response Secret has type `SECRET_TYPE_KUBECONFIG` and non-empty raw bytes at `data["kubeconfig"]`
 - **And** calling it with an unknown Secret ID instead returns gRPC `NOT_FOUND`
 

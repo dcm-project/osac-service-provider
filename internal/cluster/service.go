@@ -1,6 +1,6 @@
 // Package cluster implements the OSAC Service Provider's Cluster CRUD
 // business logic (Milestone 3), translating between DCM's Cluster REST
-// schema (api/v1alpha1) and OSAC's public Clusters/private Secrets gRPC APIs.
+// schema (api/v1alpha1) and OSAC's public Clusters and Secrets gRPC APIs.
 //
 // Implements .ai/specs/osac-sp-m3-cluster-crud.spec.md Topics 4.1-4.4.
 package cluster
@@ -15,19 +15,18 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
-	privatev1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/private/v1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
 	"github.com/dcm-project/osac-service-provider/internal/versionmatrix"
 )
 
 // Service implements Cluster Create/Get/List/Delete against OSAC's
-// Clusters gRPC service and private Secrets lookup. Constructed from
-// Bootstrap.Conn()-backed clients (publicv1.NewClustersClient,
-// publicv1.NewClusterTemplatesClient, privatev1.NewSecretsClient) per DD-020
+// Clusters and Secrets gRPC services. Constructed from Bootstrap.Conn()-backed
+// public API clients (publicv1.NewClustersClient, publicv1.NewSecretsClient,
+// publicv1.NewClusterTemplatesClient) per DD-020
 // — no new Bootstrap accessor is added.
 type Service struct {
 	client    publicv1.ClustersClient
-	secrets   privatev1.SecretsClient
+	secrets   publicv1.SecretsClient
 	templates publicv1.ClusterTemplatesClient
 	versions  publicv1.ClusterVersionsClient
 	matrix    versionmatrix.Matrix
@@ -40,7 +39,7 @@ type Service struct {
 // drift apart.
 func New(
 	client publicv1.ClustersClient,
-	secrets privatev1.SecretsClient,
+	secrets publicv1.SecretsClient,
 	templates publicv1.ClusterTemplatesClient,
 	versions publicv1.ClusterVersionsClient,
 	matrix versionmatrix.Matrix,
@@ -199,7 +198,7 @@ func (s *Service) Get(ctx context.Context, id string) (v1alpha1.Cluster, error) 
 			"ACTIVE cluster has no kubeconfig Secret reference")
 	}
 
-	secretResp, err := s.secrets.Get(ctx, &privatev1.SecretsGetRequest{Id: secretRef.GetId()})
+	secretResp, err := s.secrets.Get(ctx, &publicv1.SecretsGetRequest{Id: secretRef.GetId()})
 	if err != nil {
 		if grpcstatus.Code(err) == codes.NotFound {
 			return v1alpha1.Cluster{}, grpcstatus.Errorf(codes.Internal,
