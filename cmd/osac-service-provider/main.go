@@ -161,6 +161,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	healthHandler := health.NewHandler(osacBootstrap, time.Now(), version)
 	clusterSvc := cluster.New(
 		publicv1.NewClustersClient(osacBootstrap.Conn()),
+		publicv1.NewSecretsClient(osacBootstrap.Conn()),
 		publicv1.NewClusterTemplatesClient(osacBootstrap.Conn()),
 		publicv1.NewClusterVersionsClient(osacBootstrap.Conn()),
 		matrix,

@@ -1,0 +1,46 @@
+//
+// Copyright (c) 2026 Red Hat, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package osac.private.v1;
+
+import "osac/private/v1/metadata_type.proto";
+import "osac/private/v1/secret_type.proto";
+
+// Minimal wire-compatible Tenant shape used by the Tier B fixture to create
+// a tenant-scoped Secret for the real Cluster Get flow.
+message Tenant {
+  string id = 1;
+  Metadata metadata = 2;
+  TenantSpec spec = 3;
+  TenantStatus status = 4;
+}
+
+message TenantSpec {
+  repeated string domains = 1;
+  SecretLocalReference break_glass_credentials_secret = 2;
+}
+
+message TenantStatus {
+  TenantState state = 2;
+}
+
+enum TenantState {
+  TENANT_STATE_UNSPECIFIED = 0;
+  TENANT_STATE_PENDING = 1;
+  TENANT_STATE_SYNCED = 2;
+  TENANT_STATE_FAILED = 3;
+}

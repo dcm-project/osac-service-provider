@@ -3,6 +3,9 @@ version: v2
 managed:
   enabled: true
   override:
+    - module: buf.build/cleanapi/cleanapi
+      file_option: go_package_prefix
+      value: github.com/dcm-project/osac-service-provider/internal/osacpb/dummy
     - file_option: go_package_prefix
       value: github.com/dcm-project/osac-service-provider/internal/osacpb
   disable:
@@ -18,6 +21,10 @@ managed:
     # its real, published package
     # (buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate).
     - module: buf.build/bufbuild/protovalidate
+
+inputs:
+  - directory: proto
+  - module: buf.build/cleanapi/cleanapi:v0.0.12
 
 plugins:
   - remote: buf.build/protocolbuffers/go:v1.36.5

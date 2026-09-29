@@ -30,12 +30,10 @@ type fakeClustersServer struct {
 
 	mu sync.Mutex
 
-	createFunc        func(*publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error)
-	getFunc           func(*publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error)
-	listFunc          func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error)
-	deleteFunc        func(*publicv1.ClustersDeleteRequest) (*publicv1.ClustersDeleteResponse, error)
-	getKubeconfigFunc func(*publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error)
-
+	createFunc  func(*publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error)
+	getFunc     func(*publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error)
+	listFunc    func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error)
+	deleteFunc  func(*publicv1.ClustersDeleteRequest) (*publicv1.ClustersDeleteResponse, error)
 	createCalls []*publicv1.ClustersCreateRequest
 	deleteCalls []*publicv1.ClustersDeleteRequest
 	getCalls    []*publicv1.ClustersGetRequest
@@ -92,14 +90,6 @@ func (s *fakeClustersServer) Delete(_ context.Context, req *publicv1.ClustersDel
 	return &publicv1.ClustersDeleteResponse{}, nil
 }
 
-func (s *fakeClustersServer) GetKubeconfig(_ context.Context, req *publicv1.ClustersGetKubeconfigRequest) (*publicv1.ClustersGetKubeconfigResponse, error) {
-	fn := s.getKubeconfigFunc
-	if fn != nil {
-		return fn(req)
-	}
-	return &publicv1.ClustersGetKubeconfigResponse{}, nil
-}
-
 func (s *fakeClustersServer) CreateCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,6 +118,31 @@ func (s *fakeClustersServer) ListCallCount() int {
 }
 
 func (s *fakeClustersServer) GetCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.getCalls)
+}
+
+type fakeSecretsServer struct {
+	publicv1.UnimplementedSecretsServer
+
+	mu       sync.Mutex
+	getFunc  func(*publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error)
+	getCalls []*publicv1.SecretsGetRequest
+}
+
+func (s *fakeSecretsServer) Get(_ context.Context, req *publicv1.SecretsGetRequest) (*publicv1.SecretsGetResponse, error) {
+	s.mu.Lock()
+	s.getCalls = append(s.getCalls, req)
+	fn := s.getFunc
+	s.mu.Unlock()
+	if fn != nil {
+		return fn(req)
+	}
+	return &publicv1.SecretsGetResponse{}, nil
+}
+
+func (s *fakeSecretsServer) GetCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.getCalls)
@@ -178,6 +193,7 @@ var discardLogger = slog.New(slog.DiscardHandler)
 type fixture struct {
 	handler *clusterhandlers.Handler
 	fake    *fakeClustersServer
+	secrets *fakeSecretsServer
 	conn    *grpc.ClientConn
 	server  *grpc.Server
 }
@@ -193,7 +209,9 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
+	secrets := &fakeSecretsServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	publicv1.RegisterSecretsServer(grpcSrv, secrets)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, &fakeClusterTemplatesServer{})
 	publicv1.RegisterClusterVersionsServer(grpcSrv, &fakeClusterVersionsServer{})
 	go func() { _ = grpcSrv.Serve(lis) }()
@@ -206,10 +224,11 @@ func newFixtureWithMatrix(matrix versionmatrix.Matrix) *fixture {
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewSecretsClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
 	return &fixture{
 		handler: clusterhandlers.NewHandler(svc, discardLogger),
 		fake:    fake,
+		secrets: secrets,
 		conn:    conn,
 		server:  grpcSrv,
 	}
@@ -271,6 +290,7 @@ type realHandler struct {
 type integrationFixture struct {
 	addr      string
 	fake      *fakeClustersServer
+	secrets   *fakeSecretsServer
 	templates *fakeClusterTemplatesServer
 	versions  *fakeClusterVersionsServer
 	conn      *grpc.ClientConn
@@ -289,9 +309,11 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	lis := bufconn.Listen(1024 * 1024)
 	grpcSrv := grpc.NewServer()
 	fake := &fakeClustersServer{}
+	secrets := &fakeSecretsServer{}
 	templates := &fakeClusterTemplatesServer{}
 	versions := &fakeClusterVersionsServer{}
 	publicv1.RegisterClustersServer(grpcSrv, fake)
+	publicv1.RegisterSecretsServer(grpcSrv, secrets)
 	publicv1.RegisterClusterTemplatesServer(grpcSrv, templates)
 	publicv1.RegisterClusterVersionsServer(grpcSrv, versions)
 	go func() { _ = grpcSrv.Serve(lis) }()
@@ -304,7 +326,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
+	svc := clusterservice.New(publicv1.NewClustersClient(conn), publicv1.NewSecretsClient(conn), publicv1.NewClusterTemplatesClient(conn), publicv1.NewClusterVersionsClient(conn), matrix)
 	h := &realHandler{Handler: clusterhandlers.NewHandler(svc, discardLogger)}
 	strict := oapigen.NewStrictHandlerWithOptions(h, nil, oapigen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  apiserver.NewRequestErrorHandler(discardLogger),
@@ -330,7 +352,7 @@ func newIntegrationFixtureWithMatrix(matrix versionmatrix.Matrix) *integrationFi
 		return dialErr
 	}, "500ms", "5ms").Should(Succeed())
 
-	return &integrationFixture{addr: addr, fake: fake, templates: templates, versions: versions, conn: conn, grpc: grpcSrv, cancel: cancel, done: done}
+	return &integrationFixture{addr: addr, fake: fake, secrets: secrets, templates: templates, versions: versions, conn: conn, grpc: grpcSrv, cancel: cancel, done: done}
 }
 
 func (f *integrationFixture) URL(path string) string {

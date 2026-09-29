@@ -23,15 +23,17 @@ import (
 // Env vars set by the workflow's "Run e2e suite" step, pointing at the
 // kubectl port-forwards it started.
 const (
-	envOSACSPURL = "OSAC_SP_URL"
+	envOSACSPURL                  = "OSAC_SP_URL"
+	envFulfillmentInternalAddress = "FULFILLMENT_INTERNAL_ADDRESS"
 )
 
 var (
-	osacSPURL           string
-	keycloakURL         string
-	tierBAdminSecret    string
-	environmentAgentURL string
-	phase2Enabled       string
+	osacSPURL                  string
+	fulfillmentInternalAddress string
+	keycloakURL                string
+	tierBAdminSecret           string
+	environmentAgentURL        string
+	phase2Enabled              string
 )
 
 func TestE2E(t *testing.T) {
@@ -45,6 +47,7 @@ var _ = BeforeSuite(func() {
 		target *string
 	}{
 		{name: envOSACSPURL, target: &osacSPURL},
+		{name: envFulfillmentInternalAddress, target: &fulfillmentInternalAddress},
 		{name: envKeycloakURL, target: &keycloakURL},
 		{name: envTierBAdminSecret, target: &tierBAdminSecret},
 		{name: envEnvironmentAgentURL, target: &environmentAgentURL},

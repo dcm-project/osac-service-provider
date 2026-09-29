@@ -14,8 +14,8 @@ check.
 The original Milestone 1 files below were vendored (copied) verbatim,
 byte-for-byte, from `osac-project/fulfillment-service` at commit
 [`73ae26e`](https://github.com/osac-project/fulfillment-service/tree/73ae26e8cb0a476d4b035b18776603f60a361ed9/proto/public/osac/public/v1).
-The cluster CRUD files and their supporting types are synced to the public FFS
-API schema used by the pinned
+The cluster CRUD files and their supporting types were originally synced to
+the public FFS API schema used by the pinned
 [`fulfillment-service/v0.0.107`](https://github.com/osac-project/osac/tree/fulfillment-service/v0.0.107/proto/public/osac/public/v1)
 release tag (monorepo commit
 [`bff38394`](https://github.com/osac-project/osac/tree/bff38394f1ad724c1b0b17fd655480c2c202ea11/proto/public/osac/public/v1)).
@@ -30,6 +30,12 @@ Milestone 1:
 
 Milestone 3 additionally vendors, at the same pinned commit:
 
+- `osac/public/v1/clusters_service.proto` and `cluster_type.proto` replace the
+  earlier Milestone 2 versions for the Cluster Get migration: `GetKubeconfig`
+  is removed and `ClusterStatus.kubeconfig_secret` is included.
+- `osac/public/v1/secret_type.proto`
+- `osac/public/v1/secrets_service.proto` supplies the public `Secrets/Get`
+  client used by Cluster Get to retrieve kubeconfig bytes.
 - `osac/public/v1/cluster_catalog_item_type.proto`
 - `osac/public/v1/cluster_common_type.proto`
 - `osac/public/v1/cluster_templates_service.proto`
@@ -39,6 +45,17 @@ Milestone 3 additionally vendors, at the same pinned commit:
 - `osac/public/v1/field_definition_type.proto`
 - `osac/public/v1/host_type_type.proto`
 - `osac/public/v1/security_rule_type.proto`
+
+The Secret-backed Cluster Get path uses the public `Secrets/Get` client, whose
+`Get` response includes Secret data. The following wire-compatible
+`osac.private.v1` schema subset is sourced from the same `bff38394` release
+commit for Tier B fixture setup: `metadata_type.proto`, `secret_type.proto`,
+`secrets_service.proto`, and the `Cluster`/`Clusters.Get`/`Clusters.Update`
+messages. `tenant_type.proto` and the `Tenants.Create`/`Tenants.Get` subset let
+that fixture create and await a tenant-scoped test Secret. Private Cluster,
+Secret, and Tenant clients are test-only; production provider operations use
+the public API. `buf.build/cleanapi/cleanapi:v0.0.12` is pinned in `buf.yaml`
+for the private API annotations.
 
 Needed by Create's node-set-key resolution: `Cluster.spec.node_sets`' keys
 are per-template and not derivable from `template_id`, so the SP calls

@@ -4,7 +4,9 @@
 from
 [`fulfillment-service/docs/INSTALL.md`](https://github.com/osac-project/osac/blob/main/fulfillment-service/docs/INSTALL.md)'s
 authoritative `KeycloakRealmImport` example (see DD-150) — not a verbatim
-copy of any single upstream file.
+copy of any single upstream file. It includes both `tenant-admin` and
+`tenant-idp-manager`, which the real Fulfillment Service requires when it
+creates tenant organizations and assigns their manager permissions.
 
 **The `osac-admin`/`osac-controller` client secrets in this file are
 test-only, static, and checked into git on purpose** (NFR-TB-020): this realm
