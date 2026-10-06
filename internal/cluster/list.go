@@ -11,6 +11,7 @@ import (
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/pagination"
 	"github.com/dcm-project/osac-service-provider/internal/util"
 )
 
@@ -23,9 +24,13 @@ const defaultPageSize int32 = 50
 
 // List calls Clusters/List with the ownership filter and translates
 // max_page_size/page_token to/from OSAC's limit/offset pagination
-// (REQ-LIST-020). Entries never populate kubeconfig (REQ-LIST-030) — List
-// never calls GetKubeconfig.
+// (REQ-LIST-020, REQ-LIST-050). Entries never populate kubeconfig
+// (REQ-LIST-030) — List never calls GetKubeconfig.
 func (s *Service) List(ctx context.Context, params v1alpha1.ListClustersParams) (v1alpha1.ClusterList, error) {
+	if err := pagination.ValidateMaxPageSize(params.MaxPageSize); err != nil {
+		return v1alpha1.ClusterList{}, err
+	}
+
 	limit := defaultPageSize
 	if params.MaxPageSize != nil {
 		limit = *params.MaxPageSize

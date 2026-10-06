@@ -1169,6 +1169,8 @@ type ListClustersResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *ClusterList
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Error
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *Error
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
@@ -1182,6 +1184,11 @@ type ListClustersResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListClustersResponse) GetJSON200() *ClusterList {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListClustersResponse) GetApplicationproblemJSON400() *Error {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
@@ -1500,6 +1507,8 @@ type ListVMsResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *VirtualMachineList
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Error
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationproblemJSON401 *Error
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
@@ -1513,6 +1522,11 @@ type ListVMsResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListVMsResponse) GetJSON200() *VirtualMachineList {
 	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListVMsResponse) GetApplicationproblemJSON400() *Error {
+	return r.ApplicationproblemJSON400
 }
 
 // GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
@@ -2080,6 +2094,13 @@ func ParseListClustersResponse(rsp *http.Response) (*ListClustersResponse, error
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2338,6 +2359,13 @@ func ParseListVMsResponse(rsp *http.Response) (*ListVMsResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error

@@ -140,6 +140,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClusterList'
+        '400':
+          description: "`max_page_size` is outside the inclusive AEP-132 range `1..100`."
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           description: Unauthenticated
           content:
@@ -371,6 +377,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/VirtualMachineList'
+        '400':
+          description: "`max_page_size` is outside the inclusive AEP-132 range `1..100`."
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           description: Unauthenticated
           content:
