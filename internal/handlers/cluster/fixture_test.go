@@ -117,6 +117,12 @@ func (s *fakeClustersServer) ListCallCount() int {
 	return len(s.listCalls)
 }
 
+func (s *fakeClustersServer) ListCalls() []*publicv1.ClustersListRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*publicv1.ClustersListRequest(nil), s.listCalls...)
+}
+
 func (s *fakeClustersServer) GetCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

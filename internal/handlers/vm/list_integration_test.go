@@ -98,17 +98,65 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 		Expect(*secondList.Results[0].Id).To(Equal("v50"))
 	})
 
-	// TC-I-322 (REQ-VMLIST-020, REQ-VMERR-010, AC-VMLIST-030): a
-	// page_token this SP never issued is rejected as 400 at the real HTTP
-	// boundary, without ever calling ComputeInstances/List.
+	// TC-I-322 (REQ-VMLIST-020, REQ-VMERR-010, AC-VMLIST-030): a malformed
+	// token is rejected at the real HTTP boundary without an OSAC RPC.
 	It("rejects a malformed page_token at the real HTTP boundary, without calling List (TC-I-322)", func() {
 		resp := listVMs(f, "?page_token=not-valid-base64!!!")
 		defer func() { _ = resp.Body.Close() }()
 
 		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
 		Expect(f.fake.ListCalls()).To(BeEmpty())
+	})
+
+	// TC-I-323 (REQ-VMLIST-050, AC-VMLIST-050): the real HTTP boundary
+	// rejects out-of-range values and forwards both inclusive boundaries.
+	DescribeTable("validates max_page_size at the real HTTP boundary (TC-I-323)",
+		func(value int32, wantInvalid bool) {
+			resp := listVMs(f, fmt.Sprintf("?max_page_size=%d", value))
+			defer func() { _ = resp.Body.Close() }()
+
+			if wantInvalid {
+				Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+				Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
+				var body v1alpha1.Error
+				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+				Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
+				Expect(*body.Status).To(Equal(int32(http.StatusBadRequest)))
+				Expect(*body.Detail).To(ContainSubstring("max_page_size must be between 1 and 100"))
+				Expect(f.fake.ListCalls()).To(BeEmpty())
+				return
+			}
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			calls := f.fake.ListCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].GetLimit()).To(Equal(value))
+		},
+		Entry("rejects a negative value", int32(-1), true),
+		Entry("rejects zero", int32(0), true),
+		Entry("rejects a value above the maximum", int32(101), true),
+		Entry("accepts the minimum", int32(1), false),
+		Entry("accepts the maximum", int32(100), false),
+	)
+
+	// TC-I-324 (REQ-VMLIST-040, AC-VMLIST-040): an inconsistent Size/Total
+	// response must not produce a token that reissues the same page.
+	It("does not reissue a page_token for an empty Size/Total-mismatch page, over real HTTP (TC-I-324)", func() {
+		f.fake.listFunc = func(*publicv1.ComputeInstancesListRequest) (*publicv1.ComputeInstancesListResponse, error) {
+			return &publicv1.ComputeInstancesListResponse{Items: nil, Size: 0, Total: 5}, nil
+		}
+
+		resp := listVMs(f, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		var list v1alpha1.VirtualMachineList
+		Expect(json.NewDecoder(resp.Body).Decode(&list)).To(Succeed())
+		Expect(list.NextPageToken).To(BeNil())
+		Expect(f.fake.ListCalls()).To(HaveLen(1))
 	})
 })

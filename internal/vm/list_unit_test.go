@@ -89,6 +89,31 @@ var _ = Describe("Service.List (Topic 4.3 VM List)", func() {
 		Expect(f.fake.ListCalls()[0].GetLimit()).To(Equal(int32(10)))
 	})
 
+	// TC-U-324 (REQ-VMLIST-050, AC-VMLIST-050): max_page_size is validated
+	// against AEP-132 before the request reaches OSAC, while both inclusive
+	// boundaries remain valid.
+	DescribeTable("validates max_page_size before calling ComputeInstances/List (TC-U-324)",
+		func(value int32, wantInvalid bool) {
+			_, err := f.svc.List(context.Background(), v1alpha1.ListVMsParams{MaxPageSize: util.Ptr(value)})
+
+			if wantInvalid {
+				Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+				Expect(f.fake.ListCalls()).To(BeEmpty())
+				return
+			}
+
+			Expect(err).NotTo(HaveOccurred())
+			calls := f.fake.ListCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].GetLimit()).To(Equal(value))
+		},
+		Entry("rejects a negative value", int32(-1), true),
+		Entry("rejects zero", int32(0), true),
+		Entry("rejects a value above the maximum", int32(101), true),
+		Entry("accepts the minimum", int32(1), false),
+		Entry("accepts the maximum", int32(100), false),
+	)
+
 	// TC-U-322 (REQ-VMLIST-040, AC-VMLIST-040, regression): a Size/Total
 	// mismatch never reissues the same page_token.
 	It("never reissues the same page_token on a Size/Total mismatch (TC-U-322)", func() {
@@ -119,14 +144,18 @@ var _ = Describe("Service.List (Topic 4.3 VM List)", func() {
 	// Supplementary: a malformed page_token (not one this SP itself ever
 	// issued) is rejected as InvalidArgument (400), not left to fall
 	// through to a 500.
-	It("rejects a page_token that isn't valid base64", func() {
+	// TC-U-323 (REQ-VMLIST-020, REQ-VMERR-010, AC-VMLIST-030): malformed
+	// tokens are rejected before the OSAC List RPC.
+	It("rejects a page_token that isn't valid base64 (TC-U-323)", func() {
 		_, err := f.svc.List(context.Background(), v1alpha1.ListVMsParams{PageToken: util.Ptr("not-valid-base64!!!")})
 		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(f.fake.ListCalls()).To(BeEmpty())
 	})
 
 	It("rejects a page_token that decodes to non-numeric content", func() {
 		// base64 for the literal string "not-a-number".
 		_, err := f.svc.List(context.Background(), v1alpha1.ListVMsParams{PageToken: util.Ptr("bm90LWEtbnVtYmVy")})
 		Expect(grpcstatus.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(f.fake.ListCalls()).To(BeEmpty())
 	})
 })
