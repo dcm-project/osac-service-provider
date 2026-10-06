@@ -85,6 +85,8 @@ Identical to Milestone 3's rules — binding, not advisory:
 | TC-U-320 | List applies the ownership filter, default page size, and exact field values including IP echo | REQ-VMLIST-010, REQ-VMLIST-030, AC-VMLIST-010 | Fake `ComputeInstances/List` records its request, returns 2 instances with known `id`/`status.state`/`internal_ip_address`; call `internal/vm.List` with no page params; assert the fake recorded `filter=="this.metadata.labels[\"dcm.io/managed-by\"] == \"dcm\""` and `limit==50`, and returned entries' fields equal the fake's canned values exactly. |
 | TC-U-321 | `page_token` round-trips through OSAC's `offset` | REQ-VMLIST-020, REQ-VMLIST-040, AC-VMLIST-020 | Fake `ComputeInstances/List` returns a response with next `offset=50`; decode the returned `next_page_token` and feed it into a second `List` call; assert the fake's second recorded request has `offset==50` exactly. |
 | TC-U-322 | A `Size`/`Total` mismatch never reissues the same `page_token` (regression) | REQ-VMLIST-040, AC-VMLIST-040 | Fake `ComputeInstances/List` returns `Items: nil, Size: 0, Total: 5` at `offset=0`; call `internal/vm.List`; assert `NextPageToken` is nil. |
+| TC-U-323 | A malformed `page_token` is rejected before `ComputeInstances/List` | REQ-VMLIST-020, REQ-VMERR-010, AC-VMLIST-030 | Call `internal/vm.List` with both non-base64 and base64-but-non-numeric tokens; assert `InvalidArgument` and zero fake `ComputeInstances/List` calls. |
+| TC-U-324 | `max_page_size` rejects values outside `1..100` and preserves both boundaries | REQ-VMLIST-050, AC-VMLIST-050 | Table-driven over `-1`, `0`, `101`, `1`, and `100`; assert out-of-range values return `InvalidArgument` with zero fake calls, while `1` and `100` produce exact OSAC limits. |
 
 ---
 
@@ -153,6 +155,9 @@ Identical to Milestone 3's rules — binding, not advisory:
 |-------|-----------|-----------|-------------|
 | TC-I-320 | List returns exact entries with the ownership filter applied, over real HTTP | REQ-VMLIST-010, REQ-VMLIST-030, AC-VMLIST-010 | Fake OSAC `List` records its request, returns 2 known instances; real `GET /api/v1alpha1/vms`; assert the fake recorded the exact CEL filter, and the real response body's `results` match the canned values exactly. |
 | TC-I-321 | Pagination round-trips across two real, sequential HTTP requests | REQ-VMLIST-020, REQ-VMLIST-040, AC-VMLIST-020 | First real `GET /api/v1alpha1/vms` triggers a fake response with next `offset=50`; feed the returned `next_page_token` into a second real `GET .../vms?page_token=...`; assert the fake's second recorded request has `offset==50`. |
+| TC-I-322 | A malformed `page_token` is rejected at the real HTTP boundary | REQ-VMLIST-020, REQ-VMERR-010, AC-VMLIST-030 | No fake `ComputeInstances/List` behavior is configured; real `GET /api/v1alpha1/vms?page_token=not-valid-base64!!!`; assert `400` with RFC 9457 `type` exactly `INVALIDARGUMENT` and zero fake `List` calls. |
+| TC-I-323 | `max_page_size` is enforced at the real HTTP boundary, including both valid boundaries | REQ-VMLIST-050, AC-VMLIST-050 | Table-driven real HTTP requests for `-1`, `0`, `101`, `1`, and `100`; assert RFC 9457 `400`/zero RPCs for invalid values and `200`/exact recorded limits for `1` and `100`. |
+| TC-I-324 | A `Size`/`Total` mismatch never reissues the same `page_token`, over real HTTP | REQ-VMLIST-040, AC-VMLIST-040 | Fake `ComputeInstances/List` returns `Items: nil, Size: 0, Total: 5`; issue a real `GET /api/v1alpha1/vms`; assert `200`, no `next_page_token`, and exactly one fake call. |
 
 ---
 
@@ -184,9 +189,9 @@ Identical to Milestone 3's rules — binding, not advisory:
 |---|---|---|---|---|---|
 | 4.1 VM Create | 9 | 8 | 9 (TC-U-300..308) | 4 (TC-I-300..303) | Yes — every AC has both tiers; AC-VMCREATE-070 covered by TC-U-307 (unit) + TC-I-301 (2 real sequential HTTP requests, per rule 3) |
 | 4.2 VM Get | 3 | 2 | 2 (TC-U-310..311) | 2 (TC-I-310..311) | Yes |
-| 4.3 VM List | 4 | 2 | 2 (TC-U-320..321) | 2 (TC-I-320..321) | Yes |
+| 4.3 VM List | 5 | 5 | 5 (TC-U-320..324) | 5 (TC-I-320..324) | Yes — every list acceptance criterion has both tiers; malformed-token coverage is TC-U-323/TC-I-322, range coverage is TC-U-324/TC-I-323, and Size/Total-regression coverage is TC-U-322/TC-I-324 |
 | 4.4 VM Delete | 4 | 3 | 3 (TC-U-330..332) | 3 (TC-I-330..332) | Yes — AC-VMDELETE-020 covered by TC-U-331 (unit) + TC-I-331 (2 real sequential HTTP requests, per rule 3) |
 | 4.5 Default Network Provisioning | 5 | 4 | 4 (TC-U-340..343) | 3 dedicated (TC-I-340..342) | Yes — AC-VMNET-010 covered by TC-U-340 (unit) + TC-I-342 (integration, explicit zero-call-count assertion, not merely incidental reuse via other Create tests) |
 | 4.6 Status Mapping | 3 | 2 | 2 (TC-U-350..351) | 1 dedicated (TC-I-350) + incidentally via TC-I-310/311/300 | Yes |
 | 4.7 Error Mapping | 3 | 2 | 2 (TC-U-360..361) | 1 dedicated (TC-I-360) + incidentally via TC-I-302/311/332 | Yes |
-| **Total** | **31** | **23** | **24** | **16** | |
+| **Total** | **32** | **26** | **27** | **19** | |
