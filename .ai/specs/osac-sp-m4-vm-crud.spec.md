@@ -357,7 +357,7 @@ List.
 | REQ-VMLIST-020 | The SP MUST translate `max_page_size` (query, default `50` when omitted) to OSAC's `limit`, and encode/decode `page_token` as an opaque wrapper around OSAC's `offset` | MUST | |
 | REQ-VMLIST-030 | The response MUST be the AEP-132 pagination wrapper `{"results": [...], "next_page_token": "..."}`, with each entry mapped via the same status mapper as Get (§4.6), including the same `internal_ip_address`/`external_ip_address` echo as Get (REQ-VMGET-030) — unlike Cluster's `kubeconfig`, this costs no extra RPC since it's already present on each `ComputeInstancesListResponse` item | MUST | |
 | REQ-VMLIST-040 | `next_page_token` MUST be empty/absent exactly when OSAC's `List` response indicates no further results. The next offset MUST be computed from `len(results)` actually received, not `resp.GetSize()`; an empty page MUST NOT emit a `next_page_token` regardless of `Total` | MUST | DD-134; mirrors `internal/cluster`'s List fix exactly |
-| REQ-VMLIST-050 | When `max_page_size` is supplied, the SP MUST validate it at the DCM REST boundary against AEP-132's inclusive range `1..100`; an out-of-range value MUST be rejected as `InvalidArgument`/HTTP `400` before any `ComputeInstances/List` RPC | MUST | FLPATH-4945; the fulfillment-service limit is not the DCM-facing AEP-132 contract |
+| REQ-VMLIST-050 | The SP MUST apply AEP-158 `max_page_size` semantics at the DCM REST boundary: omitted or `0` uses the documented default `50`, a positive value above `100` is coerced to `100`, and a negative value is rejected as `InvalidArgument`/HTTP `400` before any `ComputeInstances/List` RPC | MUST | FLPATH-4945; the fulfillment-service limit is not the DCM-facing contract |
 
 #### Configuration Introduced
 
@@ -393,12 +393,12 @@ None.
 - **When** `GET /api/v1alpha1/vms` is called
 - **Then** the response's `next_page_token` MUST be absent
 
-##### AC-VMLIST-050: `max_page_size` enforces the AEP-132 inclusive range at the HTTP boundary
+##### AC-VMLIST-050: `max_page_size` follows AEP-158 at the HTTP boundary
 
 - **Validates:** REQ-VMLIST-050
 - **Given** requests with `max_page_size` values `-1`, `0`, and `101`, plus boundary values `1` and `100`, and a fake `ComputeInstances/List` that records calls
 - **When** `GET /api/v1alpha1/vms?max_page_size=...` is called
-- **Then** each out-of-range request returns HTTP `400` with `Content-Type: application/problem+json` and `type` exactly `INVALIDARGUMENT`, with zero `ComputeInstances/List` calls; each boundary request returns HTTP `200` and forwards the exact value as OSAC's `limit`
+- **Then** `-1` returns HTTP `400` with `Content-Type: application/problem+json` and `type` exactly `INVALIDARGUMENT`, without a `ComputeInstances/List` call; `0` returns HTTP `200` and forwards `50`; `101` returns HTTP `200` and forwards `100`; and `1`/`100` return HTTP `200` and forward their exact values
 
 #### Dependencies
 

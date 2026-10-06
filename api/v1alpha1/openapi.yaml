@@ -125,13 +125,15 @@ paths:
             type: string
         - name: max_page_size
           in: query
-          description: Maximum number of results to return per page.
+          description: >-
+            Maximum number of results to return per page. When supplied, the
+            value of `0` uses the documented default of `50`, values above
+            `100` are coerced to `100`, and negative values are rejected.
           required: false
           schema:
             type: integer
             format: int32
-            minimum: 1
-            maximum: 100
+            minimum: 0
             default: 50
       responses:
         '200':
@@ -141,7 +143,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ClusterList'
         '400':
-          description: "`max_page_size` is outside the inclusive AEP-132 range `1..100`."
+          description: '`max_page_size` must not be negative.'
           content:
             application/problem+json:
               schema:
@@ -362,13 +364,15 @@ paths:
             type: string
         - name: max_page_size
           in: query
-          description: Maximum number of results to return per page.
+          description: >-
+            Maximum number of results to return per page. When supplied, the
+            value of `0` uses the documented default of `50`, values above
+            `100` are coerced to `100`, and negative values are rejected.
           required: false
           schema:
             type: integer
             format: int32
-            minimum: 1
-            maximum: 100
+            minimum: 0
             default: 50
       responses:
         '200':
@@ -378,7 +382,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/VirtualMachineList'
         '400':
-          description: "`max_page_size` is outside the inclusive AEP-132 range `1..100`."
+          description: '`max_page_size` must not be negative.'
           content:
             application/problem+json:
               schema:

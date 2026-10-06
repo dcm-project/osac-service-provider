@@ -112,10 +112,10 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 		Expect(f.fake.ListCalls()).To(BeEmpty())
 	})
 
-	// TC-I-323 (REQ-VMLIST-050, AC-VMLIST-050): the real HTTP boundary
-	// rejects out-of-range values and forwards both inclusive boundaries.
-	DescribeTable("validates max_page_size at the real HTTP boundary (TC-I-323)",
-		func(value int32, wantInvalid bool) {
+	// TC-I-323 (REQ-VMLIST-050, AC-VMLIST-050): the real HTTP boundary applies
+	// AEP-158 defaulting and clamping, and rejects negative values.
+	DescribeTable("normalizes max_page_size at the real HTTP boundary (TC-I-323)",
+		func(value int32, wantInvalid bool, wantLimit int32) {
 			resp := listVMs(f, fmt.Sprintf("?max_page_size=%d", value))
 			defer func() { _ = resp.Body.Close() }()
 
@@ -126,7 +126,7 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 				Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
 				Expect(*body.Status).To(Equal(int32(http.StatusBadRequest)))
-				Expect(*body.Detail).To(ContainSubstring("max_page_size must be between 1 and 100"))
+				Expect(*body.Detail).To(ContainSubstring("max_page_size must not be negative"))
 				Expect(f.fake.ListCalls()).To(BeEmpty())
 				return
 			}
@@ -134,13 +134,13 @@ var _ = Describe("VM List (integration, real HTTP + router + bufconn OSAC fake)"
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			calls := f.fake.ListCalls()
 			Expect(calls).To(HaveLen(1))
-			Expect(calls[0].GetLimit()).To(Equal(value))
+			Expect(calls[0].GetLimit()).To(Equal(wantLimit))
 		},
-		Entry("rejects a negative value", int32(-1), true),
-		Entry("rejects zero", int32(0), true),
-		Entry("rejects a value above the maximum", int32(101), true),
-		Entry("accepts the minimum", int32(1), false),
-		Entry("accepts the maximum", int32(100), false),
+		Entry("rejects a negative value", int32(-1), true, int32(0)),
+		Entry("defaults zero", int32(0), false, int32(50)),
+		Entry("clamps a value above the maximum", int32(101), false, int32(100)),
+		Entry("accepts the minimum", int32(1), false, int32(1)),
+		Entry("accepts the maximum", int32(100), false, int32(100)),
 	)
 
 	// TC-I-324 (REQ-VMLIST-040, AC-VMLIST-040): an inconsistent Size/Total

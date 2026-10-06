@@ -140,10 +140,10 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 		Expect(f.fake.ListCallCount()).To(Equal(0))
 	})
 
-	// TC-I-224 (REQ-LIST-050, AC-LIST-060): the real HTTP boundary rejects
-	// out-of-range values and forwards both inclusive boundaries exactly.
-	DescribeTable("validates max_page_size at the real HTTP boundary (TC-I-224)",
-		func(value int32, wantInvalid bool) {
+	// TC-I-224 (REQ-LIST-050, AC-LIST-060): the real HTTP boundary applies
+	// AEP-158 defaulting and clamping, and rejects negative values.
+	DescribeTable("normalizes max_page_size at the real HTTP boundary (TC-I-224)",
+		func(value int32, wantInvalid bool, wantLimit int32) {
 			resp := listClusters(f, fmt.Sprintf("?max_page_size=%d", value))
 			defer func() { _ = resp.Body.Close() }()
 
@@ -154,7 +154,7 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 				Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
 				Expect(*body.Status).To(Equal(int32(http.StatusBadRequest)))
-				Expect(*body.Detail).To(ContainSubstring("max_page_size must be between 1 and 100"))
+				Expect(*body.Detail).To(ContainSubstring("max_page_size must not be negative"))
 				Expect(f.fake.ListCallCount()).To(Equal(0))
 				return
 			}
@@ -162,13 +162,13 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			calls := f.fake.ListCalls()
 			Expect(calls).To(HaveLen(1))
-			Expect(calls[0].GetLimit()).To(Equal(value))
+			Expect(calls[0].GetLimit()).To(Equal(wantLimit))
 		},
-		Entry("rejects a negative value", int32(-1), true),
-		Entry("rejects zero", int32(0), true),
-		Entry("rejects a value above the maximum", int32(101), true),
-		Entry("accepts the minimum", int32(1), false),
-		Entry("accepts the maximum", int32(100), false),
+		Entry("rejects a negative value", int32(-1), true, int32(0)),
+		Entry("defaults zero", int32(0), false, int32(50)),
+		Entry("clamps a value above the maximum", int32(101), false, int32(100)),
+		Entry("accepts the minimum", int32(1), false, int32(1)),
+		Entry("accepts the maximum", int32(100), false, int32(100)),
 	)
 
 	// TC-I-225 (REQ-LIST-040, AC-LIST-050): an inconsistent Size/Total

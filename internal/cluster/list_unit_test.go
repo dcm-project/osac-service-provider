@@ -63,11 +63,10 @@ var _ = Describe("Service.List (Topic 4.3 Cluster List)", func() {
 		Expect(f.fake.ListCalls()[0].GetLimit()).To(Equal(int32(10)))
 	})
 
-	// TC-U-225 (REQ-LIST-050, AC-LIST-060): max_page_size is validated
-	// against AEP-132 before the request reaches OSAC, while both inclusive
-	// boundaries remain valid.
-	DescribeTable("validates max_page_size before calling Clusters/List (TC-U-225)",
-		func(value int32, wantInvalid bool) {
+	// TC-U-225 (REQ-LIST-050, AC-LIST-060): AEP-158 defaulting, clamping,
+	// and negative-value rejection happen before the OSAC request.
+	DescribeTable("normalizes max_page_size before calling Clusters/List (TC-U-225)",
+		func(value int32, wantInvalid bool, wantLimit int32) {
 			_, err := f.svc.List(context.Background(), v1alpha1.ListClustersParams{MaxPageSize: util.Ptr(value)})
 
 			if wantInvalid {
@@ -79,13 +78,13 @@ var _ = Describe("Service.List (Topic 4.3 Cluster List)", func() {
 			Expect(err).NotTo(HaveOccurred())
 			calls := f.fake.ListCalls()
 			Expect(calls).To(HaveLen(1))
-			Expect(calls[0].GetLimit()).To(Equal(value))
+			Expect(calls[0].GetLimit()).To(Equal(wantLimit))
 		},
-		Entry("rejects a negative value", int32(-1), true),
-		Entry("rejects zero", int32(0), true),
-		Entry("rejects a value above the maximum", int32(101), true),
-		Entry("accepts the minimum", int32(1), false),
-		Entry("accepts the maximum", int32(100), false),
+		Entry("rejects a negative value", int32(-1), true, int32(0)),
+		Entry("defaults zero", int32(0), false, int32(50)),
+		Entry("clamps a value above the maximum", int32(101), false, int32(100)),
+		Entry("accepts the minimum", int32(1), false, int32(1)),
+		Entry("accepts the maximum", int32(100), false, int32(100)),
 	)
 
 	// TC-U-221 (REQ-LIST-020/040, AC-LIST-020): page_token round-trips

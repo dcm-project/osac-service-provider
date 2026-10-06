@@ -28,18 +28,13 @@ const defaultPageSize int32 = 50
 // internal/cluster's List exactly (same pagination contract, same opaque
 // token encoding).
 func (s *Service) List(ctx context.Context, params v1alpha1.ListVMsParams) (v1alpha1.VirtualMachineList, error) {
-	if err := pagination.ValidateMaxPageSize(params.MaxPageSize); err != nil {
+	limit, err := pagination.NormalizeMaxPageSize(params.MaxPageSize, defaultPageSize)
+	if err != nil {
 		return v1alpha1.VirtualMachineList{}, err
-	}
-
-	limit := defaultPageSize
-	if params.MaxPageSize != nil {
-		limit = *params.MaxPageSize
 	}
 
 	var offset int32
 	if params.PageToken != nil && *params.PageToken != "" {
-		var err error
 		offset, err = decodePageToken(*params.PageToken)
 		if err != nil {
 			return v1alpha1.VirtualMachineList{}, err

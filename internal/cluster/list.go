@@ -27,18 +27,13 @@ const defaultPageSize int32 = 50
 // (REQ-LIST-020, REQ-LIST-050). Entries never populate kubeconfig
 // (REQ-LIST-030) — List never calls GetKubeconfig.
 func (s *Service) List(ctx context.Context, params v1alpha1.ListClustersParams) (v1alpha1.ClusterList, error) {
-	if err := pagination.ValidateMaxPageSize(params.MaxPageSize); err != nil {
+	limit, err := pagination.NormalizeMaxPageSize(params.MaxPageSize, defaultPageSize)
+	if err != nil {
 		return v1alpha1.ClusterList{}, err
-	}
-
-	limit := defaultPageSize
-	if params.MaxPageSize != nil {
-		limit = *params.MaxPageSize
 	}
 
 	var offset int32
 	if params.PageToken != nil && *params.PageToken != "" {
-		var err error
 		offset, err = decodePageToken(*params.PageToken)
 		if err != nil {
 			return v1alpha1.ClusterList{}, err
