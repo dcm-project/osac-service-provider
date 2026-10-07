@@ -8,7 +8,7 @@ import (
 
 // ListVMs implements oapigen.StrictServerInterface.
 //
-// Implements REQ-VMLIST-010 through REQ-VMLIST-040.
+// Implements REQ-VMLIST-010 through REQ-VMLIST-050.
 func (h *Handler) ListVMs(ctx context.Context, req oapigen.ListVMsRequestObject) (oapigen.ListVMsResponseObject, error) {
 	result, err := h.svc.List(ctx, req.Params)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 
 	v1alpha1 "github.com/dcm-project/osac-service-provider/api/v1alpha1"
 	publicv1 "github.com/dcm-project/osac-service-provider/internal/osacpb/osac/public/v1"
+	"github.com/dcm-project/osac-service-provider/internal/pagination"
 	"github.com/dcm-project/osac-service-provider/internal/util"
 )
 
@@ -23,17 +24,17 @@ const defaultPageSize int32 = 50
 
 // List calls ComputeInstances/List with the ownership filter and
 // translates max_page_size/page_token to/from OSAC's limit/offset
-// pagination (REQ-VMLIST-020), mirroring internal/cluster's List exactly
-// (same pagination contract, same opaque token encoding).
+// pagination (REQ-VMLIST-020, REQ-VMLIST-050), mirroring
+// internal/cluster's List exactly (same pagination contract, same opaque
+// token encoding).
 func (s *Service) List(ctx context.Context, params v1alpha1.ListVMsParams) (v1alpha1.VirtualMachineList, error) {
-	limit := defaultPageSize
-	if params.MaxPageSize != nil {
-		limit = *params.MaxPageSize
+	limit, err := pagination.NormalizeMaxPageSize(params.MaxPageSize, defaultPageSize)
+	if err != nil {
+		return v1alpha1.VirtualMachineList{}, err
 	}
 
 	var offset int32
 	if params.PageToken != nil && *params.PageToken != "" {
-		var err error
 		offset, err = decodePageToken(*params.PageToken)
 		if err != nil {
 			return v1alpha1.VirtualMachineList{}, err

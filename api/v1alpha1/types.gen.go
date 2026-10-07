@@ -430,7 +430,7 @@ type ListClustersParams struct {
 	// PageToken Opaque pagination token from a previous response's `next_page_token`.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 
-	// MaxPageSize Maximum number of results to return per page.
+	// MaxPageSize Maximum number of results to return per page. When supplied, the value of `0` uses the documented default of `50`, values above `100` are coerced to `100`, and negative values are rejected.
 	MaxPageSize *int32 `form:"max_page_size,omitempty" json:"max_page_size,omitempty"`
 }
 
@@ -445,7 +445,7 @@ type ListVMsParams struct {
 	// PageToken Opaque pagination token from a previous response's `next_page_token`.
 	PageToken *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 
-	// MaxPageSize Maximum number of results to return per page.
+	// MaxPageSize Maximum number of results to return per page. When supplied, the value of `0` uses the documented default of `50`, values above `100` are coerced to `100`, and negative values are rejected.
 	MaxPageSize *int32 `form:"max_page_size,omitempty" json:"max_page_size,omitempty"`
 }
 

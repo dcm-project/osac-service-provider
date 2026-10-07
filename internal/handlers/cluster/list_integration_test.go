@@ -133,9 +133,58 @@ var _ = Describe("Cluster List (integration, real HTTP + router + bufconn OSAC f
 		defer func() { _ = resp.Body.Close() }()
 
 		Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
 		var body v1alpha1.Error
 		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
 		Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
 		Expect(f.fake.ListCallCount()).To(Equal(0))
+	})
+
+	// TC-I-224 (REQ-LIST-050, AC-LIST-060): the real HTTP boundary applies
+	// AEP-158 defaulting and clamping, and rejects negative values.
+	DescribeTable("normalizes max_page_size at the real HTTP boundary (TC-I-224)",
+		func(value int32, wantInvalid bool, wantLimit int32) {
+			resp := listClusters(f, fmt.Sprintf("?max_page_size=%d", value))
+			defer func() { _ = resp.Body.Close() }()
+
+			if wantInvalid {
+				Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+				Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
+				var body v1alpha1.Error
+				Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+				Expect(body.Type).To(Equal(v1alpha1.ErrorTypeINVALIDARGUMENT))
+				Expect(*body.Status).To(Equal(int32(http.StatusBadRequest)))
+				Expect(*body.Detail).To(ContainSubstring("max_page_size must not be negative"))
+				Expect(f.fake.ListCallCount()).To(Equal(0))
+				return
+			}
+
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			calls := f.fake.ListCalls()
+			Expect(calls).To(HaveLen(1))
+			Expect(calls[0].GetLimit()).To(Equal(wantLimit))
+		},
+		Entry("rejects a negative value", int32(-1), true, int32(0)),
+		Entry("defaults zero", int32(0), false, int32(50)),
+		Entry("clamps a value above the maximum", int32(101), false, int32(100)),
+		Entry("accepts the minimum", int32(1), false, int32(1)),
+		Entry("accepts the maximum", int32(100), false, int32(100)),
+	)
+
+	// TC-I-225 (REQ-LIST-040, AC-LIST-050): an inconsistent Size/Total
+	// response must not produce a token that reissues the same page.
+	It("does not reissue a page_token for an empty Size/Total-mismatch page, over real HTTP (TC-I-225)", func() {
+		f.fake.listFunc = func(*publicv1.ClustersListRequest) (*publicv1.ClustersListResponse, error) {
+			return &publicv1.ClustersListResponse{Items: nil, Size: 0, Total: 5}, nil
+		}
+
+		resp := listClusters(f, "")
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		var list v1alpha1.ClusterList
+		Expect(json.NewDecoder(resp.Body).Decode(&list)).To(Succeed())
+		Expect(list.NextPageToken).To(BeNil())
+		Expect(f.fake.ListCallCount()).To(Equal(1))
 	})
 })

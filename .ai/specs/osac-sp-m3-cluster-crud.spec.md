@@ -316,6 +316,7 @@ pagination.
 | REQ-LIST-020 | The SP MUST translate `max_page_size` (query, default `50` when omitted) to OSAC's `limit`, and encode/decode `page_token` as an opaque wrapper around OSAC's `offset` | MUST | |
 | REQ-LIST-030 | The response MUST be the AEP-132 pagination wrapper `{"results": [...], "next_page_token": "..."}`, with each entry mapped via the same status mapper as Get (§4.5), omitting the `kubeconfig` field entirely (List never fetches it — see AC-LIST-030) | MUST | |
 | REQ-LIST-040 | `next_page_token` MUST be empty/absent exactly when OSAC's `List` response indicates no further results (not merely when the current page is short). The next offset MUST be computed from the number of results actually received (`len(results)`), not `resp.GetSize()`; an empty page (zero results) MUST NOT emit a `next_page_token`, regardless of what `Total` reports | MUST | DD-134 — a `Size`/`Total` mismatch must never cause the same `page_token` to be reissued, which would make a faithfully-paginating caller loop forever |
+| REQ-LIST-050 | The SP MUST apply AEP-158 `max_page_size` semantics at the DCM REST boundary: omitted or `0` uses the documented default `50`, a positive value above `100` is coerced to `100`, and a negative value is rejected as `InvalidArgument`/HTTP `400` before any `Clusters/List` RPC | MUST | FLPATH-4945; the fulfillment-service limit is not the DCM-facing contract |
 
 #### Configuration Introduced
 
@@ -357,6 +358,13 @@ None.
 - **Given** a fake `Clusters/List` that returns zero items with `Size=0` while `Total=5` (a buggy/inconsistent upstream response) for a request at `offset=0`
 - **When** `GET /api/v1alpha1/clusters` is called
 - **Then** the response's `next_page_token` MUST be absent — never a token that would decode back to `offset=0` and reissue the exact same page
+
+##### AC-LIST-060: `max_page_size` follows AEP-158 at the HTTP boundary
+
+- **Validates:** REQ-LIST-050
+- **Given** requests with `max_page_size` values `-1`, `0`, and `101`, plus boundary values `1` and `100`, and a fake `Clusters/List` that records calls
+- **When** `GET /api/v1alpha1/clusters?max_page_size=...` is called
+- **Then** `-1` returns HTTP `400` with `Content-Type: application/problem+json` and `type` exactly `INVALIDARGUMENT`, without a `Clusters/List` call; `0` returns HTTP `200` and forwards `50`; `101` returns HTTP `200` and forwards `100`; and `1`/`100` return HTTP `200` and forward their exact values
 
 #### Dependencies
 
@@ -685,8 +693,8 @@ DD-111.
 |--------|-------|-------|
 | REQ-CREATE-NNN | 4.1: Cluster Create | 10 |
 | REQ-GET-NNN | 4.2: Cluster Get | 5 |
-| REQ-LIST-NNN | 4.3: Cluster List | 4 |
+| REQ-LIST-NNN | 4.3: Cluster List | 5 |
 | REQ-DELETE-NNN | 4.4: Cluster Delete | 4 |
 | REQ-STATUS-NNN | 4.5: Status Mapping | 3 |
 | REQ-ERR-NNN | 4.6: Error Mapping | 3 |
-| **Total** | | **28** |
+| **Total** | | **29** |
