@@ -389,4 +389,22 @@ var _ = Describe("Service.Create (Topic 4.1 Cluster Create)", func() {
 		Expect(ok).To(BeTrue())
 		Expect(st.Code()).To(Equal(codes.Unavailable))
 	})
+
+	It("preserves AlreadyExists when the recovery Get cannot find the requested ID", func() {
+		const createConflict = "cluster with identifier 'X' and name 'foo' already exists"
+		f.fake.createFunc = func(*publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error) {
+			return nil, grpcstatus.Error(codes.AlreadyExists, createConflict)
+		}
+		f.fake.getFunc = func(*publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error) {
+			return nil, grpcstatus.Error(codes.NotFound, "object with identifier 'X' not found")
+		}
+
+		_, err := f.svc.Create(context.Background(), "X", baseSpec())
+		Expect(err).To(HaveOccurred())
+
+		st, ok := grpcstatus.FromError(err)
+		Expect(ok).To(BeTrue())
+		Expect(st.Code()).To(Equal(codes.AlreadyExists))
+		Expect(st.Message()).To(Equal(createConflict))
+	})
 })
