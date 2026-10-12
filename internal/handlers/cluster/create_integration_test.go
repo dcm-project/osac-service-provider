@@ -84,6 +84,27 @@ var _ = Describe("Cluster Create (integration, real HTTP + router + bufconn OSAC
 		Expect(f.fake.GetCallCount()).To(Equal(1))
 	})
 
+	It("returns 409 when a new create is blocked by an existing name (TC-I-201b)", func() {
+		const conflictDetail = "cluster with identifier 'X' and name 'foo' already exists"
+		f.fake.createFunc = func(*publicv1.ClustersCreateRequest) (*publicv1.ClustersCreateResponse, error) {
+			return nil, grpcstatus.Error(codes.AlreadyExists, conflictDetail)
+		}
+		f.fake.getFunc = func(*publicv1.ClustersGetRequest) (*publicv1.ClustersGetResponse, error) {
+			return nil, grpcstatus.Error(codes.NotFound, "object with identifier 'X' not found")
+		}
+
+		resp := postCreate(f, validCreateJSON)
+		defer func() { _ = resp.Body.Close() }()
+
+		Expect(resp.StatusCode).To(Equal(http.StatusConflict))
+		Expect(resp.Header.Get("Content-Type")).To(Equal("application/problem+json"))
+		var problem v1alpha1.Error
+		Expect(json.NewDecoder(resp.Body).Decode(&problem)).To(Succeed())
+		Expect(problem.Type).To(Equal(v1alpha1.ErrorTypeALREADYEXISTS))
+		Expect(problem.Title).To(Equal("Conflict"))
+		Expect(problem.Detail).To(HaveValue(ContainSubstring(conflictDetail)))
+	})
+
 	// TC-I-202 (REQ-CREATE-060, AC-CREATE-040/050): request validation is
 	// enforced at the real HTTP boundary. Both the id query parameter and
 	// the body's spec property are schema-optional (AEP-133, DD-113), so
