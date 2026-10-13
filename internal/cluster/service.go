@@ -81,21 +81,28 @@ func (s *Service) Create(ctx context.Context, id string, spec v1alpha1.ClusterSp
 	request := &publicv1.ClustersCreateRequest{Object: obj}
 
 	resp, err := s.client.Create(ctx, request)
-	if err != nil {
-		if grpcstatus.Code(err) == codes.AlreadyExists {
-			getResp, getErr := s.client.Get(ctx, &publicv1.ClustersGetRequest{Id: id})
-			if getErr != nil {
-				return v1alpha1.Cluster{}, getErr
-			}
-			// Same request, same spec.version — echo it here too so the
-			// retried path doesn't return a different body shape than the
-			// first-time path (SC-M3-002).
-			return toAPICluster(getResp.GetObject(), &version), nil
-		}
+	if err == nil {
+		return toAPICluster(resp.GetObject(), &version), nil
+	}
+	if grpcstatus.Code(err) != codes.AlreadyExists {
 		return v1alpha1.Cluster{}, err
 	}
 
-	return toAPICluster(resp.GetObject(), &version), nil
+	getResp, getErr := s.client.Get(ctx, &publicv1.ClustersGetRequest{Id: id})
+	if getErr == nil {
+		// Same request, same spec.version — echo it here too so the
+		// retried path doesn't return a different body shape than the
+		// first-time path (SC-M3-002).
+		return toAPICluster(getResp.GetObject(), &version), nil
+	}
+	// An AlreadyExists response can describe a name conflict rather than a
+	// retry of the same ID. If the requested ID is absent, preserve the
+	// original conflict so the HTTP layer reports 409 instead of masking it
+	// as a misleading 404.
+	if grpcstatus.Code(getErr) == codes.NotFound {
+		return v1alpha1.Cluster{}, err
+	}
+	return v1alpha1.Cluster{}, getErr
 }
 
 // resolveNodeSetKey looks up templateID via ClusterTemplates/Get and
